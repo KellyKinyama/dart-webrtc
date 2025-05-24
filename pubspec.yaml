@@ -1,0 +1,30 @@
+name: dart_webrtc
+description: A sample command-line application.
+version: 1.0.0
+# repository: https://github.com/my_org/my_repo
+
+environment:
+  sdk: ^3.6.2
+
+# Add regular dependencies here.
+dependencies:
+  # path: ^1.8.0
+  asn1lib: ^1.5.9
+  basic_utils: ^5.7.0
+  bits: ^1.4.0
+  collection: ^1.19.1
+  convert: ^3.1.2
+  crypto: ^3.0.6
+  cryptography: ^2.7.0
+  dotenv: ^4.2.0
+  ecdsa: ^0.1.2
+  elliptic: ^0.3.11
+  hex: ^0.2.0
+  pointycastle: ^3.9.1
+  sdp_transform: ^0.3.2
+  uuid: ^4.5.1
+  x25519: ^0.1.1
+
+dev_dependencies:
+  lints: ^5.0.0
+  test: ^1.24.0
