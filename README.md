@@ -43,11 +43,6 @@ dart lib/src/dtls/examples/server/psk_ccm8.dart
 dart lib/src/dtls/crypto/crypto_ccm.dart
 ```
 
-Open in browser:
-
-```
-http://localhost:8080/mediachannel
-```
 
 View logs in console and browser at `chrome://webrtc-internals`.
 
