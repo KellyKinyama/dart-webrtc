@@ -80,25 +80,25 @@ dart lib/src/stun3/stun_server5.dart
   - [x] DTLS-SRTP
   - [x] Curve25519
   - [x] P-256
-- [] TLS 1.2
+- [ ] TLS 1.2
 
 #### Channels
 
-- [] DataChannel
-- [] MediaChannel
-  - [] sendonly
-  - [] recvonly
-  - [] sendrecv
-  - [] Multi-track
-  - [] RTX
-  - [] RED
+- [ ] DataChannel
+- [ ] MediaChannel
+  - [ ] sendonly
+  - [ ] recvonly
+  - [ ] sendrecv
+  - [ ] Multi-track
+  - [ ] RTX
+  - [ ] RED
 
 #### RTP/RTCP
 
-- [] RFC 3550 (RTP base)
-- [] RTP Payload Formats:
-  - [] VP8
-  - [] VP9
+- [ ] RFC 3550 (RTP base)
+- [ ] RTP Payload Formats:
+  - [ ] VP8
+  - [ ] VP9
   - [] H264
   - [] AV1
   - [] RED (RFC 2198)
