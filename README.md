@@ -99,40 +99,40 @@ dart lib/src/stun3/stun_server5.dart
 - [ ] RTP Payload Formats:
   - [ ] VP8
   - [ ] VP9
-  - [] H264
-  - [] AV1
-  - [] RED (RFC 2198)
-- [] RTCP:
-  - [] SR/RR
-  - [] PLI
-  - [] REMB
-  - [] NACK
-  - [] TransportWideCC
+  - [ ] H264
+  - [ ] AV1
+  - [ ] RED (RFC 2198)
+- [ ] RTCP:
+  - [ ] SR/RR
+  - [ ] PLI
+  - [ ] REMB
+  - [ ] NACK
+  - [ ] TransportWideCC
 
 #### SDP / PeerConnection
 
 - [x] SDP parsing and generation
   - [x] Reuse inactive m-line
-- [] PeerConnection API
-- [] Simulcast (recv only)
-- [] Bandwidth Estimation (sender-side)
+- [ ] PeerConnection API
+- [ ] Simulcast (recv only)
+- [ ] Bandwidth Estimation (sender-side)
 
 #### Media Recorder
 
-- [] OPUS
-- [] VP8
-- [] VP9
-- [] H264
-- [] AV1
+- [ ] OPUS
+- [ ] VP8
+- [ ] VP9
+- [ ] H264
+- [ ] AV1
 
 #### Compatibility & Interop
 
-- [] Chrome / Safari / Firefox
-- [] Pion
-- [] aiortc
-- [] sipsorcery
-- [] webrtc-rs
-- [] Interop E2E testing
+- [ ] Chrome / Safari / Firefox
+- [ ] Pion
+- [ ] aiortc
+- [ ] sipsorcery
+- [ ] webrtc-rs
+- [ ] Interop E2E testing
 
 #### Testing
 
