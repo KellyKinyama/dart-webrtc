@@ -5,18 +5,14 @@
 
 A pure Dart implementation of WebRTC, including support for ICE, STUN, TURN, DTLS, TLS, SRTP, RTP, RTCP, and SDP.
 
-> Inspired by [werift-webrtc (Node.js)](https://github.com/adalkiran/webrtc-nuts-and-bolts)
+> Inspired by [webrtc-nuts-and-bolts](https://github.com/adalkiran/webrtc-nuts-and-bolts)
 
 ---
 
 ## 📦 Installation
 
-Add to your `pubspec.yaml`:
+clone the repo
 
-```yaml
-dependencies:
-  dart_webrtc: ^0.1.0 # Replace with the latest version
-```
 
 Then run:
 
@@ -39,10 +35,12 @@ Requires Dart 3.x or later.
 
 GitHub: [examples](https://github.com/your-repo/webrtc_dart/tree/main/example)
 
-### MediaChannel
+### DTLS server
 
 ```bash
-dart run example/media_channel.dart
+dart lib/src/dtls/examples/server/tls_ecdh_aes_128.dart
+dart lib/src/dtls/examples/server/psk_ccm8.dart
+dart lib/src/dtls/crypto/crypto_ccm.dart
 ```
 
 Open in browser:
@@ -53,17 +51,13 @@ http://localhost:8080/mediachannel
 
 View logs in console and browser at `chrome://webrtc-internals`.
 
-### DataChannel
+### STUN Server
 
 ```bash
-dart run example/data_channel.dart
+dart lib/src/stun3/stun_server5.dart
 ```
 
-Open:
 
-```
-http://localhost:8080/datachannel
-```
 
 ---
 
@@ -73,14 +67,15 @@ http://localhost:8080/datachannel
 
 #### Signaling & NAT traversal
 
+- [x] SIP
 - [x] STUN
-- [x] TURN (UDP)
+- [] TURN (UDP)
 
 #### ICE
 
 - [x] Vanilla ICE
 - [x] Trickle ICE
-- [x] ICE Restart
+- [] ICE Restart
 - [x] ICE-Lite (Client-side)
 - [ ] ICE-Lite (Server-side)
 
@@ -90,59 +85,59 @@ http://localhost:8080/datachannel
   - [x] DTLS-SRTP
   - [x] Curve25519
   - [x] P-256
-- [x] TLS 1.2
+- [] TLS 1.2
 
 #### Channels
 
-- [x] DataChannel
-- [x] MediaChannel
-  - [x] sendonly
-  - [x] recvonly
-  - [x] sendrecv
-  - [x] Multi-track
-  - [x] RTX
-  - [x] RED
+- [] DataChannel
+- [] MediaChannel
+  - [] sendonly
+  - [] recvonly
+  - [] sendrecv
+  - [] Multi-track
+  - [] RTX
+  - [] RED
 
 #### RTP/RTCP
 
-- [x] RFC 3550 (RTP base)
-- [x] RTP Payload Formats:
-  - [x] VP8
-  - [x] VP9
-  - [x] H264
-  - [x] AV1
-  - [x] RED (RFC 2198)
-- [x] RTCP:
-  - [x] SR/RR
-  - [x] PLI
-  - [x] REMB
-  - [x] NACK
-  - [x] TransportWideCC
+- [] RFC 3550 (RTP base)
+- [] RTP Payload Formats:
+  - [] VP8
+  - [] VP9
+  - [] H264
+  - [] AV1
+  - [] RED (RFC 2198)
+- [] RTCP:
+  - [] SR/RR
+  - [] PLI
+  - [] REMB
+  - [] NACK
+  - [] TransportWideCC
 
 #### SDP / PeerConnection
 
 - [x] SDP parsing and generation
   - [x] Reuse inactive m-line
-- [x] PeerConnection API
-- [x] Simulcast (recv only)
-- [x] Bandwidth Estimation (sender-side)
+- [] PeerConnection API
+- [] Simulcast (recv only)
+- [] Bandwidth Estimation (sender-side)
 
 #### Media Recorder
 
-- [x] OPUS
-- [x] VP8
-- [x] VP9
-- [x] H264
-- [x] AV1
+- [] OPUS
+- [] VP8
+- [] VP9
+- [] H264
+- [] AV1
 
 #### Compatibility & Interop
 
-- [x] Chrome / Safari / Firefox
-- [x] Pion
-- [x] aiortc
-- [x] sipsorcery
-- [x] webrtc-rs
-- [x] Interop E2E testing
+- [] Chrome / Safari / Firefox
+- [] Pion
+- [] aiortc
+- [] sipsorcery
+- [] webrtc-rs
+- [] Interop E2E testing
 
 #### Testing
 

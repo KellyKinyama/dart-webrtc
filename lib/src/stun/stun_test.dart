@@ -25,12 +25,15 @@ Future<void> main() async {
   StunClient stunClient = StunClient.create(
     transport: Transport.udp,
     serverHost: "stun.l.google.com",
+    // serverHost: "127.0.0.1",
     serverPort: 19302,
+    // serverPort: 3478,
     localIp: "10.100.53.194",
     localPort: 4444,
     stunProtocol: StunProtocol.RFC5780,
   );
   StunMessage stunMessage = stunClient.createBindingStunMessage();
+  print("Stun request: ${stunMessage.toUInt8List()}");
   StunMessage data = await stunClient.sendAndAwait(stunMessage);
   print(data);
   // });
@@ -63,9 +66,9 @@ Future<void> main() async {
   //   print(data);
   // });
 
-  test("natChecker", () async {
-    var natChecker = NatChecker();
-    var result = await natChecker.check();
-    print(result);
-  });
+  // test("natChecker", () async {
+  //   var natChecker = NatChecker();
+  //   var result = await natChecker.check();
+  //   print(result);
+  // });
 }
