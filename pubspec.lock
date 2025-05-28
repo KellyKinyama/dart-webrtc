@@ -137,6 +137,14 @@ packages:
       url: "https://pub.dev"
     source: hosted
     version: "4.2.0"
+  dtls2:
+    dependency: "direct main"
+    description:
+      name: dtls2
+      sha256: "2bba7bf61cd070525d1e87e68c46c1f24b926ee5cafdb8702d3fe4958ae676a2"
+      url: "https://pub.dev"
+    source: hosted
+    version: "0.18.1"
   ecdsa:
     dependency: "direct main"
     description:
