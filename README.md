@@ -49,7 +49,7 @@ View logs in console and browser at `chrome://webrtc-internals`.
 ### STUN Server
 
 ```bash
-dart lib/src/stun3/stun_server5.dart
+dart lib/src/stun3/stun_server7.dart
 ```
 
 
