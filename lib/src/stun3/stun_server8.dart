@@ -690,8 +690,8 @@ class StunServer {
 
   static void handleDatagram(Datagram datagram,
       {required RawDatagramSocket socket, required String serverPassword}) {
-    print(
-        '\nReceived ${datagram.data.length} bytes from ${datagram.address.host}:${datagram.port}');
+    // print(
+    //     '\nReceived ${datagram.data.length} bytes from ${datagram.address.host}:${datagram.port}');
 
     if (!StunMessage.isStunMessage(datagram.data)) {
       print('Not a STUN message. Ignoring.');
@@ -700,7 +700,7 @@ class StunServer {
 
     try {
       StunMessage request = StunMessage.decode(datagram.data);
-      print('Decoded STUN Request:');
+      // print('Decoded STUN Request:');
       // print(request);
 
       // Validate the request using configured ICE details
@@ -753,8 +753,8 @@ class StunServer {
     // MESSAGE-INTEGRITY and FINGERPRINT are added during encode, using serverPassword
     Uint8List encodedResponse = response.encode(password: serverPassword);
 
-    print(
-        'Sending STUN Binding Success Response to ${clientAddress.host}:$clientPort');
+    // print(
+    //     'Sending STUN Binding Success Response to ${clientAddress.host}:$clientPort');
     try {
       StunMessage decodedSentResponse = StunMessage.decode(encodedResponse);
       // print(decodedSentResponse);
