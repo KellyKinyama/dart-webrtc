@@ -3,7 +3,7 @@ import 'dart:typed_data';
 
 import 'package:asn1lib/asn1lib.dart';
 import 'package:crypto/crypto.dart';
-import 'package:dartls/src/dtls/crypto/crypto_ccm.dart';
+import 'crypto/crypto_ccm.dart';
 import 'crypto/crypto_ccm8.dart';
 import 'ecdsa_example.dart';
 import 'handshake/tls_random.dart';

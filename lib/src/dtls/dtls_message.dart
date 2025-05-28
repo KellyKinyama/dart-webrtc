@@ -2,7 +2,7 @@
 
 import 'dart:convert';
 import 'dart:typed_data';
-import 'package:dartls/src/dtls/crypto.dart';
+import 'crypto.dart';
 
 import 'handshake/application.dart';
 import 'handshake/change_cipher_spec.dart';
@@ -20,6 +20,10 @@ class DtlsErrors {
       'data contains unknown DTLS content type';
   static const errUnknownDtlsHandshakeType =
       'data contains unknown DTLS handshake type';
+}
+
+bool isDtlsPacket(Uint8List buf, int offset, int arrayLen) {
+  return arrayLen > 0 && buf[offset] >= 20 && buf[offset] <= 63;
 }
 
 class DecodeDtlsMessageResult {
