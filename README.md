@@ -40,7 +40,7 @@ GitHub: [examples](https://github.com/your-repo/webrtc_dart/tree/main/example)
 ```bash
 dart lib/src/dtls/examples/server/tls_ecdh_aes_128.dart
 dart lib/src/dtls/examples/server/psk_ccm8.dart
-dart lib/src/dtls/crypto/crypto_ccm.dart
+dart lib/src/dtls/examples/server/psk_ccm.dart
 ```
 
 
