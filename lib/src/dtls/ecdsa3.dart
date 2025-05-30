@@ -59,42 +59,42 @@ bool ecdsaVerify2(
 //   return result;
 // }
 
-// void main() {
-//   var ec = getP256();
-//   var priv = ec.generatePrivateKey();
-//   var pub = priv.publicKey;
-//   print(priv);
-//   print(pub);
-//   var hashHex =
-//       'b94d27b9934d3e08a52e52d7da7dabfac484efe37a5380ee9088f7ace2efcde9';
-//   var hash = hexDecode(hashHex);
-//   print("hash: $hash");
-
-//   var sig = signature(priv, hash);
-
-//   var result = verify(pub, hash, sig);
-//   assert(result);
-// }
 void main() {
   var ec = getP256();
   var priv = ec.generatePrivateKey();
   var pub = priv.publicKey;
-
-  print("public key: ${hexDecode(pub.toHex()).length}");
-  print("priv: ${priv.bytes.length}");
-  print("public key: ${hexDecode(pub.X.toRadixString(16)).length}");
-
+  print(priv);
+  print(pub);
   var hashHex =
       'b94d27b9934d3e08a52e52d7da7dabfac484efe37a5380ee9088f7ace2efcde9';
   var hash = hexDecode(hashHex);
-  final signatureBytes = ecdsaSign(priv.bytes, hash);
+  // print("hash: $hash");
 
-  // var result = ecdsaVerify(hexDecode(pub.toHex()), hash, signatureBytes);
-  var result = ecdsaVerify(hexDecode(pub.toHex()), hash, signatureBytes);
+  var sig = signature(priv, hash);
 
+  var result = verify(pub, hash, sig);
   print("Is verified: $result");
-  // return (
-  //   privateKey: Uint8List.fromList(priv.bytes),
-  //   publicKey: Uint8List.fromList(hexDecode(pub.toHex()))
-  // );
 }
+// void main() {
+//   var ec = getP256();
+//   var priv = ec.generatePrivateKey();
+//   var pub = priv.publicKey;
+
+//   print("public key: ${hexDecode(pub.toHex()).length}");
+//   print("priv: ${priv.bytes.length}");
+//   print("public key: ${hexDecode(pub.X.toRadixString(16)).length}");
+
+//   var hashHex =
+//       'b94d27b9934d3e08a52e52d7da7dabfac484efe37a5380ee9088f7ace2efcde9';
+//   var hash = hexDecode(hashHex);
+//   final signatureBytes = ecdsaSign(priv.bytes, hash);
+
+//   // var result = ecdsaVerify(hexDecode(pub.toHex()), hash, signatureBytes);
+//   var result = ecdsaVerify(hexDecode(pub.toHex()), hash, signatureBytes);
+
+//   print("Is verified: $result");
+//   // return (
+//   //   privateKey: Uint8List.fromList(priv.bytes),
+//   //   publicKey: Uint8List.fromList(hexDecode(pub.toHex()))
+//   // );
+// }

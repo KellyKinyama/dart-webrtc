@@ -121,6 +121,14 @@ packages:
       url: "https://pub.dev"
     source: hosted
     version: "3.0.6"
+  crypto_keys:
+    dependency: transitive
+    description:
+      name: crypto_keys
+      sha256: acc19abf34623d990a0e8aec69463d74a824c31f137128f42e2810befc509ad0
+      url: "https://pub.dev"
+    source: hosted
+    version: "0.3.0+1"
   cryptography:
     dependency: "direct main"
     description:
@@ -361,6 +369,14 @@ packages:
       url: "https://pub.dev"
     source: hosted
     version: "2.2.0"
+  quiver:
+    dependency: transitive
+    description:
+      name: quiver
+      sha256: ea0b925899e64ecdfbf9c7becb60d5b50e706ade44a85b2363be2a22d88117d2
+      url: "https://pub.dev"
+    source: hosted
+    version: "3.2.2"
   sdp_transform:
     dependency: "direct main"
     description:
@@ -569,6 +585,14 @@ packages:
       url: "https://pub.dev"
     source: hosted
     version: "0.1.1"
+  x509b:
+    dependency: "direct main"
+    description:
+      name: x509b
+      sha256: bc306b48b23825fcfa4946b34ffd2a9aae9f3f4b3a128c717c40994e35939622
+      url: "https://pub.dev"
+    source: hosted
+    version: "0.2.5"
   yaml:
     dependency: transitive
     description:

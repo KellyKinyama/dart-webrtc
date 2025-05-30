@@ -25,6 +25,7 @@ dependencies:
   sdp_transform: ^0.3.2
   uuid: ^4.5.1
   x25519: ^0.1.1
+  x509b: ^0.2.5
 
 dev_dependencies:
   lints: ^5.0.0
