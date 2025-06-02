@@ -2,13 +2,17 @@ import 'dart:io';
 import 'dart:math';
 import 'dart:typed_data';
 
+import 'package:dart_webrtc/src/dtls/handshake/alert.dart';
+import 'package:dart_webrtc/src/dtls/tests/verify_ecdsa_256_cert1.dart';
+
+import '../examples/server/dtls_server.dart';
 import '../handshake/application.dart';
 import '../handshake/change_cipher_spec.dart';
 import '../handshake/handshake.dart';
 import '../handshake/server_key_exchange.dart';
 import 'package:hex/hex.dart';
 
-import '../cert_utils.dart';
+// import '../cert_utils.dart';
 import '../crypto.dart';
 import '../dtls_message.dart';
 import '../dtls_state.dart';
@@ -27,6 +31,7 @@ import '../handshake/server_hello_done.dart';
 import '../handshake/tls_random.dart';
 import '../key_exchange_algorithm.dart';
 import '../record_layer_header.dart';
+// import '../tests/verify_ecdsa_256_cert1.dart';
 
 HandshakeContext context = HandshakeContext();
 
@@ -35,8 +40,9 @@ class HandshakeManager {
 
   RawDatagramSocket socket;
   late int port;
+  EcdsaCert serverEcCertificate;
 
-  HandshakeManager(this.socket);
+  HandshakeManager(this.socket, this.serverEcCertificate);
 
   (BytesBuilder, String, bool?) concatHandshakeMessageTo(
       BytesBuilder result,
@@ -174,6 +180,10 @@ class HandshakeManager {
   Future<bool?> processIncomingMessage(
       HandshakeContext context, DecodeDtlsMessageResult incomingMessage) async {
     var message = incomingMessage.message;
+    if (message == null) {
+      print("Incoming on null message: $incomingMessage");
+      throw Exception("Incoming message is null");
+    }
     // try {
     //   (message, _, _) = incomingMessage.message;
     // } catch (e, st) {
@@ -210,12 +220,21 @@ class HandshakeManager {
             await sendMessage(context, helloVerifyRequestResponse);
             return null;
           case Flight.Flight2:
-            if (message.cookie.length == 0) {
-              context.flight = Flight.Flight0;
-              // logging.Errorf(logging.ProtoDTLS, "Expected not empty Client Hello Cookie but <nil> found!")
+            if (message.cookie.isEmpty) {
+              context.dTLSState = DTLSState.DTLSStateConnecting;
+              context.protocolVersion = message.client_version;
+              context.cookie = generateDtlsCookie();
+              // logging.Descf(logging.ProtoDTLS, "DTLS Cookie was generated and set to <u>0x%x</u> in handshake context (<u>%d bytes</u>).", context.Cookie, len(context.Cookie))
+              context.clientRandom = message.random;
+              context.flight = Flight.Flight2;
               // logging.Descf(logging.ProtoDTLS, "Running into <u>Flight %d</u>.", context.Flight)
               // logging.LineSpacer(2)
+              final helloVerifyRequestResponse =
+                  createDtlsHelloVerifyRequest(context);
+              await sendMessage(context, helloVerifyRequestResponse);
               return null;
+            } else {
+              print("Received cookie: ${message.cookie}");
             }
             // if (!bytes.Equal(context.cookie, message.cookie)) {
             // 	throw ("client hello cookie is invalid");
@@ -231,7 +250,7 @@ class HandshakeManager {
             final extensionList = message.extensions;
 
             for (var extensionItem in extensionList) {
-              // print("Extension runtime type: ${extensionItem.runtimeType}");
+              print("Extension runtime type: ${extensionItem.runtimeType}");
               // switch (extensionItem) {
               //   case ExtensionType.ExtensionTypeSupportedEllipticCurves:
               //     final negotiatedCurve = negotiateOnCurves(extensionItem);
@@ -267,13 +286,15 @@ class HandshakeManager {
             print("Server random length: ${serverRandomBytes.length}");
 
             // var keys2 = generateKeys();
-            var keys = generateP256Keys();
+            // var keys = generateP256Keys();
             // if err != nil {
             // 	return m.setStateFailed(context, err)
             // }
 
-            context.serverPublicKey = keys.publicKey;
-            context.serverPrivateKey = keys.privateKey;
+            // context.serverPublicKey = keys.publicKey;
+            // context.serverPrivateKey = keys.privateKey;
+            context.serverPublicKey = serverEcCertificate.publickKey;
+            context.serverPrivateKey = serverEcCertificate.privateKey;
             //logging.Descf(//logging.ProtoDTLS, "We generated Server Public and Private Key pair via <u>%s</u>, set in handshake context. Public Key: <u>0x%x</u>", context.Curve, context.ServerPublicKey)
 
             //logging.Descf(//logging.ProtoDTLS, "Generating ServerKeySignature. It will be sent to client via ServerKeyExchange DTLS message further.")
@@ -310,6 +331,11 @@ class HandshakeManager {
           default:
             {
               print("Unhandle flight: ${context.flight}");
+
+              context.flight = Flight.Flight0;
+
+              //  await processIncomingMessage(context, incomingMessage);
+              //  return null;
             }
         }
       case Certificate:
@@ -414,8 +440,12 @@ class HandshakeManager {
       case ApplicationData:
         sendMessage(context, message);
 
+      // case Alert:
+      //   print("Un handled message: $message");
+
       default:
         {
+          context.flight = Flight.Flight0;
           print("Un handled message: $message");
         }
     }
@@ -442,8 +472,10 @@ class HandshakeManager {
     // return Certificate(certificate: [
     //   Uint8List.fromList(pemToBytes(generateKeysAndCertificate()))
     // ]);
-    return Certificate(
-        certificate: [Uint8List.fromList(generateKeysAndCertificate())]);
+    // return Certificate(
+    //     certificate: [Uint8List.fromList(generateKeysAndCertificate())]);
+
+    return Certificate(certificate: [serverEcCertificate.cert]);
 
     //  final parsed = ASN1Sequence.fromBytes(
     //     Uint8List.fromList(pemToBytes(generateKeysAndCertificate())));
@@ -588,7 +620,7 @@ class HandshakeManager {
         messageToSend = encryptedMessage;
       }
     }
-
+    print("Sending message: ${message.runtimeType}");
     socket.send(messageToSend, socket.address, port);
     context.increaseServerSequence();
   }

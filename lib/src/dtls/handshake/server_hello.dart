@@ -58,7 +58,8 @@ class ServerHello {
       ..buffer.asByteData().setUint16(0, cipher_suite, Endian.big));
 
     bb.addByte(compression_method);
-    bb.add(encodeExtensions(extensions));
+    bb.add(extensionsData!);
+    // bb.add(encodeExtensions(extensions));
 
     // result = append(result, m.CompressionMethodID)
 
@@ -94,8 +95,8 @@ class ServerHello {
     bb.addByte(compression_method);
 
     // Write Extensions
-    // bb.add(encodeExtensionMap(extensions));
-    bb.add(extensionsData!);
+    bb.add(encodeExtensionMap());
+    // bb.add(extensionsData!);
 
     // Debug prints to check buffer sizes and offsets
     // print('Total Size: $totalSize');
@@ -245,6 +246,27 @@ class ServerHello {
   //   // result = append(result, encodedBody...)
   //   return bb.toBytes();
   // }
+
+  Uint8List encodeExtensionMap() {
+    Uint8List result = Uint8List(2);
+    Uint8List encodedBody = Uint8List(0);
+    for (Extension extension in extensions) {
+      final encodedExtension = extension.encode();
+      final encodedExtType = Uint8List(2);
+      ByteData bd = ByteData.sublistView(encodedExtType);
+      bd.setUint16(0, extension.extensionType().value);
+      encodedBody = Uint8List.fromList([...encodedBody, ...encodedExtType]);
+
+      final encodedExtLen = Uint8List(2);
+      bd = ByteData.sublistView(encodedExtLen);
+      bd.setUint16(0, encodedExtension.length);
+      encodedBody = Uint8List.fromList(
+          [...encodedBody, ...encodedExtLen, ...encodedExtension]);
+    }
+    ByteData.sublistView(result).setUint16(0, encodedBody.length);
+    result = Uint8List.fromList([...result, ...encodedBody]);
+    return result;
+  }
 }
 
 void main() {

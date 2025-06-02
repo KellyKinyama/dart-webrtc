@@ -3,13 +3,36 @@ import 'dart:typed_data';
 
 import 'package:basic_utils/basic_utils.dart';
 import 'package:crypto/crypto.dart' as crypto;
-import 'package:dart_webrtc/src/dtls/hex2.dart';
-import 'package:ecdsa/ecdsa.dart' as ecdsa;
-import 'package:elliptic/elliptic.dart' as ec;
-import 'package:pointycastle/export.dart' as pc;
-import 'package:asn1lib/asn1lib.dart';
+// import 'package:dart_webrtc/src/dtls/hex2.dart';
+// import 'package:ecdsa/ecdsa.dart' as ecdsa;
+// import 'package:elliptic/elliptic.dart' as ec;
+// import 'package:pointycastle/export.dart' as pc;
+// import 'package:asn1lib/asn1lib.dart';
 
+import '../../../signal/fingerprint.dart';
 import '../ecdsa3.dart'; // Assuming this file contains ecdsaSign and ecdsaVerify
+
+// Private Key PEM:
+const constEcPubKey = """-----BEGIN EC PRIVATE KEY-----
+MHcCAQEEIH20P2HOwfaKhh/GuaB+1bGJPRnOravjwj3guXHHfKa6oAoGCCqGSM49
+AwEHoUQDQgAE6vBg4dCF5EpP/F9QJfzf08pZyMPkStHKKnLsWctLpQ7OH9X08/8X
+oPw+4fpsFMkuJGNdeqR5fmZgsGQT+HcwKg==
+-----END EC PRIVATE KEY-----""";
+
+// Public Key PEM:
+const constPubKey = """-----BEGIN PUBLIC KEY-----
+MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAE6vBg4dCF5EpP/F9QJfzf08pZyMPk
+StHKKnLsWctLpQ7OH9X08/8XoPw+4fpsFMkuJGNdeqR5fmZgsGQT+HcwKg==
+-----END PUBLIC KEY-----""";
+
+const constCert = """-----BEGIN CERTIFICATE-----
+MIIBHDCBwaADAgECAgEBMAwGCCqGSM49BAMCBQAwFjEUMBIGA1UEAxMLU2VsZi1T
+aWduZWQwHhcNMjUwNjAxMTMzMzAwWhcNMjYwNjAxMTMzMzAwWjAWMRQwEgYDVQQD
+EwtTZWxmLVNpZ25lZDBZMBMGByqGSM49AgEGCCqGSM49AwEHA0IABOrwYOHQheRK
+T/xfUCX839PKWcjD5ErRyipy7FnLS6UOzh/V9PP/F6D8PuH6bBTJLiRjXXqkeX5m
+YLBkE/h3MCowDAYIKoZIzj0EAwIFAANIADBFAiEAqZR1wnX+hs/BeU4V0NlumNfr
+bnWc/Ig47ou5PknNix4CIGbfTkFDVnBFEj1YOqoMyNreTnCFA6pGVZbiMvSdkz+e
+-----END CERTIFICATE-----""";
 
 class EcdsaCert {
   Uint8List cert;
@@ -17,6 +40,15 @@ class EcdsaCert {
   Uint8List publickKey; // Raw public key (uncompressed point)
   EcdsaCert(
       {required this.privateKey, required this.publickKey, required this.cert});
+
+  // factory EcdsaCert.fromPem({required String certPem, required String publickKeyPem, required String privateKeyPem}){
+
+  // }
+
+  // factory EcdsaCert.fromConstPem(){
+  //   X509Utils.
+
+  // }
 }
 
 EcdsaCert generateSelfSignedCertificate() {
@@ -30,11 +62,11 @@ EcdsaCert generateSelfSignedCertificate() {
 
   // Encode private key to PEM
   String privateKeyPem = CryptoUtils.encodeEcPrivateKeyToPem(privKey);
-  // print("Private Key PEM:\n$privateKeyPem\n");
+  print("Private Key PEM:\n$privateKeyPem\n");
 
   // Encode public key to PEM
   String publicKeyPem = CryptoUtils.encodeEcPublicKeyToPem(pubKey);
-  // print("Public Key PEM:\n$publicKeyPem\n");
+  print("Public Key PEM:\n$publicKeyPem\n");
 
   var x509PEM = X509Utils.generateSelfSignedCertificate(
     privKey,
@@ -47,12 +79,13 @@ EcdsaCert generateSelfSignedCertificate() {
   Uint8List rawPrivateKey = _encodeECPrivateKeyToRaw(privKey);
 
   // print("Raw Public Key length: ${rawPublicKey.length}");
+  final certDer = decodePemToDer(x509PEM);
 
-  // print("Certificate PEM:\n$x509PEM\n");
+  print("Certificate finger print: ${fingerprint(certDer)}");
+
+  print("Certificate PEM:\n$x509PEM\n");
   return EcdsaCert(
-      privateKey: rawPrivateKey,
-      publickKey: rawPublicKey,
-      cert: decodePemToDer(x509PEM));
+      privateKey: rawPrivateKey, publickKey: rawPublicKey, cert: certDer);
 }
 
 // Helper to decode PEM to DER (your existing function)
@@ -108,7 +141,7 @@ Uint8List decodePemToDer(pem) {
 Uint8List _encodeECPublicKeyToRaw(ECPublicKey publicKey) {
   // Pointy Castle's ECPublicKey stores the Q (point)
   // For prime256v1, coordinates are 32 bytes.
-  final expectedByteLength = (publicKey.parameters!.curve.fieldSize + 7) ~/ 8;
+  // final expectedByteLength = (publicKey.parameters!.curve.fieldSize + 7) ~/ 8;
 
   // Use toBytesPadded directly on the BigInt from the ECPoint
   final paddedX = bigIntToUint8List(
@@ -148,6 +181,21 @@ ByteData bigIntToByteData(BigInt bigInt) {
   return data;
 }
 
+// Uint8List Uint8ListBigInt(BigInt bigInt) =>
+//     bigIntToByteData(bigInt).buffer.asUint8List();
+
+// ByteData bigIntToByteData(BigInt bigInt) {
+//   final data = ByteData((bigInt.bitLength / 8).ceil());
+//   var _bigInt = bigInt;
+
+//   for (var i = 1; i <= data.lengthInBytes; i++) {
+//     data.setUint8(data.lengthInBytes - i, _bigInt.toUnsigned(8).toInt());
+//     _bigInt = _bigInt >> 8;
+//   }
+
+//   return data;
+// }
+
 void testCertificateVerify() {
   //test ECDSA256
   final certificateEcdsa256 = generateSelfSignedCertificate();
@@ -168,34 +216,43 @@ void testCertificateVerify() {
   print("Verification ${verified ? 'successful!' : 'failed'}");
 }
 
-// void main() {
-//   testCertificateVerify();
-// }
-
 void main() {
-  final certificateEcdsa256 = generateSelfSignedCertificate();
-  // var ec = getP256();
-  // var priv = certificateEcdsa256.privateKey;
-  final priv =
-      ec.PrivateKey.fromBytes(ec.getP256(), certificateEcdsa256.privateKey);
-
-  // var pub = priv.publicKey;
-  final pub = ec.PublicKey.fromHex(
-      ec.getP256(), hexEncode(certificateEcdsa256.publickKey));
-  print("priv: ${priv.toHex()}");
-  print("public key:          ${pub.toHex()}");
-  print("Expected public key: ${hexEncode(certificateEcdsa256.publickKey)}");
-  // var hashHex =
-  //     'b94d27b9934d3e08a52e52d7da7dabfac484efe37a5380ee9088f7ace2efcde9';
-  // var hash = hexDecode(hashHex);
-  final hash = crypto.sha256.convert(plainText).bytes;
-  // print("hash: $hash");
-
-  var sig = ecdsa.signature(priv, hash);
-
-  var result = ecdsa.verify(pub, hash, sig);
-  print("Is verified: $result");
+  testCertificateVerify();
 }
+
+// void main() {
+//   final certificateEcdsa256 = generateSelfSignedCertificate();
+//   // var ec = getP256();
+//   // var priv = certificateEcdsa256.privateKey;
+//   final priv =
+//       ec.PrivateKey.fromBytes(ec.getP256(), certificateEcdsa256.privateKey);
+
+//   // var pub = priv.publicKey;
+//   final pub = ec.PublicKey.fromHex(
+//       ec.getP256(), hexEncode(certificateEcdsa256.publickKey));
+//   print("priv: ${priv.toHex()}");
+//   print("public key:          ${pub.toHex()}");
+//   print("Expected public key: ${hexEncode(certificateEcdsa256.publickKey)}");
+//   // var hashHex =
+//   //     'b94d27b9934d3e08a52e52d7da7dabfac484efe37a5380ee9088f7ace2efcde9';
+//   // var hash = hexDecode(hashHex);
+//   final hash = crypto.sha256.convert(plainText).bytes;
+//   // print("hash: $hash");
+
+//   var sig = ecdsa.signature(priv, hash);
+//   print("Signature:     $sig");
+//   print("Sig ASN1:      ${sig.toASN1Hex()}");
+//   print("Sig Der Hex:   ${sig.toDERHex()}");
+//   // print("Sig Compact Hex:   ${sig.toCompactHex()}");
+
+//   var sig2 = ecdsaSign(certificateEcdsa256.privateKey, hash);
+//   print("ecdsaSign:     ${hexEncode(sig2)}");
+
+//   var result = ecdsa.verify(pub, hash, ecdsa.Signature.fromASN1(sig2));
+//   print("Is verified: $result");
+//   final verified = ecdsaVerify(certificateEcdsa256.publickKey, hash, sig2);
+//   print("Is ecdsa verified: $verified");
+// }
 
 final plainText = Uint8List.fromList([
   0x6f,

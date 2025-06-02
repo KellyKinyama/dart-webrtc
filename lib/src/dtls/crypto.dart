@@ -74,14 +74,16 @@ enum EllipticCurveType {
 
 enum ECCurveType {
   //  deprecated (1..2),
-  NAMED_CURVE(3);
+  NAMED_CURVE(3),
+  Unsupported(6555);
   //  reserved(248..255)
 
   const ECCurveType(this.value);
   final int value;
 
   factory ECCurveType.fromInt(int key) {
-    return values.firstWhere((element) => element.value == key);
+    return values.firstWhere((element) => element.value == key,
+        orElse: () => ECCurveType.Unsupported);
   }
 }
 
@@ -112,7 +114,10 @@ enum NamedCurve {
   final int value;
 
   factory NamedCurve.fromInt(int key) {
-    return values.firstWhere((element) => element.value == key);
+    return values.firstWhere(
+      (element) => element.value == key,
+      orElse: () => NamedCurve.Unsupported,
+    );
   }
 }
 

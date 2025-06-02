@@ -85,7 +85,7 @@ class ClientHello {
         decodeExtensions(data, offset, data.length);
 
     offset = decodedExtensions;
-    // print("extensions: $extensions");
+    print("extensions: $extensions");
 
     return (
       ClientHello(

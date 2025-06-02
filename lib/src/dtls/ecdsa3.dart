@@ -9,10 +9,11 @@ List<int> ecdsaSign(List<int> privateKeyBytes, List<int> hash) {
 
   final sig = signature(priv, hash);
 
-  final encoded = ASN1Sequence(elements: [
-    ASN1Integer(sig.R),
-    ASN1Integer(sig.S),
-  ]).encode();
+  // final encoded = ASN1Sequence(elements: [
+  //   ASN1Integer(sig.R),
+  //   ASN1Integer(sig.S),
+  // ]).encode();
+  final encoded = sig.toASN1();
 
   return encoded;
 }
@@ -20,7 +21,9 @@ List<int> ecdsaSign(List<int> privateKeyBytes, List<int> hash) {
 bool ecdsaVerify(
     List<int> publicKeyBytes, List<int> hash, List<int> signatureBytes) {
   final pub = PublicKey.fromHex(getP256(), hexEncode(publicKeyBytes));
-  var result = verify(pub, hash, Signature.fromCompact(signatureBytes));
+  var result = verify(pub, hash, Signature.fromASN1(signatureBytes)
+      //  Signature.fromCompact(signatureBytes)
+      );
   // print("Is verified: $result");
   return result;
 }
