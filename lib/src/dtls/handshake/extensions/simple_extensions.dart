@@ -20,10 +20,12 @@ enum SRTPProtectionProfile {
 }
 
 class ExtUseExtendedMasterSecret extends Extension {
+  @override
   ExtensionTypeValue extensionType() {
     return ExtensionTypeValue.UseExtendedMasterSecret;
   }
 
+  @override
   Uint8List encode() {
     return Uint8List(0);
   }
@@ -238,10 +240,10 @@ class ExtSupportedEllipticCurves extends Extension {
     bd.setUint16(offset, curves.length);
     offset += 2;
     for (int i = 0; i < curves.length; i++) {
-      // if (curves[i] != NamedCurve.Unsupported) {
-      bd.setUint16(offset, curves[i].value);
-      offset += 2;
-      // }
+      if (curves[i] == NamedCurve.prime256v1) {
+        bd.setUint16(offset, curves[i].value);
+        offset += 2;
+      }
     }
     return result;
   }

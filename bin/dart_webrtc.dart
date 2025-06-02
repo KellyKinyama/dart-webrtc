@@ -14,7 +14,7 @@ import 'package:dart_webrtc/src/stun3/stun_server8.dart' as stun;
 // import 'package:dart_tls/dart_tls.dart' as dart_tls;
 
 void main(List<String> arguments) {
-  String ip = "192.168.160.1";
+  String ip = "10.100.53.194";
   // String ip = "127.0.0.1";
   int port = 4444;
 

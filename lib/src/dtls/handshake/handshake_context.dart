@@ -1,5 +1,6 @@
 import 'dart:typed_data';
 
+import '../../dtls3/extensions.dart';
 import '../crypto/crypto_ccm.dart';
 import '../crypto/crypto_ccm8.dart';
 
@@ -76,7 +77,7 @@ class HandshakeContext {
 
   Uint8List? keyingMaterialCache;
 
-  List<Extension> extensions = [];
+  Map<ExtensionTypeValue, Extension> extensions = {};
 
   var compression_methods;
 

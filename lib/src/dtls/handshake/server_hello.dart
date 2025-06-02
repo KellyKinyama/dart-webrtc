@@ -1,9 +1,10 @@
 import 'dart:typed_data';
 
+import '../../dtls3/extensions.dart';
 import '../crypto.dart';
-import 'extensions/extensions.dart';
+// import 'extensions/extensions.dart';
 
-import 'extension.dart';
+// import 'extension.dart';
 import 'handshake.dart';
 import 'tls_random.dart';
 
@@ -17,7 +18,7 @@ class ServerHello {
   List<int> session_id;
   int cipher_suite;
   int compression_method;
-  List<Extension> extensions;
+  Map<ExtensionTypeValue, Extension> extensions;
   Uint8List? extensionsData;
 
   ServerHello(
@@ -59,7 +60,7 @@ class ServerHello {
 
     bb.addByte(compression_method);
     bb.add(extensionsData!);
-    // bb.add(encodeExtensions(extensions));
+    // bb.add(encodeExtensionMap());
 
     // result = append(result, m.CompressionMethodID)
 
@@ -95,7 +96,7 @@ class ServerHello {
     bb.addByte(compression_method);
 
     // Write Extensions
-    bb.add(encodeExtensionMap());
+    bb.add(encodeExtensionMap(extensions));
     // bb.add(extensionsData!);
 
     // Debug prints to check buffer sizes and offsets
@@ -155,7 +156,7 @@ class ServerHello {
     print("Compression methods: $ompressionMethodID");
 
     final (extensions, decodedExtensions) =
-        decodeExtensions(data, offset, data.length);
+        decodeExtensionMap(data, offset, data.length);
     print("extensions: $extensions");
 
     return (
@@ -247,26 +248,26 @@ class ServerHello {
   //   return bb.toBytes();
   // }
 
-  Uint8List encodeExtensionMap() {
-    Uint8List result = Uint8List(2);
-    Uint8List encodedBody = Uint8List(0);
-    for (Extension extension in extensions) {
-      final encodedExtension = extension.encode();
-      final encodedExtType = Uint8List(2);
-      ByteData bd = ByteData.sublistView(encodedExtType);
-      bd.setUint16(0, extension.extensionType().value);
-      encodedBody = Uint8List.fromList([...encodedBody, ...encodedExtType]);
+  // Uint8List encodeExtensionMap() {
+  //   Uint8List result = Uint8List(2);
+  //   Uint8List encodedBody = Uint8List(0);
+  //   for (Extension extension in extensions) {
+  //     final encodedExtension = extension.encode();
+  //     final encodedExtType = Uint8List(2);
+  //     ByteData bd = ByteData.sublistView(encodedExtType);
+  //     bd.setUint16(0, extension.extensionType().value);
+  //     encodedBody = Uint8List.fromList([...encodedBody, ...encodedExtType]);
 
-      final encodedExtLen = Uint8List(2);
-      bd = ByteData.sublistView(encodedExtLen);
-      bd.setUint16(0, encodedExtension.length);
-      encodedBody = Uint8List.fromList(
-          [...encodedBody, ...encodedExtLen, ...encodedExtension]);
-    }
-    ByteData.sublistView(result).setUint16(0, encodedBody.length);
-    result = Uint8List.fromList([...result, ...encodedBody]);
-    return result;
-  }
+  //     final encodedExtLen = Uint8List(2);
+  //     bd = ByteData.sublistView(encodedExtLen);
+  //     bd.setUint16(0, encodedExtension.length);
+  //     encodedBody = Uint8List.fromList(
+  //         [...encodedBody, ...encodedExtLen, ...encodedExtension]);
+  //   }
+  //   ByteData.sublistView(result).setUint16(0, encodedBody.length);
+  //   result = Uint8List.fromList([...result, ...encodedBody]);
+  //   return result;
+  // }
 }
 
 void main() {

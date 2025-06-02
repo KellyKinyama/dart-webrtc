@@ -249,30 +249,30 @@ class HandshakeManager {
             // Convert map entries to a list
             final extensionList = message.extensions;
 
-            for (var extensionItem in extensionList) {
-              print("Extension runtime type: ${extensionItem.runtimeType}");
-              // switch (extensionItem) {
-              //   case ExtensionType.ExtensionTypeSupportedEllipticCurves:
-              //     final negotiatedCurve = negotiateOnCurves(extensionItem);
-              //     // if err != nil {
-              //     // 	return m.setStateFailed(context, err)
-              //     // }
-              //     context.curve = negotiatedCurve;
-              //   //logging.Descf(//logging.ProtoDTLS, "Negotiation on curves: Client sent a list of curves, server selected one of them (mutually supported), and assigned in handshake context: <u>%s</u>", negotiatedCurve)
-              //   case ExtensionType.ExtensionTypeUseSRTP:
-              //     final negotiatedProtectionProfile =
-              //         negotiateOnSRTPProtectionProfiles(
-              //             extensionItem.ProtectionProfiles);
-              //     // if err != nil {
-              //     // 	return m.setStateFailed(context, err)
-              //     // }
-              //     context.srtpProtectionProfile = negotiatedProtectionProfile;
-              //   //logging.Descf(//logging.ProtoDTLS, "Negotiation on SRTP protection profiles: Client sent a list of SRTP protection profiles, server selected one of them (mutually supported), and assigned in handshake context: <u>%s</u>", negotiatedProtectionProfile)
-              //   case ExtensionType.ExtensionTypeUseExtendedMasterSecret:
-              //     context.UseExtendedMasterSecret = true;
-              //   //logging.Descf(//logging.ProtoDTLS, "Client sent UseExtendedMasterSecret extension, client wants to use ExtendedMasterSecret. We will generate the master secret via extended way further.")
-              // }
-            }
+            //for (var extensionItem in extensionList) {
+            //  print("Extension runtime type: ${extensionItem.runtimeType}");
+            // switch (extensionItem) {
+            //   case ExtensionType.ExtensionTypeSupportedEllipticCurves:
+            //     final negotiatedCurve = negotiateOnCurves(extensionItem);
+            //     // if err != nil {
+            //     // 	return m.setStateFailed(context, err)
+            //     // }
+            //     context.curve = negotiatedCurve;
+            //   //logging.Descf(//logging.ProtoDTLS, "Negotiation on curves: Client sent a list of curves, server selected one of them (mutually supported), and assigned in handshake context: <u>%s</u>", negotiatedCurve)
+            //   case ExtensionType.ExtensionTypeUseSRTP:
+            //     final negotiatedProtectionProfile =
+            //         negotiateOnSRTPProtectionProfiles(
+            //             extensionItem.ProtectionProfiles);
+            //     // if err != nil {
+            //     // 	return m.setStateFailed(context, err)
+            //     // }
+            //     context.srtpProtectionProfile = negotiatedProtectionProfile;
+            //   //logging.Descf(//logging.ProtoDTLS, "Negotiation on SRTP protection profiles: Client sent a list of SRTP protection profiles, server selected one of them (mutually supported), and assigned in handshake context: <u>%s</u>", negotiatedProtectionProfile)
+            //   case ExtensionType.ExtensionTypeUseExtendedMasterSecret:
+            //     context.UseExtendedMasterSecret = true;
+            //   //logging.Descf(//logging.ProtoDTLS, "Client sent UseExtendedMasterSecret extension, client wants to use ExtendedMasterSecret. We will generate the master secret via extended way further.")
+            // }
+            //}
 // print("Client random: ${}")
             // context.clientRandom = message.random;
             //logging.Descf(//logging.ProtoDTLS, "Client sent Client Random, it set to <u>0x%x</u> in handshake context.", message.Random.Encode())
@@ -522,8 +522,7 @@ class HandshakeManager {
     // }
 
     // print("EXtensions: ${context.extensions}");
-
-    return ServerHello(
+    final serverHellMgs = ServerHello(
         ProtocolVersion(254, 253),
         context.serverRandom,
         context.session_id.length,
@@ -532,6 +531,10 @@ class HandshakeManager {
         context.compression_methods[0],
         context.extensions,
         extensionsData: context.extensionsData);
+
+    print("ServerHello: $serverHellMgs");
+
+    return serverHellMgs;
   }
 
   CipherSuiteId negotiateOnCipherSuiteIDs(List<CipherSuiteId> cipherSuiteIDs) {
