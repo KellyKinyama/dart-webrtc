@@ -16,7 +16,7 @@ void handleDtls(
 
     handshakeManager!.port = d.port;
   }
-  print("recieved data ...");
+  print("recieved data: ${d.data}");
   // HandshakeContext context = HandshakeContext();
   // final dtlsMsg =
   //     DecodeDtlsMessageResult.decode(context, d.data, 0, d.data.length);

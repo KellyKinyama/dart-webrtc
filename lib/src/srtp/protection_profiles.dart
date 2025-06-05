@@ -1,6 +1,6 @@
 import 'dart:typed_data';
 
-import 'package:dartls/src/srtp/crypto_gcm.dart';
+import 'crypto_gcm.dart';
 
 // typedef ProtectionProfile = int;
 

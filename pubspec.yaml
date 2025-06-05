@@ -20,6 +20,7 @@ dependencies:
   dtls2: ^0.18.1
   ecdsa: ^0.1.2
   elliptic: ^0.3.11
+  events_emitter: ^0.5.2
   hex: ^0.2.0
   pointycastle: ^3.9.1
   sdp_transform: ^0.3.2

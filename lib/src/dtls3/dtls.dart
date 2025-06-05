@@ -38,19 +38,19 @@ class ProtocolVersion {
   String toString() => '$major.$minor';
 }
 
-class Random {
+class DtlsRandom {
   Uint8List gmtUnixTime;
   Uint8List bytes;
 
-  Random({required this.gmtUnixTime, required this.bytes});
+  DtlsRandom({required this.gmtUnixTime, required this.bytes});
 
-  static (Random, int) decode(Uint8List buf, int offset) {
+  static (DtlsRandom, int) decode(Uint8List buf, int offset) {
     final reader = ByteData.sublistView(buf);
     final gmt = buf.sublist(offset, offset + 4);
     offset += 4;
     final randBytes = buf.sublist(offset, offset + 28);
     offset += 28;
-    return (Random(gmtUnixTime: gmt, bytes: randBytes), offset);
+    return (DtlsRandom(gmtUnixTime: gmt, bytes: randBytes), offset);
   }
 
   Uint8List encode() {
@@ -60,9 +60,13 @@ class Random {
     return builder.toBytes();
   }
 
+  // @override
+  // String toString() =>
+  //     'Random(gmt: ${gmtUnixTime.map((b) => b.toRadixString(16).padLeft(2, '0')).join()}, bytes: ${bytes.map((b) => b.toRadixString(16).padLeft(2, '0')).join()})';
+
   @override
   String toString() =>
-      'Random(gmt: ${gmtUnixTime.map((b) => b.toRadixString(16).padLeft(2, '0')).join()}, bytes: ${bytes.map((b) => b.toRadixString(16).padLeft(2, '0')).join()})';
+      'Random(gmt: ${gmtUnixTime.map((b) => b.toRadixString(16).padLeft(2, '0')).join()}, bytes: $bytes)';
 }
 
 enum CipherSuiteId {
@@ -100,29 +104,44 @@ enum CipherSuiteId {
   }
 }
 
+// enum ContentType {
+//   Handshake(22),
+//   Unsupported(0);
+
+//   const ContentType(this.value);
+//   final int value;
+
+//   factory ContentType.fromInt(int val) {
+//     return values.firstWhere((e) => e.value == val,
+//         orElse: () => ContentType.Unsupported);
+//   }
+// }
+
 enum ContentType {
-  Handshake(22),
+  changeCipherSpec(20),
+  alert(21),
+  handshake(22),
+  applicationData(23),
   Unsupported(0);
 
   const ContentType(this.value);
   final int value;
 
-  factory ContentType.fromInt(int val) {
-    return values.firstWhere((e) => e.value == val,
-        orElse: () => ContentType.Unsupported);
+  factory ContentType.fromInt(int key) {
+    return values.firstWhere((element) => element.value == key);
   }
 }
 
-enum HandshakeType {
-  ClientHello(1),
-  ServerHello(2),
-  Unsupported(0);
+// enum HandshakeType {
+//   ClientHello(1),
+//   ServerHello(2),
+//   Unsupported(0);
 
-  const HandshakeType(this.value);
-  final int value;
+//   const HandshakeType(this.value);
+//   final int value;
 
-  factory HandshakeType.fromInt(int val) {
-    return values.firstWhere((e) => e.value == val,
-        orElse: () => HandshakeType.Unsupported);
-  }
-}
+//   factory HandshakeType.fromInt(int val) {
+//     return values.firstWhere((e) => e.value == val,
+//         orElse: () => HandshakeType.Unsupported);
+//   }
+// }

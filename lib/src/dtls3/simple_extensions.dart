@@ -19,8 +19,10 @@ enum SRTPProtectionProfile {
   @override
   String toString() {
     switch (this) {
-      case SRTPProtectionProfile_AEAD_AES_128_GCM: return "SRTPProtectionProfile_AEAD_AES_128_GCM";
-      default: return "Unsupported";
+      case SRTPProtectionProfile_AEAD_AES_128_GCM:
+        return "SRTPProtectionProfile_AEAD_AES_128_GCM";
+      default:
+        return "Unsupported";
     }
   }
 }
@@ -39,8 +41,10 @@ enum PointFormat {
   @override
   String toString() {
     switch (this) {
-      case Uncompressed: return "Uncompressed";
-      default: return "Unsupported";
+      case Uncompressed:
+        return "Uncompressed";
+      default:
+        return "Unsupported";
     }
   }
 }
@@ -60,8 +64,10 @@ enum Curve {
   @override
   String toString() {
     switch (this) {
-      case X25519: return "X25519";
-      default: return "Unsupported";
+      case X25519:
+        return "X25519";
+      default:
+        return "Unsupported";
     }
   }
 }
@@ -102,7 +108,8 @@ class ExtRenegotiationInfo extends Extension {
 
   @override
   Uint8List encode() {
-    return Uint8List.fromList([0]); // Go version encodes a single byte '0' for length
+    return Uint8List.fromList(
+        [0]); // Go version encodes a single byte '0' for length
   }
 
   static ExtRenegotiationInfo decode(int extensionLength, Uint8List buf) {
@@ -136,7 +143,10 @@ class ExtUseSRTP extends Extension {
   @override
   Uint8List encode() {
     final builder = BytesBuilder();
-    final lengthBytes = (ByteData(2)..setUint16(0, protectionProfiles.length * 2)).buffer.asUint8List();
+    final lengthBytes = (ByteData(2)
+          ..setUint16(0, protectionProfiles.length * 2))
+        .buffer
+        .asUint8List();
     builder.add(lengthBytes);
     for (var p in protectionProfiles) {
       builder.add((ByteData(2)..setUint16(0, p.value)).buffer.asUint8List());
@@ -155,8 +165,12 @@ class ExtUseSRTP extends Extension {
     final protectionProfilesCount = protectionProfilesLength ~/ 2;
     List<SRTPProtectionProfile> protectionProfiles = [];
     for (int i = 0; i < protectionProfilesCount; i++) {
-      protectionProfiles
-          .add(SRTPProtectionProfile.fromInt(reader.getUint16(offset)));
+      final protectionProfile =
+          SRTPProtectionProfile.fromInt(reader.getUint16(offset));
+
+      if (protectionProfile != SRTPProtectionProfile.UnSupported) {
+        protectionProfiles.add(protectionProfile);
+      }
       offset += 2;
     }
 
@@ -234,9 +248,11 @@ class ExtSupportedEllipticCurves extends Extension {
   @override
   Uint8List encode() {
     final builder = BytesBuilder();
-    builder.add((ByteData(2)..setUint16(0, curves.length * 2)).buffer.asUint8List());
+    builder.add(
+        (ByteData(2)..setUint16(0, curves.length * 2)).buffer.asUint8List());
     for (var c in curves) {
-      final curveBytes = (ByteData(2)..setUint16(0, c.value)).buffer.asUint8List();
+      final curveBytes =
+          (ByteData(2)..setUint16(0, c.value)).buffer.asUint8List();
       builder.add(curveBytes);
     }
     return builder.toBytes();
@@ -251,7 +267,10 @@ class ExtSupportedEllipticCurves extends Extension {
     final curvesCount = curvesLength ~/ 2;
     List<Curve> curves = [];
     for (int i = 0; i < curvesCount; i++) {
-      curves.add(Curve.fromInt(reader.getUint16(offset)));
+      final curve = Curve.fromInt(reader.getUint16(offset));
+      if (curve != Curve.Unsupported) {
+        curves.add(curve);
+      }
       offset += 2;
     }
     return ExtSupportedEllipticCurves(curves: curves);
@@ -283,6 +302,7 @@ class ExtUnknown extends Extension {
   static ExtUnknown decode(int extensionLength, Uint8List buf) {
     // In Go, it takes extensionLength directly, but the constructor likely needs the type.
     // Assuming type would come from the outer parsing loop.
-    return ExtUnknown(type: ExtensionTypeValue.Unsupported, dataLength: extensionLength);
+    return ExtUnknown(
+        type: ExtensionTypeValue.Unsupported, dataLength: extensionLength);
   }
 }

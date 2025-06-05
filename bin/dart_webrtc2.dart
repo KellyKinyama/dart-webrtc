@@ -1,7 +1,11 @@
 import 'dart:io';
 
 import 'package:dart_webrtc/src/dtls/dtls_message.dart' as dtls;
+import 'package:dart_webrtc/src/dtls/examples/server/dtls_server.dart'
+    as dtls_server;
+import 'package:dart_webrtc/src/dtls/tests/verify_ecdsa_256_cert1.dart';
 import 'package:dart_webrtc/src/dtls3/handshaker/server.dart';
+import 'package:dart_webrtc/src/srtp2/srtp_manager.dart';
 import 'package:dart_webrtc/src/stun3/stun_server8.dart' as stun;
 // import 'package:dart_webrtc/src/tls/server/handshake_manager.dart';
 
@@ -24,6 +28,7 @@ void main(List<String> arguments) {
 
     final handshaker = HandshakeManager(socket);
 
+    final srtpManager = SRTPManager();
 
     socket.listen((RawSocketEvent e) async {
       Datagram? d = socket.receive();

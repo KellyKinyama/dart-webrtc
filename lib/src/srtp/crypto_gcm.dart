@@ -1,8 +1,8 @@
 import 'dart:typed_data';
 
 import 'package:cryptography/cryptography.dart';
-import 'package:dartls/src/rtp/header.dart';
-import 'package:dartls/src/rtp/rtp_packet.dart';
+import '../rtp/header.dart';
+import '../rtp/rtp_packet.dart';
 // package srtp
 
 // import (
@@ -108,13 +108,11 @@ class GCM {
   }
 }
 
-
-
 // https://github.com/pion/srtp/blob/3c34651fa0c6de900bdc91062e7ccb5992409643/key_derivation.go#L8
-Uint8List aesCmKeyDerivation(int label, Uint8List masterKey,
+Future<Uint8List> aesCmKeyDerivation(int label, Uint8List masterKey,
     Uint8List masterSalt, int indexOverKdr, int outLen)
 // ([]byte, error)
-{
+async {
   if (indexOverKdr != 0) {
     // 24-bit "index DIV kdr" must be xored to prf input.
     throw ("non-zero kdr not supported");
@@ -151,7 +149,7 @@ Uint8List aesCmKeyDerivation(int label, Uint8List masterKey,
     // binary.BigEndian.PutUint16(prfIn[nMasterKey-2:], i)
     writer.setUint16(nMasterKey - 2, i);
     // block.Encrypt(out[n:n+nMasterKey], prfIn)
-    block.encrypt(prfIn,
+    await block.encrypt(prfIn,
         secretKey: SecretKey(masterKey),
         possibleBuffer: Uint8List.view(out.buffer, n, n + nMasterKey));
 

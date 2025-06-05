@@ -6,7 +6,7 @@ import 'extensions.dart'; // For Extension and extension map functions
 
 class ClientHello {
   ProtocolVersion clientVersion;
-  Random random;
+  DtlsRandom random;
   int sessionIdLength; // Redundant if using sessionId.length
   List<int> sessionId;
   Uint8List cookie;
@@ -29,7 +29,7 @@ class ClientHello {
     required this.extensions,
   });
 
-  static (ClientHello, int, dynamic) unmarshal(
+  static (ClientHello, int) unmarshal(
       Uint8List data, int offset, int arrayLen) {
     var reader = ByteData.sublistView(data);
 
@@ -37,7 +37,7 @@ class ClientHello {
         ProtocolVersion(reader.getUint8(offset), reader.getUint8(offset + 1));
     offset += 2;
 
-    final decodedRandom = Random.decode(data, offset);
+    final decodedRandom = DtlsRandom.decode(data, offset);
     offset = decodedRandom.$2;
     final random = decodedRandom.$1;
 
@@ -77,8 +77,7 @@ class ClientHello {
         compressionMethods: compressionMethodIDs,
         extensions: exts,
       ),
-      offset,
-      null
+      offset
     );
   }
 

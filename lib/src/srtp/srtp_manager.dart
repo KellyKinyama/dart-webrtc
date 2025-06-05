@@ -1,7 +1,7 @@
 import 'dart:io';
 import 'dart:typed_data';
 
-import 'package:dartls/src/srtp/srtp_context.dart';
+import 'srtp_context.dart';
 
 import 'protection_profiles.dart';
 
@@ -69,4 +69,10 @@ class SRTPManager {
     context.gcm = gcm;
     return null;
   }
+}
+
+void main() {
+  SRTPManager srtpManager = SRTPManager();
+  SRTPContext srtpContext =
+      SRTPContext(conn, protectionProfile, srtpSSRCStates);
 }

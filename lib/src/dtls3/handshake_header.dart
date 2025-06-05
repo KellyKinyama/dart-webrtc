@@ -115,20 +115,20 @@ class HandshakeHeader {
 
   /// Decodes a HandshakeHeader from a byte array.
   /// Corresponds to Go's `DecodeHandshakeHeader` function.
-  static (HandshakeHeader, int, dynamic) decode(
+  static (HandshakeHeader, int) decode(
       Uint8List buf, int offset, int arrayLen) {
     if (offset + 12 > arrayLen) {
-      return (
-        HandshakeHeader(
-          handshakeType: HandshakeType.unsupported,
-          length: Uint24(Uint8List(3)),
-          messageSequence: 0,
-          fragmentOffset: Uint24(Uint8List(3)),
-          fragmentLength: Uint24(Uint8List(3)),
-        ),
-        offset,
-        'Incomplete DTLS handshake header'
-      );
+      // return (
+      //   HandshakeHeader(
+      //     handshakeType: HandshakeType.unsupported,
+      //     length: Uint24(Uint8List(3)),
+      //     messageSequence: 0,
+      //     fragmentOffset: Uint24(Uint8List(3)),
+      //     fragmentLength: Uint24(Uint8List(3)),
+      //   ),
+      //   offset,
+      throw Exception('Incomplete DTLS handshake header');
+      // );
     }
 
     final reader = ByteData.sublistView(buf, offset);
@@ -149,8 +149,7 @@ class HandshakeHeader {
         fragmentOffset: fragmentOffset,
         fragmentLength: fragmentLength,
       ),
-      offset + 12,
-      null
+      offset + 12
     );
   }
 

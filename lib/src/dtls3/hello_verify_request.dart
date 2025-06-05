@@ -5,7 +5,7 @@ import 'handshake_header.dart'; // For HandshakeType
 /// Represents a DTLS HelloVerifyRequest message.
 /// Corresponds to Go's `HelloVerifyRequest` struct.
 class HelloVerifyRequest {
-  DtlsVersion version;
+  ProtocolVersion version;
   Uint8List cookie;
 
   HelloVerifyRequest({
@@ -18,32 +18,36 @@ class HelloVerifyRequest {
   static (HelloVerifyRequest, int, dynamic) decode(
       Uint8List buf, int offset, int arrayLen) {
     if (offset + 3 > arrayLen) {
-      return (
-        HelloVerifyRequest(
-          version: DtlsVersion.unsupported,
-          cookie: Uint8List(0),
-        ),
-        offset,
-        'Incomplete HelloVerifyRequest'
-      );
+      // return (
+      //   HelloVerifyRequest(
+      //     version: ProtocolVersion.Unsupported,
+      //     cookie: Uint8List(0),
+      //   ),
+      //   offset,
+      //   'Incomplete HelloVerifyRequest'
+      // );
+      throw Exception('Incomplete HelloVerifyRequest');
     }
 
     final reader = ByteData.sublistView(buf, offset);
-    final version = DtlsVersion.fromInt(reader.getUint16(0, Endian.big));
+    final version =
+        ProtocolVersion(reader.getUint8(offset), reader.getUint8(offset + 1));
+    // DtlsVersion.fromInt(reader.getUint16(0, Endian.big));
     offset += 2;
 
     final cookieLength = reader.getUint8(2);
     offset++;
 
     if (offset + cookieLength > arrayLen) {
-      return (
-        HelloVerifyRequest(
-          version: DtlsVersion.unsupported,
-          cookie: Uint8List(0),
-        ),
-        offset,
-        'Incomplete HelloVerifyRequest cookie'
-      );
+      // return (
+      //   HelloVerifyRequest(
+      //     version: DtlsVersion.Unsupported,
+      //     cookie: Uint8List(0),
+      //   ),
+      //   offset,
+      //   'Incomplete HelloVerifyRequest cookie'
+      // );
+      throw Exception('Incomplete HelloVerifyRequest cookie');
     }
     final cookie =
         Uint8List.fromList(buf.sublist(offset, offset + cookieLength));
@@ -75,9 +79,8 @@ class HelloVerifyRequest {
   /// Corresponds to Go's `Encode` method.
   Uint8List encode() {
     final builder = BytesBuilder();
-    builder.add((ByteData(2)..setUint16(0, version.value, Endian.big))
-        .buffer
-        .asUint8List());
+    builder.add([version.major, version.minor]);
+
     builder.addByte(cookie.length);
     builder.add(cookie);
     return builder.toBytes();
