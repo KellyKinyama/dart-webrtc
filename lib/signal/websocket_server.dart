@@ -6,8 +6,6 @@ import 'package:shelf/shelf.dart';
 import 'package:shelf_web_socket/shelf_web_socket.dart';
 import 'package:web_socket_channel/web_socket_channel.dart';
 
-// import '../src/sdp/sdp_transform.dart';
-// import 'fingerprint.dart';
 import '../src/sdp8/sdp_offer2.dart';
 
 Future<void> main() async {
