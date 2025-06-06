@@ -1,78 +1,91 @@
+// lib/srtp/srtpmanager.dart
 import 'dart:io';
 import 'dart:typed_data';
 
-import 'srtp_context.dart';
-
 import 'protection_profiles.dart';
+import 'srtp_context.dart';
+import 'crypto_gcm.dart';
+
+// You would define your logging utility here if needed
+// import 'package:webrtc_nuts_and_bolts/src/logging.dart';
 
 class SRTPManager {
-  SRTPContext newContext(
-      RawDatagramSocket conn, ProtectionProfile protectionProfile) {
-    // return SRTPContext{
-    // 	Addr:              addr,
-    // 	Conn:              conn,
-    // 	ProtectionProfile: protectionProfile,
-    // 	srtpSSRCStates:    map[uint32]*srtpSSRCState{},
-    // }
-    return SRTPContext(conn, protectionProfile, {});
-  }
+  SRTPManager();
 
-  EncryptionKeys extractEncryptionKeys(
-      ProtectionProfile protectionProfile, Uint8List keyingMaterial) {
-    // https://github.com/pion/srtp/blob/82008b58b1e7be7a0cb834270caafacc7ba53509/keying.go#L14
-    final keyLength = protectionProfile.keyLength();
-    // if err != nil {
-    // 	return nil, err
-    // }
-    final saltLength = protectionProfile.saltLength();
-    // if err != nil {
-    // 	return nil, err
-    // }
-
-    int offset = 0;
-    final clientMasterKey = keyingMaterial.sublist(offset, offset + keyLength);
-    offset += keyLength;
-    final serverMasterKey = keyingMaterial.sublist(offset, offset + keyLength);
-    offset += keyLength;
-    final clientMasterSalt =
-        keyingMaterial.sublist(offset, offset + saltLength);
-    offset += saltLength;
-    final serverMasterSalt =
-        keyingMaterial.sublist(offset, offset + saltLength);
-
-    return EncryptionKeys(
-      clientMasterKey,
-      clientMasterSalt,
-      serverMasterKey,
-      serverMasterSalt,
+  SRTPContext newContext(InternetAddress addr, RawDatagramSocket conn,
+      ProtectionProfile protectionProfile) {
+    return SRTPContext(
+      addr: addr,
+      conn: conn,
+      protectionProfile: protectionProfile,
     );
   }
 
-  bool? initCipherSuite(SRTPContext context, Uint8List keyingMaterial) {
-    // logging.Descf(logging.ProtoSRTP, "Initializing SRTP Cipher Suite...")
-    final keys =
-        extractEncryptionKeys(context.protectionProfile, keyingMaterial);
-    // if err != nil {
-    // 	return err
-    // }
-    // logging.Descf(logging.ProtoSRTP, "Extracted encryption keys from keying material (<u>%d bytes</u>) [protection profile <u>%s</u>]\n\tClientMasterKey: <u>0x%x</u> (<u>%d bytes</u>)\n\tClientMasterSalt: <u>0x%x</u> (<u>%d bytes</u>)\n\tServerMasterKey: <u>0x%x</u> (<u>%d bytes</u>)\n\tServerMasterSalt: <u>0x%x</u> (<u>%d bytes</u>)",
-    // 	len(keyingMaterial), context.ProtectionProfile,
-    // 	keys.ClientMasterKey, len(keys.ClientMasterKey),
-    // 	keys.ClientMasterSalt, len(keys.ClientMasterSalt),
-    // 	keys.ServerMasterKey, len(keys.ServerMasterKey),
-    // 	keys.ServerMasterSalt, len(keys.ServerMasterSalt))
-    // logging.Descf(logging.ProtoSRTP, "Initializing GCM using ClientMasterKey and ClientMasterSalt")
-    final gcm = initGCM(keys.clientMasterKey, keys.clientMasterSalt);
-    // if err != nil {
-    // 	return err
-    // }
-    context.gcm = gcm;
-    return null;
+  EncryptionKeys _extractEncryptionKeys(
+      ProtectionProfile protectionProfile, Uint8List keyingMaterial) {
+    final int keyLength = protectionProfile.keyLength();
+    final int saltLength = protectionProfile.saltLength();
+
+    int offset = 0;
+    final Uint8List clientMasterKey =
+        Uint8List.fromList(keyingMaterial.sublist(offset, offset + keyLength));
+    offset += keyLength;
+    final Uint8List serverMasterKey =
+        Uint8List.fromList(keyingMaterial.sublist(offset, offset + keyLength));
+    offset += keyLength;
+    final Uint8List clientMasterSalt =
+        Uint8List.fromList(keyingMaterial.sublist(offset, offset + saltLength));
+    offset += saltLength;
+    final Uint8List serverMasterSalt =
+        Uint8List.fromList(keyingMaterial.sublist(offset, offset + saltLength));
+
+    return EncryptionKeys(
+      clientMasterKey: clientMasterKey,
+      clientMasterSalt: clientMasterSalt,
+      serverMasterKey: serverMasterKey,
+      serverMasterSalt: serverMasterSalt,
+    );
+  }
+
+  Future<void> initCipherSuite(
+      SRTPContext context, Uint8List keyingMaterial) async {
+    // logging.Descf(logging.ProtoSRTP, "Initializing SRTP Cipher Suite...");
+    print("Initializing SRTP Cipher Suite..."); // Placeholder for logging
+
+    final EncryptionKeys keys =
+        _extractEncryptionKeys(context.protectionProfile, keyingMaterial);
+
+    // logging.Descf(
+    //     logging.ProtoSRTP,
+    //     "Extracted encryption keys from keying material (%d bytes) [protection profile %s]\n\tClientMasterKey: 0x%x (%d bytes)\n\tClientMasterSalt: 0x%x (%d bytes)\n\tServerMasterKey: 0x%x (%d bytes)\n\tServerMasterSalt: 0x%x (%d bytes)",
+    //     keyingMaterial.length,
+    //     context.protectionProfile,
+    //     keys.clientMasterKey,
+    //     keys.clientMasterKey.length,
+    //     keys.clientMasterSalt,
+    //     keys.clientMasterSalt.length,
+    //     keys.serverMasterKey,
+    //     keys.serverMasterKey.length,
+    //     keys.serverMasterSalt,
+    //     keys.serverMasterSalt.length);
+    print(
+        "Extracted encryption keys from keying material (${keyingMaterial.length} bytes) [protection profile ${context.protectionProfile}]\n\tClientMasterKey: 0x${keys.clientMasterKey.map((e) => e.toRadixString(16).padLeft(2, '0')).join()} (${keys.clientMasterKey.length} bytes)\n\tClientMasterSalt: 0x${keys.clientMasterSalt.map((e) => e.toRadixString(16).padLeft(2, '0')).join()} (${keys.clientMasterSalt.length} bytes)\n\tServerMasterKey: 0x${keys.serverMasterKey.map((e) => e.toRadixString(16).padLeft(2, '0')).join()} (${keys.serverMasterKey.length} bytes)\n\tServerMasterSalt: 0x${keys.serverMasterSalt.map((e) => e.toRadixString(16).padLeft(2, '0')).join()} (${keys.serverMasterSalt.length} bytes)");
+
+    context.gcm = await GCM.newGCM(keys.clientMasterKey, keys.clientMasterSalt);
+    // context.gcm = await GCM.newGCM(keys.serverMasterKey, keys.serverMasterSalt);
   }
 }
 
-void main() {
-  SRTPManager srtpManager = SRTPManager();
-  SRTPContext srtpContext =
-      SRTPContext(conn, protectionProfile, srtpSSRCStates);
+class EncryptionKeys {
+  final Uint8List clientMasterKey;
+  final Uint8List clientMasterSalt;
+  final Uint8List serverMasterKey;
+  final Uint8List serverMasterSalt;
+
+  EncryptionKeys({
+    required this.clientMasterKey,
+    required this.clientMasterSalt,
+    required this.serverMasterKey,
+    required this.serverMasterSalt,
+  });
 }

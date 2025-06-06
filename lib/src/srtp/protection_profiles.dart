@@ -1,96 +1,62 @@
 import 'dart:typed_data';
+import 'crypto_gcm.dart'; // Assuming cryptogcm.dart is in the same package
 
-import 'crypto_gcm.dart';
+enum ProtectionProfile {
+  aes_128_gcm(0x0007, "SRTP_AEAD_AES_128_GCM");
 
-// typedef ProtectionProfile = int;
+  final int value;
+  final String description;
 
-// const (
-final ProtectionProfile ProtectionProfile_AEAD_AES_128_GCM =
-    ProtectionProfile(0x0007);
+  const ProtectionProfile(this.value, this.description);
 
-// )
-class ProtectionProfile {
-  int protectionProfile = 0x0007;
+  factory ProtectionProfile.fromValue(int value) {
+    return ProtectionProfile.values.firstWhere(
+      (e) => e.value == value,
+      orElse: () => throw Exception("Unknown SRTP Protection Profile: $value"),
+    );
+  }
 
-  ProtectionProfile(this.protectionProfile);
+  @override
+  String toString() {
+    return '$description (0x${value.toRadixString(16).padLeft(4, '0')})';
+  }
 
   int keyLength() {
-    switch (protectionProfile) {
-      case 0x0007:
+    switch (this) {
+      case ProtectionProfile.aes_128_gcm:
         return 16;
     }
-
-    throw "unknown protection profile: $protectionProfile";
   }
 
   int saltLength() {
-    switch (protectionProfile) {
-      case 0x0007:
+    switch (this) {
+      case ProtectionProfile.aes_128_gcm:
         return 12;
     }
-
-    throw "unknown protection profile: $protectionProfile";
   }
 
   int aeadAuthTagLength() {
-    switch (protectionProfile) {
-      case 0x0007:
+    switch (this) {
+      case ProtectionProfile.aes_128_gcm:
         return 16;
     }
-
-    throw "unknown protection profile: $protectionProfile";
   }
 }
 
 class EncryptionKeys {
-  Uint8List serverMasterKey;
-  Uint8List serverMasterSalt;
-  Uint8List clientMasterKey;
-  Uint8List clientMasterSalt;
+  final Uint8List serverMasterKey;
+  final Uint8List serverMasterSalt;
+  final Uint8List clientMasterKey;
+  final Uint8List clientMasterSalt;
 
-  EncryptionKeys(this.serverMasterKey, this.serverMasterSalt,
-      this.clientMasterKey, this.clientMasterSalt);
+  EncryptionKeys({
+    required this.serverMasterKey,
+    required this.serverMasterSalt,
+    required this.clientMasterKey,
+    required this.clientMasterSalt,
+  });
 }
 
-// func (p ProtectionProfile) String() string {
-// 	var result string
-// 	switch p {
-// 	case ProtectionProfile_AEAD_AES_128_GCM:
-// 		result = "SRTP_AEAD_AES_128_GCM"
-// 	default:
-// 		result = "Unknown SRTP Protection Profile"
-// 	}
-// 	return fmt.Sprintf("%s (0x%04x)", result, uint16(p))
-// }
-
-// func (p ProtectionProfile) KeyLength() (int, error) {
-// 	switch p {
-// 	case ProtectionProfile_AEAD_AES_128_GCM:
-// 		return 16, nil
-// 	}
-// 	return 0, fmt.Errorf("unknown protection profile: %d", p)
-// }
-
-// func (p ProtectionProfile) SaltLength() (int, error) {
-// 	switch p {
-// 	case ProtectionProfile_AEAD_AES_128_GCM:
-// 		return 12, nil
-// 	}
-// 	return 0, fmt.Errorf("unknown protection profile: %d", p)
-// }
-
-// func (p ProtectionProfile) AeadAuthTagLength() (int, error) {
-// 	switch p {
-// 	case ProtectionProfile_AEAD_AES_128_GCM:
-// 		return 16, nil
-// 	}
-// 	return 0, fmt.Errorf("unknown protection profile: %d", p)
-// }
-
-GCM initGCM(Uint8List masterKey, Uint8List masterSalt) {
-  final gcm = GCM.newGCM(masterKey, masterSalt);
-  // if err != nil {
-  // 	return nil, err
-  // }
-  return gcm;
+Future<GCM> initGCM(Uint8List masterKey, Uint8List masterSalt) async {
+  return GCM.newGCM(masterKey, masterSalt);
 }

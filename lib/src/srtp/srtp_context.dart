@@ -1,62 +1,106 @@
 import 'dart:io';
 import 'dart:typed_data';
 
-import '../rtp/rtp_packet.dart';
+import 'rtp2.dart'; // Changed import
+import 'constants.dart';
 import 'crypto_gcm.dart';
-
 import 'protection_profiles.dart';
 
 class SRTPContext {
-  // Addr              *net.UDPAddr
-  RawDatagramSocket conn; //              *net.UDPConn
-  ProtectionProfile protectionProfile;
-  late GCM gcm;
-  Map<int, SrtpSSRCState> srtpSSRCStates; //   map[uint32]*srtpSSRCState
+  final InternetAddress addr;
+  final RawDatagramSocket conn;
+  final ProtectionProfile protectionProfile;
+  GCM? gcm;
+  final Map<int, SsrcState> srtpSsrcStates; // For decryption
+  final Map<int, SsrcStateEncryption>
+      srtpSsrcStatesEncryption; // For encryption
 
-  SRTPContext(this.conn, this.protectionProfile, this.srtpSSRCStates);
+  SRTPContext({
+    required this.addr,
+    required this.conn,
+    required this.protectionProfile,
+  })  : srtpSsrcStates = {},
+        srtpSsrcStatesEncryption = {}; // Initialize new map
 
-  // https://github.com/pion/srtp/blob/3c34651fa0c6de900bdc91062e7ccb5992409643/context.go#L159
-  SrtpSSRCState getSRTPSSRCState(int ssrc) {
-    SrtpSSRCState? s = srtpSSRCStates[ssrc];
-    if (s != null) {
-      return s;
+  // For decryption
+  SsrcState _getSrtpSsrcState(int ssrc) {
+    if (srtpSsrcStates.containsKey(ssrc)) {
+      return srtpSsrcStates[ssrc]!;
     }
-
-    s = srtpSSRCStates[ssrc] = SrtpSSRCState(ssrc);
+    final s = SsrcState(ssrc: ssrc);
+    srtpSsrcStates[ssrc] = s;
     return s;
   }
 
-// https://github.com/pion/srtp/blob/3c34651fa0c6de900bdc91062e7ccb5992409643/srtp.go#L8
-  Future<Uint8List> decryptRTPPacket(RtpPacket packet) async {
-    final s = getSRTPSSRCState(packet.header.ssrc);
-    final (roc, updateROC) = s.nextRolloverCount(packet.header.sequenceNumber);
-    final result = await gcm.decrypt(packet, roc);
-    // if err != nil {
-    // 	return nil, err
-    // }
-    updateROC();
-    return result.sublist(packet.headerSize);
-    ;
+  // For encryption
+  SsrcStateEncryption _getSrtpSsrcStateForEncryption(int ssrc) {
+    if (srtpSsrcStatesEncryption.containsKey(ssrc)) {
+      return srtpSsrcStatesEncryption[ssrc]!;
+    }
+    final s = SsrcStateEncryption(ssrc: ssrc);
+    srtpSsrcStatesEncryption[ssrc] = s;
+    return s;
+  }
+
+  Future<Uint8List> decryptRtpPacket(Packet packet) async {
+    if (gcm == null) {
+      throw Exception("GCM cipher not initialized for SRTPContext");
+    }
+
+    final SsrcState s = _getSrtpSsrcState(packet.header.ssrc);
+    final RolloverCountResult rocResult =
+        s.nextRolloverCount(packet.header.sequenceNumber);
+
+    // The decrypt method in GCM returns the full decrypted packet (header + payload)
+    final Uint8List result = await gcm!.decrypt(packet, rocResult.roc);
+    rocResult.updateRoc(); // Update decryption ROC after successful decryption
+    // Return only the payload portion
+    // return Uint8List.fromList(result.sublist(packet.headerSize));
+    return result;
+  }
+
+  Future<Uint8List> encryptRtpPacket(Packet packet) async {
+    if (gcm == null) {
+      throw Exception("GCM cipher not initialized for SRTPContext");
+    }
+
+    final SsrcStateEncryption s =
+        _getSrtpSsrcStateForEncryption(packet.header.ssrc);
+
+    // Update the ROC and sequence number for encryption
+    // This logic ensures a monotonically increasing 48-bit index.
+    if (s.lastSequenceNumber != -1 &&
+        packet.header.sequenceNumber <= s.lastSequenceNumber) {
+      // Sequence number has wrapped around (or reset unexpectedly), increment ROC
+      s.roc++;
+    }
+    s.lastSequenceNumber = packet.header.sequenceNumber;
+
+    final Uint8List result = await gcm!.encrypt(packet, s.roc);
+    return result;
   }
 }
 
-class SrtpSSRCState {
-  int ssrc; //                 uint32
-  late int index; //                uint64
-  late bool rolloverHasProcessed; // bool
-  SrtpSSRCState(this.ssrc);
+class SsrcState {
+  final int ssrc;
+  int index;
+  bool rolloverHasProcessed;
 
-  (int, Function) nextRolloverCount(int sequenceNumber) {
-    final seq = sequenceNumber;
-    final localRoc = index >> 16;
-    final localSeq = index & (seqNumMax - 1);
+  SsrcState({
+    required this.ssrc,
+    this.index = 0,
+    this.rolloverHasProcessed = false,
+  });
+
+  RolloverCountResult nextRolloverCount(int sequenceNumber) {
+    final int seq = sequenceNumber;
+    final int localRoc = index >> 16;
+    final int localSeq = index & (seqNumMax - 1);
 
     int guessRoc = localRoc;
     int difference = 0;
 
     if (rolloverHasProcessed) {
-      // When localROC is equal to 0, and entering seq-localSeq > seqNumMedian
-      // judgment, it will cause guessRoc calculation error
       if (index > seqNumMedian) {
         if (localSeq < seqNumMedian) {
           if (seq - localSeq > seqNumMedian) {
@@ -81,18 +125,36 @@ class SrtpSSRCState {
       }
     }
 
-    return (
-      guessRoc,
-      () {
-        if (!rolloverHasProcessed) {
-          index |= sequenceNumber;
-          rolloverHasProcessed = true;
-          return;
-        }
-        if (difference > 0) {
-          index += difference;
-        }
+    Function updateRoc = () {
+      if (!rolloverHasProcessed) {
+        index |= sequenceNumber;
+        rolloverHasProcessed = true;
+        return;
       }
-    );
+      if (difference > 0) {
+        index += difference;
+      }
+    };
+
+    return RolloverCountResult(guessRoc, updateRoc);
   }
+}
+
+class RolloverCountResult {
+  final int roc;
+  final Function updateRoc;
+
+  RolloverCountResult(this.roc, this.updateRoc);
+}
+
+class SsrcStateEncryption {
+  final int ssrc;
+  int roc; // Roll-over counter
+  int lastSequenceNumber; // Last sequence number seen for encryption
+
+  SsrcStateEncryption({
+    required this.ssrc,
+    this.roc = 0,
+    this.lastSequenceNumber = -1, // -1 indicates no sequence number seen yet
+  });
 }

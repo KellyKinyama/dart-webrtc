@@ -184,7 +184,7 @@ Dart
 
 // lib/rtp/packet.dart
 import 'dart:typed_data';
-import 'header.dart';
+import '../srtp2/header.dart';
 
 class Packet {
   final Header header;
@@ -1343,7 +1343,7 @@ Dart
 
 // lib/rtp/packet.dart
 import 'dart:typed_data';
-import 'header.dart';
+import '../srtp2/header.dart';
 
 class Packet {
   final Header header;
