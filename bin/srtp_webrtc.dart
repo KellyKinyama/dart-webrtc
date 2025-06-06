@@ -78,7 +78,10 @@ void main(List<String> arguments) {
           }
           // print("DTLS msg: $dtlsMsg");
         } else if (isRtpPacket(d.data, 0, d.data.length)) {
+          print("encrypted data: ${d.data}");
           final packet = Packet.decodePacket(d.data, 0, d.data.length);
+          print("encrypted: $packet");
+
           if (initSrtp && srtpContext.gcm != null) {
             srtpContext.decryptRtpPacket(packet.packet).then((decrypted) {
               print("decrypted: $decrypted");

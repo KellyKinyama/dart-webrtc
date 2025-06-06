@@ -2,13 +2,18 @@ import 'dart:typed_data';
 
 enum PayloadType {
   PayloadTypeVP8(96),
-  PayloadTypeOpus(109);
+  PayloadTypeOpus(109),
+
+  PayloadALaw(0),
+  PayloadTypeMuLaw(1),
+  Unknown(3000);
 
   const PayloadType(this.value);
   final int value;
 
   factory PayloadType.fromInt(int key) {
-    return values.firstWhere((element) => element.value == key);
+    return values.firstWhere((element) => element.value == key,
+        orElse: () => PayloadType.Unknown);
   }
 }
 
@@ -34,7 +39,8 @@ class RtpHeader {
   bool padding; //          bool
   bool extension; //       bool
   bool marker; //           bool
-  PayloadType payloadType;
+  // PayloadType payloadType;
+  int payloadType;
   int sequenceNumber; //   uint16
   int timestamp; //       uint32
   int SSRC; //            uint32
@@ -71,7 +77,8 @@ class RtpHeader {
     final secondByte = buf[offset];
     offset++;
     final marker = (secondByte & 128 >> 7) == 1;
-    final payloadType = PayloadType.fromInt(secondByte & 127);
+    // final payloadType = PayloadType.fromInt(secondByte & 127);
+    final payloadType = secondByte;
 
     final sequenceNumber = ByteData.sublistView(buf).getUint16(offset);
     offset += 2;
