@@ -27,7 +27,7 @@ Requires Dart 3.x or later.
 ## 📚 Documentation (WIP)
 
 - [API Reference](https://pub.dev/documentation/webrtc_dart/latest/)
-- Example usage in the `/example` directory
+- Example usage in the `/bin` directory
 
 ---
 
