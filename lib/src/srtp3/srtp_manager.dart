@@ -72,6 +72,7 @@ class SRTPManager {
         "Extracted encryption keys from keying material (${keyingMaterial.length} bytes) [protection profile ${context.protectionProfile}]\n\tClientMasterKey: 0x${keys.clientMasterKey.map((e) => e.toRadixString(16).padLeft(2, '0')).join()} (${keys.clientMasterKey.length} bytes)\n\tClientMasterSalt: 0x${keys.clientMasterSalt.map((e) => e.toRadixString(16).padLeft(2, '0')).join()} (${keys.clientMasterSalt.length} bytes)\n\tServerMasterKey: 0x${keys.serverMasterKey.map((e) => e.toRadixString(16).padLeft(2, '0')).join()} (${keys.serverMasterKey.length} bytes)\n\tServerMasterSalt: 0x${keys.serverMasterSalt.map((e) => e.toRadixString(16).padLeft(2, '0')).join()} (${keys.serverMasterSalt.length} bytes)");
 
     context.gcm = await GCM.newGCM(keys.clientMasterKey, keys.clientMasterSalt);
+    // context.gcm = await GCM.newGCM(keys.serverMasterKey, keys.serverMasterSalt);
   }
 }
 

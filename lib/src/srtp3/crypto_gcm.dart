@@ -4,7 +4,7 @@ import 'package:pointycastle/api.dart';
 import 'package:pointycastle/block/aes.dart';
 import 'package:pointycastle/block/modes/gcm.dart';
 // import 'package:pointycastle/modes/gcm.dart';
-import 'rtp.dart'; // Changed import
+import 'rtp2.dart'; // Changed import
 import 'constants.dart';
 
 class GCM {
@@ -83,10 +83,11 @@ class GCM {
     srtpGCM.init(false, params); // false for decryption
 
     final Uint8List payloadAndTag = Uint8List.fromList(encryptedPayloadWithTag);
+    print("Header bytes in decryption: $headerBytes");
 
     try {
       final decryptedBytes = srtpGCM.process(payloadAndTag);
-      return Uint8List.fromList(headerBytes + decryptedBytes);
+      return Uint8List.fromList([...headerBytes, ...decryptedBytes]);
     } catch (e) {
       throw Exception("SRTP GCM decryption failed: $e");
     }

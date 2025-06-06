@@ -1,7 +1,7 @@
 import 'dart:io';
 import 'dart:typed_data';
 
-import 'rtp.dart'; // Changed import
+import 'rtp2.dart'; // Changed import
 import 'constants.dart';
 import 'crypto_gcm.dart';
 import 'protection_profiles.dart';
@@ -55,7 +55,8 @@ class SRTPContext {
     final Uint8List result = await gcm!.decrypt(packet, rocResult.roc);
     rocResult.updateRoc(); // Update decryption ROC after successful decryption
     // Return only the payload portion
-    return Uint8List.fromList(result.sublist(packet.headerSize));
+    // return Uint8List.fromList(result.sublist(packet.headerSize));
+    return result;
   }
 
   Future<Uint8List> encryptRtpPacket(Packet packet) async {

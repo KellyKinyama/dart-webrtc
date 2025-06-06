@@ -83,11 +83,11 @@ void main(List<String> arguments) {
             srtpContext.decryptRtpPacket(packet).then((decrypted) {
               print("decrypted: $decrypted");
               final decryptedPacket = Packet.unmarshal(decrypted);
-              print("decrypted packet: ${decryptedPacket}");
+              print("decrypted packet: $decryptedPacket");
 
-              // srtpContext.encryptRtpPacket(packet.packet).then((encrypted) {
-              //   socket.send(encrypted, d.address, d.port);
-              // });
+              srtpContext.encryptRtpPacket(packet).then((encrypted) {
+                socket.send(encrypted, d.address, d.port);
+              });
             });
           }
           if (handshaker.client!.dTLSState == DTLSState.connected &&
