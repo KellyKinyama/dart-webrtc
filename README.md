@@ -38,7 +38,8 @@ GitHub: [examples](https://github.com/your-repo/webrtc_dart/tree/main/example)
 ### DTLS server
 
 ```bash
-dart lib/src/dtls/examples/server/tls_ecdh_aes_128.dart
+dart bin/srtp_webrtc.dart
+dart bin/dart_webrtc.dart
 dart lib/src/dtls/examples/server/psk_ccm8.dart
 dart lib/src/dtls/examples/server/psk_ccm.dart
 ```
