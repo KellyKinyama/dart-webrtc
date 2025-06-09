@@ -3,7 +3,7 @@ import 'dart:typed_data';
 
 import 'package:dart_webrtc/src/dtls/dtls_message.dart' as dtls;
 import 'package:dart_webrtc/src/dtls3/enums.dart';
-import 'package:dart_webrtc/src/dtls3/handshaker/srtp_server.dart';
+import 'package:dart_webrtc/src/dtls3/handshaker/server/srtp_server.dart';
 import 'package:dart_webrtc/src/srtp/protection_profiles.dart';
 import 'package:dart_webrtc/src/srtp/rtp2.dart';
 import 'package:dart_webrtc/src/srtp/srtp_context.dart';

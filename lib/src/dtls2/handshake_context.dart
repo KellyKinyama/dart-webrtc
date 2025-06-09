@@ -3,15 +3,15 @@
 import 'dart:io';
 import 'dart:typed_data';
 
-import 'package:dart_webrtc/src/dtls3/crypto_gcm.dart';
-import 'package:dart_webrtc/src/dtls3/dtls.dart';
-import 'package:dart_webrtc/src/dtls3/enums.dart';
-import 'package:dart_webrtc/src/dtls3/extensions.dart';
+import 'package:dart_webrtc/src/dtls2/crypto_gcm.dart';
+import 'package:dart_webrtc/src/dtls2/dtls.dart';
+import 'package:dart_webrtc/src/dtls2/enums.dart';
+import 'package:dart_webrtc/src/dtls2/extensions.dart';
 
 import 'cert_utils.dart';
 import 'crypto.dart';
 import 'handshake_header.dart';
-import 'handshaker/server/server.dart';
+import 'handshaker/server.dart';
 
 class HandshakeContext {
   int clientEpoch = 0;
@@ -22,8 +22,6 @@ class HandshakeContext {
   int port;
 
   EcdsaCert serverEcCertificate;
-
-  EcdsaCert clientEcCertificate = generateSelfSignedCertificate();
   // HandshakeContext(this.serverEcCertificate);
 
   Flight flight = Flight.Flight0;
@@ -55,7 +53,6 @@ class HandshakeContext {
   late Uint8List serverKeySignature;
 
   late Uint8List clientKeyExchangePublic;
-  late Uint8List serverKeyExchangePublic;
 
   late Uint8List serverMasterSecret;
 

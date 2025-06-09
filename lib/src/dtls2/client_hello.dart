@@ -2,9 +2,7 @@
 
 import 'dart:typed_data';
 import 'dtls.dart'; // For common DTLS types
-import 'extensions.dart';
-import 'hex.dart';
-import 'simple_extensions.dart'; // For Extension and extension map functions
+import 'extensions.dart'; // For Extension and extension map functions
 
 class ClientHello {
   ProtocolVersion clientVersion;
@@ -174,7 +172,6 @@ void main() {
       chromeClientHelloData, 0, chromeClientHelloData.length);
   print("Client hello unmarshalled successfully: $clientHello}");
 }
-
 
 final rawClientHello = Uint8List.fromList([
   0xfe,
