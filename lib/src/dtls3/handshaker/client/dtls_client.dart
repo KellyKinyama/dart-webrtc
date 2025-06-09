@@ -165,183 +165,149 @@ class Handshaker {
     }
   }
 
-  Future<void> processIncomingMessage(
+  // --- DTLS Client's Incoming Message Processor ---
+  Future<void> processIncomingMessageClient(
       HandshakeContext context, dynamic incomingMessage) async {
-    var (rh, hh, msg, offset) = await incomingMessage;
+    // In a real client, 'incomingMessage' would be the decrypted DTLSPlaintext
+    // and would contain the raw handshake message bytes.
+    // We're simulating this by directly passing the deserialized handshake message object.
 
-    print("Message runtime type: ${msg.runtimeType}");
-    if (msg == null) throw Exception("Null message");
-    switch (msg.runtimeType) {
-      case HelloVerifyRequest:
-        {
-          msg = msg as HelloVerifyRequest;
+    // Simulate parsing the incoming message if it were raw bytes from a UDP socket
+    // For this example, we directly use the object.
+    var (rh, hh, msg, offset) = incomingMessage;
 
-          print("Message case type: ${msg.runtimeType}");
-          switch (context.flight) {
-            case Flight.Flight0:
-              final helloVerifyRequestResponse =
-                  createDtlsHelloVerifyResponse(context);
-              context.dTLSState = DTLSState.connecting;
-              context.protocolVersion =
-                  helloVerifyRequestResponse.clientVersion;
-              context.cookie = helloVerifyRequestResponse.cookie;
-              context.clientRandom = helloVerifyRequestResponse.random;
-              context.sessionId = helloVerifyRequestResponse.sessionId;
-              context.extensions = helloVerifyRequestResponse.extensions;
-              context.compressionMethods =
-                  helloVerifyRequestResponse.compressionMethods;
+    print("\nCLIENT: Message runtime type: ${msg.runtimeType} (Incoming)");
+    if (msg == null) throw Exception("Null incoming message for client");
 
-              context.flight = Flight.Flight2;
+    // Add the incoming message to the handshake transcript
+    // This assumes 'msg' can be serialized to bytes for the hash calculation later.
+    // In a real impl, you'd add the raw bytes of the handshake message here.
+    context.addHandshakeMessage(
+        msg.encode()); // Assuming 'encode' method exists for all msg types
 
-              await sendMessage(context, helloVerifyRequestResponse);
-              break;
+    switch (context.flight) {
+      case Flight.Flight0:
+        // Client sends ClientHello in Flight0.
+        // So, if we are in Flight0, the only incoming message we expect is HelloVerifyRequest.
+        if (msg is HelloVerifyRequest) {
+          print("CLIENT: Received HelloVerifyRequest in Flight0.");
+          context.cookie = msg.cookie;
+          context.flight = Flight.Flight2; // Move to Flight2
+          // CLIENT sends ClientHello again (with cookie)
+          final clientHelloResponse = createClientHello(context);
+          await sendMessage(context, clientHelloResponse);
+        } else {
+          throw Exception(
+              "CLIENT: Expected HelloVerifyRequest in Flight0, got ${msg.runtimeType}");
+        }
+        break;
 
-            case Flight.Flight2:
-              if (msg.cookie.isEmpty) {
-                break;
-              } else {
-                print("Received cookie: ${msg.cookie}");
-
-                context.serverRandom = context.clientRandom;
-                final clientRandomBytes = context.clientRandom.encode();
-                final serverRandomBytes = context.serverRandom.encode();
-
-                context.serverPublicKey =
-                    context.serverEcCertificate.publickKey;
-                context.serverPrivateKey =
-                    context.serverEcCertificate.privateKey;
-
-                context.serverKeySignature = generateKeySignature(
-                    clientRandomBytes,
-                    serverRandomBytes,
-                    context.serverPublicKey,
-                    // context.curve, //x25519
-                    context.serverPrivateKey);
-
-                context.flight = Flight.Flight4;
-
-                // final serverHelloResponse = createServerHello(context);
-                // await sendMessage(context, serverHelloResponse);
-
-                // final certificateResponse = createDtlsCertificate(context);
-                // await sendMessage(context, certificateResponse);
-                // final serverKeyExchangeResponse =
-                // createDtlsServerKeyExchange(context);
-                // await sendMessage(context, serverKeyExchangeResponse);
-                // final certificateRequestResponse =
-                //     createDtlsCertificateRequest(context);
-                // sendMessage(context, certificateRequestResponse);
-                final serverHelloDoneResponse =
-                    createDtlsServerHelloDoneResponse(context);
-                await sendMessage(context, serverHelloDoneResponse);
-              }
-            default:
-              {
-                print("Unhandled flight typ: ${context.flight}");
-              }
+      case Flight.Flight2:
+        // In Flight2, the client expects ServerHello, Certificate, ServerKeyExchange, ServerHelloDone
+        if (msg is ServerHello) {
+          print("CLIENT: Received ServerHello.");
+          context.serverRandom = msg.random;
+          // Verify server's version, session ID, cipher suite, etc.
+          // Update context with server's chosen cipher suite, compression method, etc.
+        } else if (msg is Certificate) {
+          print("CLIENT: Received Certificate.");
+          // Validate server's certificate chain
+        } else if (msg is ServerKeyExchange) {
+          print("CLIENT: Received ServerKeyExchange.");
+          context.serverPublicKey =
+              msg.publicKey; // Store server's ECDH public key
+          // Verify server's signature on its key exchange parameters
+          // Derive pre-master secret here using client_private_key and server_public_key
+        } else if (msg is ServerHelloDone) {
+          print("CLIENT: Received ServerHelloDone.");
+          // All server's Flight2 messages received.
+          // Now, client needs to send Flight3 messages.
+          context.flight = Flight.Flight3; // Move to Flight3
+          // Initialize cipher suite BEFORE sending ClientKeyExchange
+          if (!context.isCipherSuiteInitialized) {
+            await initCipherSuite(context);
           }
+
+          final clientKeyExchangeResponse = createClientKeyExchange(context);
+          await sendMessage(context, clientKeyExchangeResponse);
+
+          final changeCipherSpecResponse =
+              createClientChangeCipherSpec(context);
+          await sendMessage(context, changeCipherSpecResponse);
+          context.increaseClientEpoch(); // Client switches to new cipher spec
+
+          // Calculate Finished message verify_data
+          final (handshakeMessages, handshakeMessageTypes, ok) =
+              concatHandshakeMessages(
+                  context, true, false); // Client messages only
+          if (!ok) {
+            throw Exception(
+                "Error concatenating client handshake messages for Finished");
+          }
+          final calculatedVerifyData =
+              prfVerifyDataClient(context.masterSecret!, handshakeMessages);
+
+          final finishedResponse =
+              createClientFinished(context, calculatedVerifyData);
+          await sendMessage(context, finishedResponse);
+        } else {
+          throw Exception(
+              "CLIENT: Unexpected message in Flight2: ${msg.runtimeType}");
         }
+        break;
 
-      case ServerKeyExchange:
-        msg = msg as ServerKeyExchange;
-        context.serverKeyExchangePublic = Uint8List.fromList(msg.publicKey);
-        context.serverKeySignature = Uint8List.fromList(msg.signature);
-
-        if (!context.isCipherSuiteInitialized) {
-          await initCipherSuite(context);
-          // if err != nil {
-          // 	return m.setStateFailed(context, err)
-          // }
+      case Flight.Flight3:
+        // In Flight3, the client expects ChangeCipherSpec and Finished from the server.
+        if (msg is ChangeCipherSpec) {
+          print("CLIENT: Received ChangeCipherSpec.");
+          context.increaseServerEpoch(); // Server switches to new cipher spec
+        } else if (msg is Finished) {
+          print("CLIENT: Received Finished.");
+          // Verify the server's Finished message's verify_data
+          // Calculate the expected verify_data using context.masterSecret and all handshake messages.
+          final (handshakeMessages, _, ok) =
+              concatHandshakeMessages(context, true, true); // All messages
+          if (!ok) {
+            throw Exception(
+                "Error concatenating all handshake messages for server Finished verification");
+          }
+          final expectedVerifyData =
+              prfVerifyDataServer(context.masterSecret!, handshakeMessages);
+          if (!listEquals(msg.verifyData, expectedVerifyData)) {
+            // You'll need a listEquals helper
+            throw Exception(
+                "CLIENT: Server Finished message verification failed!");
+          }
+          print("CLIENT: Server Finished message verified successfully.");
+          context.dTLSState = DTLSState.connected;
+          context.flight = Flight.Flight6; // End of handshake flights
+          print(
+              "CLIENT: DTLS Handshake Succeeded! State: ${context.dTLSState}");
+        } else {
+          throw Exception(
+              "CLIENT: Unexpected message in Flight3: ${msg.runtimeType}");
         }
+        break;
 
-      case ServerHelloDone:
-        final serverHelloDoneResponse =
-            createDtlsServerHelloDoneResponse(context);
-        await sendMessage(context, serverHelloDoneResponse);
-
-        final changeCipherSpecResponse = createDtlsChangeCipherSpec(context);
-        await sendMessage(context, changeCipherSpecResponse);
-        context.increaseServerEpoch();
-
-        final (handshakeMessages, handshakeMessageTypes, ok) =
-            concatHandshakeMessages(context, true, true);
-        // if (!ok) {
-        // 	return setStateFailed(context, errors.New("error while concatenating handshake messages"))
-        // }
-        //logging.Descf(//logging.ProtoDTLS,
-        // common.JoinSlice("\n", false,
-        // 	common.ProcessIndent("Verifying Finished message...", "+", []string{
-        // 		fmt.Sprintf("Concatenating messages in single byte array: \n<u>%s</u>", common.JoinSlice("\n", true, handshakeMessageTypes...)),
-        // 		fmt.Sprintf("Generating hash from the byte array (<u>%d bytes</u>) via <u>%s</u>, using server master secret.", len(handshakeMessages), context.CipherSuite.HashAlgorithm),
-        // 	})))
-
-        // final handshakeHash = createHash(handshakeMessages);
-        final calculatedVerifyData =
-            // prfVerifyDataClient(handshakeMessages, context.serverMasterSecret);
-            prfVerifyDataClient(context.serverMasterSecret, handshakeMessages);
-
-        final finishedResponse =
-            createDtlsFinished(context, calculatedVerifyData);
-        //  print("Finished");
-        await sendMessage(context, finishedResponse);
-
-      case ChangeCipherSpec:
-        {
-          print("Message: $msg");
-        }
-
-      case Finished:
-        print("client finished: $msg");
-        //logging.Descf(//logging.ProtoDTLS, "Received first encrypted message and decrypted successfully: Finished (epoch was increased to <u>%d</u>)", context.ClientEpoch)
-        //logging.LineSpacer(2)
-
-        final (handshakeMessages, handshakeMessageTypes, ok) =
-            concatHandshakeMessages(context, true, true);
-        // if (!ok) {
-        // 	return setStateFailed(context, errors.New("error while concatenating handshake messages"))
-        // }
-        //logging.Descf(//logging.ProtoDTLS,
-        // common.JoinSlice("\n", false,
-        // 	common.ProcessIndent("Verifying Finished message...", "+", []string{
-        // 		fmt.Sprintf("Concatenating messages in single byte array: \n<u>%s</u>", common.JoinSlice("\n", true, handshakeMessageTypes...)),
-        // 		fmt.Sprintf("Generating hash from the byte array (<u>%d bytes</u>) via <u>%s</u>, using server master secret.", len(handshakeMessages), context.CipherSuite.HashAlgorithm),
-        // 	})))
-
-        // final handshakeHash = createHash(handshakeMessages);
-        final calculatedVerifyData =
-            // prfVerifyDataClient(handshakeMessages, context.serverMasterSecret);
-            prfVerifyDataClient(context.serverMasterSecret, handshakeMessages);
-        print("Finished calculated data: $calculatedVerifyData");
-        // if err != nil {
-        // 	return m.setStateFailed(context, err)
-        // }
-        //logging.Descf(//logging.ProtoDTLS, "Calculated Finish Verify Data: <u>0x%x</u> (<u>%d bytes</u>). This data will be sent via Finished message further.", calculatedVerifyData, len(calculatedVerifyData))
-        // context.flight = Flight.Flight6;
-        // //logging.Descf(//logging.ProtoDTLS, "Running into <u>Flight %d</u>.", context.Flight)
-        // //logging.LineSpacer(2)
-        // final changeCipherSpecResponse = createDtlsChangeCipherSpec(context);
-        // await sendMessage(context, changeCipherSpecResponse);
-        // context.increaseServerEpoch();
-
-        // final finishedResponse =
-        //     createDtlsFinished(context, calculatedVerifyData);
-        //  print("Finished");
-        // await sendMessage(context, finishedResponse);
-        // //logging.Descf(//logging.ProtoDTLS, "Sent first encrypted message successfully: Finished (epoch was increased to <u>%d</u>)", context.ServerEpoch)
-        // //logging.LineSpacer(2)
-
-        // //logging.Infof(//logging.ProtoDTLS, "Handshake Succeeded with <u>%v:%v</u>.\n", context.Addr.IP, context.Addr.Port)
-
-        // if (context.onConnected != null) {
-        //   context.onConnected!();
-        // }
-        context.dTLSState = DTLSState.connected;
       default:
         {
-          print(msg);
-          throw UnimplementedError("${msg.runtimeType}");
+          print("CLIENT: Unhandled flight type: ${context.flight}");
+          throw UnimplementedError(
+              "CLIENT: Unhandled flight type for incoming message: ${context.flight}");
         }
     }
+  }
+
+// --- Client Initiator Function ---
+// This function would be called to start the client handshake.
+  Future<void> startClientHandshake(HandshakeContext context) async {
+    print("CLIENT: Starting DTLS handshake...");
+    context.dTLSState = DTLSState.connecting;
+    context.flight = Flight.Flight0; // Client starts here
+
+    // Send the initial ClientHello
+    final initialClientHello = createClientHello(context);
+    await sendMessage(context, initialClientHello);
   }
 
   ServerKeyExchange createDtlsServerKeyExchange(HandshakeContext context) {
