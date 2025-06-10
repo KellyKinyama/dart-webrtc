@@ -269,9 +269,9 @@ class Handshaker {
           final calculatedVerifyData = prfVerifyDataClient(
               context.clientMasterSecret!, handshakeMessages);
 
-          // final finishedResponse =
-          //     createClientFinished(context, calculatedVerifyData);
-          // await sendMessage(context, finishedResponse);
+          final finishedResponse =
+              createClientFinished(context, calculatedVerifyData);
+          await sendMessage(context, finishedResponse);
         } else {
           throw Exception(
               "CLIENT: Unexpected message in Flight2: ${msg.runtimeType}");
