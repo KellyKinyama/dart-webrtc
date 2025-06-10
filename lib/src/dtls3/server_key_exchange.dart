@@ -102,27 +102,31 @@ class ServerKeyExchange {
   // }
 
   // Unmarshal from byte array
-  static ServerKeyExchange unmarshal(Uint8List data) {
-    int pskLength = (data[0] << 8) | data[1];
+  static (ServerKeyExchange, int) unmarshal(
+      Uint8List data, int offset, int arrayLen) {
+    int pskLength = (data[offset] << 8) | data[offset];
 
     if (data.length == pskLength + 2) {
-      return ServerKeyExchange(
-        identityHint: data.sublist(2),
-        ellipticCurveType: ECCurveType.Unsupported,
-        namedCurve: NamedCurve.Unsupported,
-        publicKey: [],
-        signatureHashAlgorithm: SignatureHashAlgorithm(
-          hash: HashAlgorithm.unsupported,
-          signatureAgorithm: SignatureAlgorithm.unsupported,
+      return (
+        ServerKeyExchange(
+          identityHint: data.sublist(2),
+          ellipticCurveType: ECCurveType.Unsupported,
+          namedCurve: NamedCurve.Unsupported,
+          publicKey: [],
+          signatureHashAlgorithm: SignatureHashAlgorithm(
+            hash: HashAlgorithm.unsupported,
+            signatureAgorithm: SignatureAlgorithm.unsupported,
+          ),
+          signature: [],
         ),
-        signature: [],
+        offset
       );
     }
 
-    print("Elliptic curve type: ${data[0]}");
+    print("Elliptic curve type: ${data[offset]}");
 
-    var ellipticCurveType = ECCurveType.fromInt(data[0]);
-    int offset = 1;
+    var ellipticCurveType = ECCurveType.fromInt(data[offset]);
+    offset++;
 
     int namedCurveIndex = ByteData.sublistView(data).getUint16(offset);
     //print("Named curve: $namedCurveIndex");
@@ -147,16 +151,20 @@ class ServerKeyExchange {
 
     //print("signature AlgorithmIndex: $signatureAlgorithmIndex");
 
-    return ServerKeyExchange(
-      identityHint: [],
-      ellipticCurveType: ellipticCurveType,
-      namedCurve: namedCurve,
-      publicKey: publicKey,
-      signatureHashAlgorithm: SignatureHashAlgorithm(
-        hash: HashAlgorithm.fromInt(hashAlgorithmIndex),
-        signatureAgorithm: SignatureAlgorithm.fromInt(signatureAlgorithmIndex),
+    return (
+      ServerKeyExchange(
+        identityHint: [],
+        ellipticCurveType: ellipticCurveType,
+        namedCurve: namedCurve,
+        publicKey: publicKey,
+        signatureHashAlgorithm: SignatureHashAlgorithm(
+          hash: HashAlgorithm.fromInt(hashAlgorithmIndex),
+          signatureAgorithm:
+              SignatureAlgorithm.fromInt(signatureAlgorithmIndex),
+        ),
+        signature: signature,
       ),
-      signature: signature,
+      0
     );
   }
 
@@ -165,7 +173,7 @@ class ServerKeyExchange {
     return 'ServerKeyExchange(identityHint: $identityHint, ellipticCurveType: $ellipticCurveType, namedCurve: $namedCurve, publicKey: $publicKey, algorithm: $signatureHashAlgorithm, signature: $signature)';
   }
 
-  static decode(Uint8List buf, int offset, int arrayLen) {}
+  // static decode(Uint8List buf, int offset, int arrayLen) {}
 }
 
 // Curve type 1: secp256r1 (also known as prime256v1 or NIST P-256)
@@ -193,7 +201,8 @@ void main() {
   //print('Marshalled Data: $marshalledData');
   // print("Content type: ${serverKeyExchange[0]}");
   // Unmarshal the byte array
-  final unmarshalled = ServerKeyExchange.unmarshal(pskServerKeyExchange);
+  final (unmarshalled, _) = ServerKeyExchange.unmarshal(
+      pskServerKeyExchange, 0, pskServerKeyExchange.length);
   print('Server key exchange: $unmarshalled');
   print("");
   print('Server key exchange: ${unmarshalled.encode()}');

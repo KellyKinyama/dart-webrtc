@@ -83,7 +83,7 @@ EcdsaCert generateSelfSignedCertificate() {
 
   print("Certificate finger print: ${fingerprint(certDer)}");
 
-  print("Certificate PEM:\n$x509PEM\n");
+  // print("Certificate PEM:\n$x509PEM\n");
   return EcdsaCert(
       privateKey: rawPrivateKey, publickKey: rawPublicKey, cert: certDer);
 }

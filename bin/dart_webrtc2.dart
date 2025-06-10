@@ -6,8 +6,8 @@ import 'package:dart_webrtc/src/srtp/srtp_manager.dart';
 import 'package:dart_webrtc/src/stun3/stun_server8.dart' as stun;
 
 void main(List<String> arguments) {
-  String ip = "192.168.160.1";
-  // String ip = "127.0.0.1";
+  // String ip = "192.168.160.1";
+  String ip = "127.0.0.1";
   int port = 4444;
 
   RawDatagramSocket.bind(InternetAddress(ip), port)

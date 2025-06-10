@@ -62,11 +62,11 @@ EcdsaCert generateSelfSignedCertificate() {
 
   // Encode private key to PEM
   String privateKeyPem = CryptoUtils.encodeEcPrivateKeyToPem(privKey);
-  print("Private Key PEM:\n$privateKeyPem\n");
+  // print("Private Key PEM:\n$privateKeyPem\n");
 
   // Encode public key to PEM
   String publicKeyPem = CryptoUtils.encodeEcPublicKeyToPem(pubKey);
-  print("Public Key PEM:\n$publicKeyPem\n");
+  // print("Public Key PEM:\n$publicKeyPem\n");
 
   var x509PEM = X509Utils.generateSelfSignedCertificate(
     privKey,
@@ -83,7 +83,7 @@ EcdsaCert generateSelfSignedCertificate() {
 
   print("Certificate finger print: ${fingerprint(certDer)}");
 
-  print("Certificate PEM:\n$x509PEM\n");
+  // print("Certificate PEM:\n$x509PEM\n");
   return EcdsaCert(
       privateKey: rawPrivateKey, publickKey: rawPublicKey, cert: certDer);
 }

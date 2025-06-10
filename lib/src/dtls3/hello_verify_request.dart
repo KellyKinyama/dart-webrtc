@@ -13,29 +13,44 @@ class HelloVerifyRequest {
     required this.cookie,
   });
 
+  /// Returns the ContentType for this message.
+  /// Corresponds to Go's `GetContentType` method.
+  ContentType getContentType() {
+    return ContentType.handshake;
+  }
+
+  /// Returns the HandshakeType for this message.
+  /// Corresponds to Go's `GetHandshakeType` method.
+  HandshakeType getHandshakeType() {
+    return HandshakeType.helloVerifyRequest;
+  }
+
   /// Decodes a HelloVerifyRequest from a byte array.
   /// Corresponds to Go's `Decode` method.
   static (HelloVerifyRequest, int, dynamic) decode(
       Uint8List buf, int offset, int arrayLen) {
-    if (offset + 3 > arrayLen) {
-      // return (
-      //   HelloVerifyRequest(
-      //     version: ProtocolVersion.Unsupported,
-      //     cookie: Uint8List(0),
-      //   ),
-      //   offset,
-      //   'Incomplete HelloVerifyRequest'
-      // );
-      throw Exception('Incomplete HelloVerifyRequest');
-    }
+    // if (offset + 3 > arrayLen) {
+    //   // return (
+    //   //   HelloVerifyRequest(
+    //   //     version: ProtocolVersion.Unsupported,
+    //   //     cookie: Uint8List(0),
+    //   //   ),
+    //   //   offset,
+    //   //   'Incomplete HelloVerifyRequest'
+    //   // );
+    //   throw Exception('Incomplete HelloVerifyRequest');
+    // }
 
-    final reader = ByteData.sublistView(buf, offset);
-    final version =
-        ProtocolVersion(reader.getUint8(offset), reader.getUint8(offset + 1));
+    final reader = ByteData.sublistView(buf);
+    final major = reader.getUint8(offset);
+    offset++;
+    final minor = reader.getUint8(offset);
+    offset++;
+    final version = ProtocolVersion(major, minor);
     // DtlsVersion.fromInt(reader.getUint16(0, Endian.big));
-    offset += 2;
+    // offset += 2;
 
-    final cookieLength = reader.getUint8(2);
+    final cookieLength = reader.getUint8(offset);
     offset++;
 
     if (offset + cookieLength > arrayLen) {
@@ -61,18 +76,6 @@ class HelloVerifyRequest {
       offset,
       null
     );
-  }
-
-  /// Returns the ContentType for this message.
-  /// Corresponds to Go's `GetContentType` method.
-  ContentType getContentType() {
-    return ContentType.handshake;
-  }
-
-  /// Returns the HandshakeType for this message.
-  /// Corresponds to Go's `GetHandshakeType` method.
-  HandshakeType getHandshakeType() {
-    return HandshakeType.helloVerifyRequest;
   }
 
   /// Encodes the HelloVerifyRequest into a byte array.

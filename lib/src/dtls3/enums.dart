@@ -1,6 +1,7 @@
 enum Flight {
   Flight0(0),
   Flight2(2),
+  Flight3(3),
   Flight4(4),
   Flight6(6);
 
@@ -10,7 +11,8 @@ enum Flight {
 
 enum DTLSState {
   connected,
-  connecting, disconnected;
+  connecting,
+  disconnected;
 }
 
 enum ECCurveType {

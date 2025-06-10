@@ -58,12 +58,15 @@ class HandshakeContext {
   late Uint8List serverKeyExchangePublic;
 
   late Uint8List serverMasterSecret;
+  late Uint8List clientMasterSecret;
 
   late GCM gcm;
 
   DTLSState dTLSState = DTLSState.disconnected;
 
   Function? onConnected;
+
+  late Uint8List clientPrivateKey;
 
   HandshakeContext(
       this.serverSocket, this.ip, this.port, this.serverEcCertificate,
@@ -94,5 +97,9 @@ class HandshakeContext {
         serverMasterSecret, encodedClientRandom, encodedServerRandom, length);
 
     return keyingMaterialCache;
+  }
+
+  void increaseClientEpoch() {
+    serverEpoch++;
   }
 }

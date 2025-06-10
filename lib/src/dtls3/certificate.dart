@@ -53,9 +53,9 @@ class Certificate {
   }
 
   // Unmarshal from byte array
-  static Certificate unmarshal(Uint8List data) {
+  static (Certificate, int) unmarshal(
+      Uint8List data, int offset, int arrayLen) {
     final reader = ByteData.sublistView(data);
-    int offset = 0;
 
     // Read total payload size
     final payloadSize = _readUint24(reader, offset);
@@ -79,7 +79,7 @@ class Certificate {
           handshakeMessageCertificateLengthFieldSize + certificateLen;
     }
 
-    return Certificate(certificate: certificates);
+    return (Certificate(certificate: certificates), offset);
   }
 
   // Helper to write a 3-byte integer (u24)
@@ -103,7 +103,7 @@ class Certificate {
     return 'HandshakeMessageCertificate(certificates: ${certificate.length} items)';
   }
 
-  static decode(Uint8List buf, int offset, int arrayLen) {}
+  // static () decode(Uint8List buf, int offset, int arrayLen) {}
 }
 
 void main() {
@@ -120,6 +120,7 @@ void main() {
   //print('Marshalled Data: $marshalledData');
 
   // Unmarshal back to an object
-  final unmarshalledMessage = Certificate.unmarshal(marshalledData);
+  final unmarshalledMessage =
+      Certificate.unmarshal(marshalledData, 0, marshalledData.length);
   //print('Unmarshalled Message: $unmarshalledMessage');
 }

@@ -2,6 +2,7 @@ import 'dart:convert';
 import 'dart:typed_data';
 import 'alert.dart';
 import 'application.dart';
+import 'certificate.dart';
 import 'change_cipher_spec.dart';
 import 'client_hello.dart';
 import 'client_key_exchange.dart';
@@ -10,7 +11,10 @@ import 'finished.dart';
 import 'handshake_context.dart';
 import 'handshake_header.dart'; // For HandshakeHeader, HandshakeType, Uint24
 import 'record_header.dart'; // For RecordHeader, ContentType
-import 'hello_verify_request.dart'; // For HelloVerifyRequest
+import 'hello_verify_request.dart';
+import 'server_hello.dart';
+import 'server_hello_done.dart';
+import 'server_key_exchange.dart'; // For HelloVerifyRequest
 // import 'package:dtls/src/handshake/client_hello.dart'; // Assuming this exists or will be created
 // import 'package:dtls/src/handshake/server_hello.dart'; // Assuming this exists or will be created
 // import 'package:dtls/src/handshake/certificate.dart'; // Assuming this exists or will be created
@@ -410,22 +414,22 @@ Future<(RecordHeader?, HandshakeHeader?, dynamic, int)> decodeDtlsMessage(
       // result = null; // Replace with actual ClientHello decode
       break;
     case HandshakeType.serverHello:
-      // (result, offset, error) = ServerHello.unmarshal(buf, offset, arrayLen);
+      (result, offset, _) = ServerHello.unmarshal(buf, offset, arrayLen);
       // Placeholder
-      throw UnimplementedError("${handshakeHeader.handshakeType}");
-      result = null; // Replace with actual ServerHello decode
+      // throw UnimplementedError("${handshakeHeader.handshakeType}");
+      // result = null; // Replace with actual ServerHello decode
       break;
     case HandshakeType.certificate:
-      // (result, offset, error) = Certificate.decode(buf, offset, arrayLen);
+      (result, offset) = Certificate.unmarshal(buf, offset, arrayLen);
       // Placeholder
-      throw UnimplementedError("${handshakeHeader.handshakeType}");
-      result = null; // Replace with actual Certificate decode
+      // throw UnimplementedError("${handshakeHeader.handshakeType}");
+      // result = null; // Replace with actual Certificate decode
       break;
     case HandshakeType.serverKeyExchange:
-      // (result, offset, error) = ServerKeyExchange.decode(buf, offset, arrayLen);
+      (result, offset) = ServerKeyExchange.unmarshal(buf, offset, arrayLen);
       // Placeholder
-      throw UnimplementedError("${handshakeHeader.handshakeType}");
-      result = null; // Replace with actual ServerKeyExchange decode
+      // throw UnimplementedError("${handshakeHeader.handshakeType}");
+      // result = null; // Replace with actual ServerKeyExchange decode
       break;
     case HandshakeType.certificateRequest:
       // (result, offset, error) = CertificateRequest.decode(buf, offset, arrayLen);
@@ -434,10 +438,10 @@ Future<(RecordHeader?, HandshakeHeader?, dynamic, int)> decodeDtlsMessage(
       result = null; // Replace with actual CertificateRequest decode
       break;
     case HandshakeType.serverHelloDone:
-      // (result, offset, error) = ServerHelloDone.decode(buf, offset, arrayLen);
+      (result, offset, _) = ServerHelloDone.unmarshal(buf, offset, arrayLen);
       // Placeholder
-      result = null; // Replace with actual ServerHelloDone decode
-      throw UnimplementedError("${handshakeHeader.handshakeType}");
+      // result = null; // Replace with actual ServerHelloDone decode
+      // throw UnimplementedError("${handshakeHeader.handshakeType}");
       break;
     case HandshakeType.clientKeyExchange:
       (result, offset) = ClientKeyExchange.decode(buf, offset, arrayLen);

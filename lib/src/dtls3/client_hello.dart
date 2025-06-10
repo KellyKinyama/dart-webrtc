@@ -3,6 +3,7 @@
 import 'dart:typed_data';
 import 'dtls.dart'; // For common DTLS types
 import 'extensions.dart';
+import 'handshake_header.dart';
 import 'hex.dart';
 import 'simple_extensions.dart'; // For Extension and extension map functions
 
@@ -30,6 +31,14 @@ class ClientHello {
     required this.compressionMethods,
     required this.extensions,
   });
+
+  ContentType getContentType() {
+    return ContentType.handshake;
+  }
+
+  HandshakeType getHandshakeType() {
+    return HandshakeType.clientHello;
+  }
 
   static (ClientHello, int) unmarshal(
       Uint8List data, int offset, int arrayLen) {
@@ -174,7 +183,6 @@ void main() {
       chromeClientHelloData, 0, chromeClientHelloData.length);
   print("Client hello unmarshalled successfully: $clientHello}");
 }
-
 
 final rawClientHello = Uint8List.fromList([
   0xfe,

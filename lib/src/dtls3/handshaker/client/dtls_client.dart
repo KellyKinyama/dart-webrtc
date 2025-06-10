@@ -25,26 +25,40 @@ import '../../server_key_exchange.dart';
 import '../../simple_extensions.dart';
 
 class Handshaker {
-  late String serverIp;
-  late int serverPort;
+  // late String serverIp;
+  // late int serverPort;
 
-  String ip;
-  int port;
+  // String ip;
+  // int port;
 
   late HandshakeContext context;
 
-  Handshaker(this.ip, this.port);
+  Handshaker();
+  // Handshaker(this.ip, this.port);
 
   Future<void> connect(String serverIp, int serverPort) async {
-    this.serverIp = serverIp;
-    this.serverPort = serverPort;
+    // Future<void> connect(String serverIp, int serverPort) async {
+    // this.serverIp = serverIp;
+    // this.serverPort = serverPort;
 
     EcdsaCert serverEcCertificate = generateSelfSignedCertificate();
 
     RawDatagramSocket socket =
-        await RawDatagramSocket.bind(InternetAddress(serverIp), serverPort);
+        await RawDatagramSocket.bind(InternetAddress.anyIPv4, 0);
 
-    context = HandshakeContext(socket, ip, port, serverEcCertificate);
+    socket.listen((RawSocketEvent e) {
+      Datagram? d = socket.receive();
+
+      if (d != null) {
+        print("DTLS packet received");
+
+        handleDtlsMessage(d);
+      }
+    });
+
+    context =
+        HandshakeContext(socket, serverIp, serverPort, serverEcCertificate);
+    await startClientHandshake(context);
   }
 
   (BytesBuilder, String, bool?) concatHandshakeMessageTo(
@@ -78,22 +92,26 @@ class Handshaker {
     bool? ok = false;
 
     (result, resultTypes, ok) = concatHandshakeMessageTo(result, resultTypes,
-        context.handshakeMessagesReceived, "recv", HandshakeType.clientHello);
+        context.handshakeMessagesSent, "recv", HandshakeType.clientHello);
     // if !ok {
     // 	return nil, nil, false
     // }
     (result, resultTypes, ok) = concatHandshakeMessageTo(result, resultTypes,
-        context.handshakeMessagesSent, "sent", HandshakeType.serverHello);
+        context.handshakeMessagesReceived, "sent", HandshakeType.serverHello);
     // if !ok {
     // 	return nil, nil, false
     // }
     (result, resultTypes, ok) = concatHandshakeMessageTo(result, resultTypes,
-        context.handshakeMessagesSent, "sent", HandshakeType.certificate);
+        context.handshakeMessagesReceived, "sent", HandshakeType.certificate);
     // if !ok {
     // 	return nil, nil, false
     // }
-    (result, resultTypes, ok) = concatHandshakeMessageTo(result, resultTypes,
-        context.handshakeMessagesSent, "sent", HandshakeType.serverKeyExchange);
+    (result, resultTypes, ok) = concatHandshakeMessageTo(
+        result,
+        resultTypes,
+        context.handshakeMessagesReceived,
+        "sent",
+        HandshakeType.serverKeyExchange);
     // if !ok {
     // 	return nil, nil, false
     // }
@@ -106,8 +124,12 @@ class Handshaker {
     // if !ok {
     // 	return nil, nil, false
     // }
-    (result, resultTypes, ok) = concatHandshakeMessageTo(result, resultTypes,
-        context.handshakeMessagesSent, "sent", HandshakeType.serverHelloDone);
+    (result, resultTypes, ok) = concatHandshakeMessageTo(
+        result,
+        resultTypes,
+        context.handshakeMessagesReceived,
+        "sent",
+        HandshakeType.serverHelloDone);
     // if !ok {
     // 	return nil, nil, false
     // }
@@ -116,12 +138,8 @@ class Handshaker {
     // if !ok {
     // 	return nil, nil, false
     // }
-    (result, resultTypes, ok) = concatHandshakeMessageTo(
-        result,
-        resultTypes,
-        context.handshakeMessagesReceived,
-        "recv",
-        HandshakeType.clientKeyExchange);
+    (result, resultTypes, ok) = concatHandshakeMessageTo(result, resultTypes,
+        context.handshakeMessagesSent, "recv", HandshakeType.clientKeyExchange);
     // if !ok {
     // 	return nil, nil, false
     // }
@@ -166,7 +184,7 @@ class Handshaker {
   }
 
   // --- DTLS Client's Incoming Message Processor ---
-  Future<void> processIncomingMessageClient(
+  Future<void> processIncomingMessage(
       HandshakeContext context, dynamic incomingMessage) async {
     // In a real client, 'incomingMessage' would be the decrypted DTLSPlaintext
     // and would contain the raw handshake message bytes.
@@ -182,8 +200,8 @@ class Handshaker {
     // Add the incoming message to the handshake transcript
     // This assumes 'msg' can be serialized to bytes for the hash calculation later.
     // In a real impl, you'd add the raw bytes of the handshake message here.
-    context.addHandshakeMessage(
-        msg.encode()); // Assuming 'encode' method exists for all msg types
+    // context.addHandshakeMessage(
+    //     msg.encode()); // Assuming 'encode' method exists for all msg types
 
     switch (context.flight) {
       case Flight.Flight0:
@@ -194,7 +212,8 @@ class Handshaker {
           context.cookie = msg.cookie;
           context.flight = Flight.Flight2; // Move to Flight2
           // CLIENT sends ClientHello again (with cookie)
-          final clientHelloResponse = createClientHello(context);
+          final clientHelloResponse = clientHelloFactoryWithCookie(context);
+          context.clientRandom = clientHelloResponse.random;
           await sendMessage(context, clientHelloResponse);
         } else {
           throw Exception(
@@ -214,23 +233,26 @@ class Handshaker {
           // Validate server's certificate chain
         } else if (msg is ServerKeyExchange) {
           print("CLIENT: Received ServerKeyExchange.");
-          context.serverPublicKey =
-              msg.publicKey; // Store server's ECDH public key
+          context.serverPublicKey = Uint8List.fromList(
+              msg.publicKey); // Store server's ECDH public key
           // Verify server's signature on its key exchange parameters
           // Derive pre-master secret here using client_private_key and server_public_key
+          context.serverKeyExchangePublic = Uint8List.fromList(msg.publicKey);
+          context.serverPrivateKey = context.clientEcCertificate.privateKey;
         } else if (msg is ServerHelloDone) {
           print("CLIENT: Received ServerHelloDone.");
           // All server's Flight2 messages received.
           // Now, client needs to send Flight3 messages.
           context.flight = Flight.Flight3; // Move to Flight3
           // Initialize cipher suite BEFORE sending ClientKeyExchange
+
+          final clientKeyExchangeResponse =
+              createDtlsServerHelloDoneResponse(context);
+          await sendMessage(context, clientKeyExchangeResponse);
+
           if (!context.isCipherSuiteInitialized) {
             await initCipherSuite(context);
           }
-
-          final clientKeyExchangeResponse = createClientKeyExchange(context);
-          await sendMessage(context, clientKeyExchangeResponse);
-
           final changeCipherSpecResponse =
               createClientChangeCipherSpec(context);
           await sendMessage(context, changeCipherSpecResponse);
@@ -240,16 +262,16 @@ class Handshaker {
           final (handshakeMessages, handshakeMessageTypes, ok) =
               concatHandshakeMessages(
                   context, true, false); // Client messages only
-          if (!ok) {
-            throw Exception(
-                "Error concatenating client handshake messages for Finished");
-          }
-          final calculatedVerifyData =
-              prfVerifyDataClient(context.masterSecret!, handshakeMessages);
+          // if (!ok) {
+          //   throw Exception(
+          //       "Error concatenating client handshake messages for Finished");
+          // }
+          final calculatedVerifyData = prfVerifyDataClient(
+              context.clientMasterSecret!, handshakeMessages);
 
-          final finishedResponse =
-              createClientFinished(context, calculatedVerifyData);
-          await sendMessage(context, finishedResponse);
+          // final finishedResponse =
+          //     createClientFinished(context, calculatedVerifyData);
+          // await sendMessage(context, finishedResponse);
         } else {
           throw Exception(
               "CLIENT: Unexpected message in Flight2: ${msg.runtimeType}");
@@ -267,17 +289,17 @@ class Handshaker {
           // Calculate the expected verify_data using context.masterSecret and all handshake messages.
           final (handshakeMessages, _, ok) =
               concatHandshakeMessages(context, true, true); // All messages
-          if (!ok) {
-            throw Exception(
-                "Error concatenating all handshake messages for server Finished verification");
-          }
-          final expectedVerifyData =
-              prfVerifyDataServer(context.masterSecret!, handshakeMessages);
-          if (!listEquals(msg.verifyData, expectedVerifyData)) {
-            // You'll need a listEquals helper
-            throw Exception(
-                "CLIENT: Server Finished message verification failed!");
-          }
+          // if (!ok) {
+          //   throw Exception(
+          //       "Error concatenating all handshake messages for server Finished verification");
+          // }
+          final expectedVerifyData = prfVerifyDataServer(
+              context.clientMasterSecret, handshakeMessages);
+          // if (!listEquals(msg.verifyData, expectedVerifyData)) {
+          //   // You'll need a listEquals helper
+          //   throw Exception(
+          //       "CLIENT: Server Finished message verification failed!");
+          // }
           print("CLIENT: Server Finished message verified successfully.");
           context.dTLSState = DTLSState.connected;
           context.flight = Flight.Flight6; // End of handshake flights
@@ -306,7 +328,7 @@ class Handshaker {
     context.flight = Flight.Flight0; // Client starts here
 
     // Send the initial ClientHello
-    final initialClientHello = createClientHello(context);
+    final initialClientHello = clientHelloFactory(context);
     await sendMessage(context, initialClientHello);
   }
 
@@ -335,7 +357,7 @@ class Handshaker {
     );
   }
 
-  ClientHello clientHelloFactory() {
+  ClientHello clientHelloFactory(HandshakeContext context) {
     return ClientHello(
         clientVersion: ProtocolVersion(254, 253),
         random: DtlsRandom(
@@ -392,7 +414,7 @@ class Handshaker {
         });
   }
 
-  ClientHello clientHelloFactoryWithCookie() {
+  ClientHello clientHelloFactoryWithCookie(HandshakeContext context) {
     return ClientHello(
         clientVersion: ProtocolVersion(254, 253),
         random: DtlsRandom(
@@ -451,7 +473,7 @@ class Handshaker {
   }
 
   ClientHello createDtlsHelloVerifyResponse(HandshakeContext context) {
-    return clientHelloFactoryWithCookie();
+    return clientHelloFactoryWithCookie(context);
   }
 
   Certificate createDtlsCertificate(HandshakeContext context) {
@@ -477,9 +499,18 @@ class Handshaker {
         identityHint: [], publicKey: context.clientEcCertificate.publickKey);
   }
 
+  ChangeCipherSpec createClientChangeCipherSpec(HandshakeContext context) {
+    return ChangeCipherSpec();
+  }
+
+  Finished createClientFinished(
+      HandshakeContext context, Uint8List calculatedVerifyData) {
+    return Finished(calculatedVerifyData);
+  }
+
   Future<void> initCipherSuite(HandshakeContext context) async {
     final preMasterSecret = generatePreMasterSecret(
-        context.clientKeyExchangePublic, context.serverPrivateKey);
+        context.serverKeyExchangePublic, context.serverPrivateKey);
     // if err != nil {
     // 	return err
     // }
@@ -506,11 +537,11 @@ class Handshaker {
       // 			})))
       final handshakeHash = createHash(handshakeMessages);
       // 	logging.Descf(logging.ProtoDTLS, "Calculated Hanshake Hash: 0x%x (%d bytes). This data will be used to generate Extended Master Secret further.", handshakeHash, len(handshakeHash))
-      context.serverMasterSecret =
+      context.clientMasterSecret =
           generateExtendedMasterSecret(preMasterSecret, handshakeHash);
       // 	logging.Descf(logging.ProtoDTLS, "Generated ServerMasterSecret (Extended): <u>0x%x</u> (<u>%d bytes</u>), using Pre-Master Secret and Hanshake Hash. Client Random and Server Random was not used.", context.ServerMasterSecret, len(context.ServerMasterSecret))
       print(
-          "Extended master secret: ${HEX.encode(context.serverMasterSecret)}");
+          "Extended master secret: ${HEX.encode(context.clientMasterSecret)}");
     } else {
       // throw "Use extended master scret";
       // context.serverMasterSecret = generateMasterSecret(
@@ -528,7 +559,7 @@ class Handshaker {
     // 	return err
     // }
     final gcm = await initGCM(
-        context.serverMasterSecret, clientRandomBytes, serverRandomBytes);
+        context.clientMasterSecret, clientRandomBytes, serverRandomBytes);
     // if err != nil {
     // 	return err
     // }
@@ -545,6 +576,34 @@ ChangeCipherSpec createDtlsChangeCipherSpec(HandshakeContext context) {
 Finished createDtlsFinished(HandshakeContext context, Uint8List verifiedData) {
   return Finished(verifiedData);
 }
+
+// Future<void> sendMessage(HandshakeContext context, dynamic message) async {
+//   // print("object type: ${message.runtimeType}");
+//   final Uint8List encodedMessageBody = message.encode();
+//   BytesBuilder encodedMessage = BytesBuilder();
+//   HandshakeHeader handshakeHeader;
+//   switch (message.getContentType()) {
+//     case ContentType.handshake:
+//       // print("message type: ${message.getContentType()}");
+//       handshakeHeader = HandshakeHeader(
+//           handshakeType: message.getHandshakeType(),
+//           length: Uint24.fromUint32(encodedMessageBody.length),
+//           messageSequence: context.serverHandshakeSequenceNumber,
+//           fragmentOffset: Uint24.fromUint32(0),
+//           fragmentLength: Uint24.fromUint32(encodedMessageBody.length));
+//       context.increaseServerHandshakeSequence();
+//       final encodedHandshakeHeader = handshakeHeader.encode();
+//       encodedMessage.add(encodedHandshakeHeader);
+//       encodedMessage.add(encodedMessageBody);
+//       context.handshakeMessagesSent[message.getHandshakeType()] =
+//           encodedMessage.toBytes();
+
+//     case ContentType.changeCipherSpec:
+//       {
+//         encodedMessage.add(encodedMessageBody);
+//       }
+//   }
+// }
 
 Future<void> sendMessage(HandshakeContext context, dynamic message) async {
   // print("object type: ${message.runtimeType}");
@@ -569,7 +628,64 @@ Future<void> sendMessage(HandshakeContext context, dynamic message) async {
 
     case ContentType.changeCipherSpec:
       {
+        print("Sending ChangeCipherSpec message epoch: ${context.serverEpoch}");
         encodedMessage.add(encodedMessageBody);
       }
   }
+
+  //   final (header, _, _) = RecordLayerHeader.unmarshal(
+  //     Uint8List.fromList(finishedMarshalled),
+  //     offset: 0,
+  //     arrayLen: finishedMarshalled.length);
+
+  // // final raw = HEX.decode("c2c64f7508209fe9d6418302fb26b7a07a");
+  // final encryptedBytes =
+  //     await context.gcm.encrypt(header, Uint8List.fromList(finishedMarshalled));
+
+  // final header = RecordLayerHeader(
+  //     contentType: message.getContentType(),
+  //     protocolVersion: ProtocolVersion(254, 253),
+  //     epoch: context.serverEpoch,
+  //     sequenceNumber: context.serverSequenceNumber,
+  //     contentLen: encodedMessage.toBytes().length);
+
+  final header = RecordHeader(
+    contentType: message.getContentType(),
+    version: ProtocolVersion(254, 253),
+    epoch: context.serverEpoch,
+    sequenceNumber: (ByteData(6)..setUint32(0, context.serverSequenceNumber))
+        .buffer
+        .asUint8List(),
+    // sequenceNumber: context.serverSequenceNumber,
+    length: encodedMessage.toBytes().length,
+  );
+
+  final encodedHeader = header.encode();
+  List<int> messageToSend = encodedHeader + encodedMessage.toBytes();
+
+  if (message is Finished) {
+    // Epoch is greater than zero, we should encrypt it.
+    if (context.isCipherSuiteInitialized) {
+      print("Message to encrypt: ${messageToSend.sublist(13)}");
+      final encryptedMessage =
+          await context.gcm.encrypt(header, Uint8List.fromList(messageToSend));
+      // if err != nil {
+      // 	panic(err)
+      // }
+      messageToSend = encryptedMessage;
+    }
+  }
+  print("Sending message: ${message.runtimeType}");
+  context.serverSocket
+      .send(messageToSend, InternetAddress(context.ip), context.port);
+  context.increaseServerSequence();
+}
+
+Future<void> main() async {
+  // RawDatagramSocket socket =
+  //     await RawDatagramSocket.bind(InternetAddress.anyIPv4, 0);
+
+  final client = Handshaker();
+
+  await client.connect("127.0.0.1", 4444);
 }

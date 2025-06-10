@@ -33,7 +33,7 @@ Uint8List generateDtlsCookie() {
   return cookie;
 }
 
-class HandshakeManager{
+class HandshakeManager {
   RawDatagramSocket serverSocket;
 
   late EcdsaCert serverEcCertificate;
@@ -172,7 +172,7 @@ class HandshakeManager{
       HandshakeContext context, dynamic incomingMessage) async {
     var (rh, hh, msg, offset) = await incomingMessage;
 
-    print("Message runtime type: ${msg.runtimeType}");
+    // print("Message runtime type: ${msg.runtimeType}");
     if (msg == null) throw Exception("Null message");
     switch (msg.runtimeType) {
       case ClientHello:
