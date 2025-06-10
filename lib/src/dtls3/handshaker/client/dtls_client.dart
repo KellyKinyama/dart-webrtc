@@ -3,11 +3,14 @@ import 'dart:typed_data';
 
 import 'package:hex/hex.dart';
 
+import '../../algo_pair.dart';
 import '../../cert_utils.dart';
 import '../../certificate.dart';
 import '../../change_cipher_spec.dart';
 import '../../client_hello.dart';
 import '../../client_key_exchange.dart';
+// import '../../crypto_client.dart';
+// import '../../crypto_client.dart';
 import '../../crypto.dart';
 import '../../dtls.dart';
 import '../../dtls_message.dart';
@@ -628,7 +631,6 @@ Future<void> sendMessage(HandshakeContext context, dynamic message) async {
 
     case ContentType.changeCipherSpec:
       {
-        print("Sending ChangeCipherSpec message epoch: ${context.serverEpoch}");
         encodedMessage.add(encodedMessageBody);
       }
   }

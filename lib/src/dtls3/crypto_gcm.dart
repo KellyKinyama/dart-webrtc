@@ -66,6 +66,76 @@ class GCM {
     return result;
   }
 
+  Future<Uint8List> encryptAsServer(RecordHeader header, Uint8List raw) async {
+    // print("encryption key: $localKey, encryption IV: $localWriteIV");
+    final payload = raw.sublist(recordLayerHeaderSize);
+    final rawHeader = raw.sublist(0, recordLayerHeaderSize);
+
+    final nonce = Uint8List(gcmNonceLength);
+    nonce.setRange(0, 4, localWriteIV.sublist(0, 4));
+    nonce.setRange(4, 12, _randomBytes(8));
+
+    final additionalData = _generateAEADAdditionalData(header, payload.length);
+
+    // print("Additional data: ${additionalData}");
+    // print("nonce key: ${nonce}");
+
+    final secretBox = await _localGcm.encrypt(payload,
+        secretKey: localKey, nonce: nonce, aad: additionalData);
+
+    final result = Uint8List(rawHeader.length +
+        nonce.length -
+        4 +
+        secretBox.cipherText.length +
+        secretBox.mac.bytes.length);
+    result.setRange(0, rawHeader.length, rawHeader);
+    result.setRange(rawHeader.length, rawHeader.length + 8, nonce.sublist(4));
+    result.setRange(rawHeader.length + 8, result.length,
+        secretBox.cipherText + secretBox.mac.bytes);
+
+    // Update record layer size
+    final rLen = (result.length - recordLayerHeaderSize).toUnsigned(16);
+    result.setRange(recordLayerHeaderSize - 2, recordLayerHeaderSize,
+        Uint8List(2)..buffer.asByteData().setUint16(0, rLen, Endian.big));
+
+    return result;
+  }
+
+  Future<Uint8List> encryptAsClient(RecordHeader header, Uint8List raw) async {
+    // print("encryption key: $localKey, encryption IV: $localWriteIV");
+    final payload = raw.sublist(recordLayerHeaderSize);
+    final rawHeader = raw.sublist(0, recordLayerHeaderSize);
+
+    final nonce = Uint8List(gcmNonceLength);
+    nonce.setRange(0, 4, remoteWriteIV.sublist(0, 4));
+    nonce.setRange(4, 12, _randomBytes(8));
+
+    final additionalData = _generateAEADAdditionalData(header, payload.length);
+
+    // print("Additional data: ${additionalData}");
+    // print("nonce key: ${nonce}");
+
+    final secretBox = await _localGcm.encrypt(payload,
+        secretKey: remoteKey, nonce: nonce, aad: additionalData);
+
+    final result = Uint8List(rawHeader.length +
+        nonce.length -
+        4 +
+        secretBox.cipherText.length +
+        secretBox.mac.bytes.length);
+    result.setRange(0, rawHeader.length, rawHeader);
+    result.setRange(rawHeader.length, rawHeader.length + 8, nonce.sublist(4));
+    result.setRange(rawHeader.length + 8, result.length,
+        secretBox.cipherText + secretBox.mac.bytes);
+
+    // Update record layer size
+    final rLen = (result.length - recordLayerHeaderSize).toUnsigned(16);
+    result.setRange(recordLayerHeaderSize - 2, recordLayerHeaderSize,
+        Uint8List(2)..buffer.asByteData().setUint16(0, rLen, Endian.big));
+
+    return result;
+  }
+
   Future<Uint8List?> decrypt(Uint8List r) async {
     if (r.length <= recordLayerHeaderSize + 8) {
       return null;
@@ -97,6 +167,98 @@ class GCM {
 
     final decrypted = await _localGcm.decrypt(secretBox,
         secretKey: remoteKey, aad: additionalData);
+
+    final result = Uint8List(recordLayerHeaderSize + decrypted.length);
+    result.setRange(
+        0, recordLayerHeaderSize, r.sublist(0, recordLayerHeaderSize));
+    result.setRange(recordLayerHeaderSize, result.length, decrypted);
+
+    print("decripted data: $result");
+
+    return result;
+    // } catch (e) {
+    //   print("[Decrypt] MAC Authentication Failed: $e");
+    //   return null;
+    // }
+  }
+
+  Future<Uint8List?> decryptAsServer(Uint8List r) async {
+    if (r.length <= recordLayerHeaderSize + 8) {
+      return null;
+    }
+
+    final (header, _, _) =
+        RecordHeader.decode(r.sublist(0, recordLayerHeaderSize), 0, r.length);
+    if (header.contentType == ContentType.changeCipherSpec) {
+      print("Nothing to encript");
+      return r;
+    }
+
+    final nonce = Uint8List(gcmNonceLength);
+    nonce.setRange(0, 4, remoteWriteIV.sublist(0, 4)); // Copy IV prefix
+    nonce.setRange(
+        4,
+        12,
+        r.sublist(recordLayerHeaderSize,
+            recordLayerHeaderSize + 8)); // Restore nonce suffix
+
+    final ciphertext = r.sublist(recordLayerHeaderSize + 8);
+    final additionalData =
+        _generateAEADAdditionalData(header, ciphertext.length - gcmTagLength);
+
+    final secretBox = SecretBox(
+        ciphertext.sublist(0, ciphertext.length - gcmTagLength),
+        nonce: nonce,
+        mac: Mac(ciphertext.sublist(ciphertext.length - gcmTagLength)));
+
+    final decrypted = await _localGcm.decrypt(secretBox,
+        secretKey: remoteKey, aad: additionalData);
+
+    final result = Uint8List(recordLayerHeaderSize + decrypted.length);
+    result.setRange(
+        0, recordLayerHeaderSize, r.sublist(0, recordLayerHeaderSize));
+    result.setRange(recordLayerHeaderSize, result.length, decrypted);
+
+    print("decripted data: $result");
+
+    return result;
+    // } catch (e) {
+    //   print("[Decrypt] MAC Authentication Failed: $e");
+    //   return null;
+    // }
+  }
+
+  Future<Uint8List?> decryptAsClient(Uint8List r) async {
+    if (r.length <= recordLayerHeaderSize + 8) {
+      return null;
+    }
+
+    final (header, _, _) =
+        RecordHeader.decode(r.sublist(0, recordLayerHeaderSize), 0, r.length);
+    if (header.contentType == ContentType.changeCipherSpec) {
+      print("Nothing to encript");
+      return r;
+    }
+
+    final nonce = Uint8List(gcmNonceLength);
+    nonce.setRange(0, 4, localWriteIV.sublist(0, 4)); // Copy IV prefix
+    nonce.setRange(
+        4,
+        12,
+        r.sublist(recordLayerHeaderSize,
+            recordLayerHeaderSize + 8)); // Restore nonce suffix
+
+    final ciphertext = r.sublist(recordLayerHeaderSize + 8);
+    final additionalData =
+        _generateAEADAdditionalData(header, ciphertext.length - gcmTagLength);
+
+    final secretBox = SecretBox(
+        ciphertext.sublist(0, ciphertext.length - gcmTagLength),
+        nonce: nonce,
+        mac: Mac(ciphertext.sublist(ciphertext.length - gcmTagLength)));
+
+    final decrypted = await _localGcm.decrypt(secretBox,
+        secretKey: localKey, aad: additionalData);
 
     final result = Uint8List(recordLayerHeaderSize + decrypted.length);
     result.setRange(

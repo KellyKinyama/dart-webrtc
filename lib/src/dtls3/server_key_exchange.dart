@@ -1,5 +1,6 @@
 import 'dart:typed_data';
 
+import 'algo_pair.dart';
 import 'crypto.dart';
 import 'dtls.dart';
 import 'enums.dart';
