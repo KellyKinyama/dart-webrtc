@@ -72,10 +72,21 @@ copy the sdp offer from this file:
 
 lib\src\sdp8\sdp_test.dart
 
+Adjust the the fingerprint and ice candidate
+
+```bash
+cd WebRTC-Simple-SDP-Handshake-Demo
+php -S localhost:3000
+```
+Navigate to the link in your browser=> localhost:3000
+Paste the sdp in the sdp offer box
+
 Run this command
 ```bash
 dart bin\srtp_webrtc.dart
 ```
+
+In your browser, click create answer
 
 
 
