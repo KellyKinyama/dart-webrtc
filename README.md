@@ -35,6 +35,8 @@ Requires Dart 3.x or later.
 
 GitHub: [examples](https://github.com/your-repo/webrtc_dart/tree/main/example)
 
+
+
 ### DTLS server
 
 ```bash
@@ -45,7 +47,13 @@ dart lib/src/dtls/examples/server/psk_ccm.dart
 ```
 
 
-View logs in console and browser at `chrome://webrtc-internals`.
+### DTLS client
+
+```bash
+dart lib/src/dtls3/handshaker/client/dtls_client.dart
+```
+
+
 
 ### STUN Server
 
