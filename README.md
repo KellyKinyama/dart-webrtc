@@ -91,13 +91,13 @@ dart bin\srtp_webrtc.dart
 
 - [x] SIP
 - [x] STUN
-- [] TURN (UDP)
+- [ ] TURN (UDP)
 
 #### ICE
 
 - [x] Vanilla ICE
 - [x] Trickle ICE
-- [] ICE Restart
+- [ ] ICE Restart
 - [x] ICE-Lite (Client-side)
 - [ ] ICE-Lite (Server-side)
 
@@ -154,11 +154,11 @@ dart bin\srtp_webrtc.dart
 
 #### Compatibility & Interop
 
-- [ ] Chrome / Safari / Firefox
+- [x] Chrome / Edge / Firefox
 - [ ] Pion
 - [ ] aiortc
 - [ ] sipsorcery
-- [ ] webrtc-rs
+- [x] webrtc-rs
 - [ ] Interop E2E testing
 
 #### Testing
