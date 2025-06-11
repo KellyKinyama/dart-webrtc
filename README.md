@@ -65,7 +65,7 @@ dart lib/src/stun3/stun_server7.dart
 
 ---
 
-### STUN/DTLS/RTP/RTCP multiplexing 
+### STUN/DTLS/SRTP/RTCP multiplexing 
 
 This example recieves stun, dtls, rtp packets. It decrypts, encrypts and sends the packets back to the sender.
 copy the sdp offer from this file:
