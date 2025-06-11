@@ -59,8 +59,8 @@ class Handshaker {
       }
     });
 
-    context =
-        HandshakeContext(socket, serverIp, serverPort, serverEcCertificate);
+    context = HandshakeContext(
+        socket, serverIp, serverPort, serverEcCertificate, DTLSRole.client);
     await startClientHandshake(context);
   }
 
@@ -408,10 +408,10 @@ class Handshaker {
               pointFormats: [PointFormat.Uncompressed]),
           ExtensionTypeValue.RenegotiationInfo: ExtRenegotiationInfo(),
           ExtensionTypeValue.SupportedEllipticCurves:
-              ExtSupportedEllipticCurves(curves: [Curve.X25519]),
-          ExtensionTypeValue.UseSrtp: ExtUseSRTP(protectionProfiles: [
-            SRTPProtectionProfile.SRTPProtectionProfile_AEAD_AES_128_GCM
-          ], mki: Uint8List(0)),
+              ExtSupportedEllipticCurves(curves: [Curve.prime256v1]),
+          // ExtensionTypeValue.UseSrtp: ExtUseSRTP(protectionProfiles: [
+          //   SRTPProtectionProfile.SRTPProtectionProfile_AEAD_AES_128_GCM
+          // ], mki: Uint8List(0)),
           ExtensionTypeValue.UseExtendedMasterSecret:
               ExtUseExtendedMasterSecret()
         });
@@ -454,9 +454,9 @@ class Handshaker {
             ])),
         sessionIdLength: 0,
         sessionId: [],
-        cookie: Uint8List.fromList(
-            hexDecode('5dacc28b8e332bb12e56fb02bf74371dd65f1a6a')),
-        // cookie: Uint8List(0),
+        // cookie: Uint8List.fromList(
+        //     hexDecode('5dacc28b8e332bb12e56fb02bf74371dd65f1a6a')),
+        cookie: context.cookie,
         cipherSuitesLength: 22,
         cipherSuites: [CipherSuiteId.TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256],
         compressionMethodsLength: 1,
@@ -466,10 +466,10 @@ class Handshaker {
               pointFormats: [PointFormat.Uncompressed]),
           ExtensionTypeValue.RenegotiationInfo: ExtRenegotiationInfo(),
           ExtensionTypeValue.SupportedEllipticCurves:
-              ExtSupportedEllipticCurves(curves: [Curve.X25519]),
-          ExtensionTypeValue.UseSrtp: ExtUseSRTP(protectionProfiles: [
-            SRTPProtectionProfile.SRTPProtectionProfile_AEAD_AES_128_GCM
-          ], mki: Uint8List(0)),
+              ExtSupportedEllipticCurves(curves: [Curve.prime256v1]),
+          // ExtensionTypeValue.UseSrtp: ExtUseSRTP(protectionProfiles: [
+          //   SRTPProtectionProfile.SRTPProtectionProfile_AEAD_AES_128_GCM
+          // ], mki: Uint8List(0)),
           ExtensionTypeValue.UseExtendedMasterSecret:
               ExtUseExtendedMasterSecret()
         });
@@ -669,8 +669,11 @@ Future<void> sendMessage(HandshakeContext context, dynamic message) async {
     // Epoch is greater than zero, we should encrypt it.
     if (context.isCipherSuiteInitialized) {
       print("Message to encrypt: ${messageToSend.sublist(13)}");
-      final encryptedMessage =
-          await context.gcm.encrypt(header, Uint8List.fromList(messageToSend));
+      final encryptedMessage = context.role == DTLSRole.server
+          ? await context.gcm
+              .encryptAsServer(header, Uint8List.fromList(messageToSend))
+          : await context.gcm
+              .encryptAsClient(header, Uint8List.fromList(messageToSend));
       // if err != nil {
       // 	panic(err)
       // }

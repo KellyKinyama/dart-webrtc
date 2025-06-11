@@ -49,7 +49,7 @@ class HandshakeManager {
   final recordLayerHeaderSize = 13;
   Future<void> handleDtlsMessage(Datagram datagram) async {
     client ??= HandshakeContext(serverSocket, datagram.address.address,
-        datagram.port, serverEcCertificate);
+        datagram.port, serverEcCertificate,DTLSRole.server);
 
     int decodedLength = 0;
     while (decodedLength < datagram.data.length) {

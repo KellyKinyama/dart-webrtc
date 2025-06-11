@@ -50,7 +50,7 @@ class HandshakeManager {
 
     if (clients[key] == null) {
       clients[key] = HandshakeContext(serverSocket, datagram.address.address,
-          datagram.port, serverEcCertificate);
+          datagram.port, serverEcCertificate,DTLSRole.server);
     }
 
     int decodedLength = 0;

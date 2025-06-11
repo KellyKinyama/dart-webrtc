@@ -51,6 +51,8 @@ enum PointFormat {
 
 enum Curve {
   X25519(0x001D),
+  prime256v1(0x0017),
+  secp256k1(0x0012),
   Unsupported(9999);
 
   const Curve(this.value);

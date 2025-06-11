@@ -15,6 +15,11 @@ enum DTLSState {
   disconnected;
 }
 
+enum DTLSRole {
+  server,
+  client,
+}
+
 enum ECCurveType {
   Named_Curve(3),
   Unsupported(65555);

@@ -11,7 +11,6 @@ import 'package:dart_webrtc/src/dtls3/extensions.dart';
 import 'cert_utils.dart';
 import 'crypto.dart';
 import 'handshake_header.dart';
-import 'handshaker/server/server.dart';
 
 class HandshakeContext {
   int clientEpoch = 0;
@@ -20,6 +19,8 @@ class HandshakeContext {
   RawDatagramSocket serverSocket;
   String ip;
   int port;
+
+  final DTLSRole role;
 
   EcdsaCert serverEcCertificate;
 
@@ -68,9 +69,8 @@ class HandshakeContext {
 
   late Uint8List clientPrivateKey;
 
-  HandshakeContext(
-      this.serverSocket, this.ip, this.port, this.serverEcCertificate,
-      {this.onConnected});
+  HandshakeContext(this.serverSocket, this.ip, this.port,
+      this.serverEcCertificate, this.role);
   // GCM cipher; // Uncomment and define if you have a GCM implementation
 
   void increaseServerHandshakeSequence() {

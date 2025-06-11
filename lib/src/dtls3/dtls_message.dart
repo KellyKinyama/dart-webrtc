@@ -1,5 +1,7 @@
 import 'dart:convert';
 import 'dart:typed_data';
+import 'package:dart_webrtc/src/dtls3/enums.dart';
+
 import 'alert.dart';
 import 'application.dart';
 import 'certificate.dart';
@@ -111,7 +113,11 @@ Future<(RecordHeader?, HandshakeHeader?, dynamic, int)> decodeDtlsMessage(
       // if (cipherSuite ==
       //         CipherSuiteId.Tls_Ecdhe_Ecdsa_With_Aes_128_Gcm_Sha256 ||
       //     cipherSuite == CipherSuiteId.Tls_Psk_With_Aes_128_Gcm_Sha256) {
-      decryptedBytes = await context.gcm.decrypt(buf);
+      if (context.role == DTLSRole.server) {
+        decryptedBytes = await context.gcm.decryptAsServer(buf);
+      } else {
+        decryptedBytes = await context.gcm.decryptAsClient(buf);
+      }
       // }
 
       // if (cipherSuite == CipherSuiteId.Tls_Psk_With_Aes_128_Ccm) {
