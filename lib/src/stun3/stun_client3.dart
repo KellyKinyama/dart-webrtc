@@ -76,6 +76,18 @@ class StunMessageType {
     return '${method.name} ${messageClass.name}';
   }
 
+  // Override equality and hashCode for proper comparison
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is StunMessageType &&
+          runtimeType == other.runtimeType &&
+          method == other.method &&
+          messageClass == other.messageClass;
+
+  @override
+  int get hashCode => method.hashCode ^ messageClass.hashCode;
+
   static const StunMessageType bindingRequest =
       StunMessageType(StunMessageMethod.binding, StunMessageClass.request);
   static const StunMessageType bindingSuccessResponse = StunMessageType(
@@ -119,7 +131,7 @@ enum StunMessageMethod {
   }
 }
 
-// Based on atttributetype.go (renamed to avoid typo)
+// Based on atttributetype.go
 enum StunAttributeType {
   // STUN attributes
   mappedAddress(0x0001, "MAPPED-ADDRESS"),
@@ -144,7 +156,8 @@ enum StunAttributeType {
   priority(0x0024, "PRIORITY"),
   useCandidate(0x0025, "USE-CANDIDATE"),
   iceControlled(0x8029, "ICE-CONTROLLED"),
-  iceControlling(0x802A, "ICE-CONTROLLING");
+  iceControlling(0x802A, "ICE-CONTROLLING"),
+  iceControlling2(0xC057, "ICE-CONTROLLING");
 
   const StunAttributeType(this.value, this.name);
   final int value;
@@ -162,8 +175,8 @@ enum StunAttributeType {
 // Based on attribute.go
 class StunAttribute {
   final StunAttributeType type;
-  Uint8List value; // Make it non-final to allow modification for padding
-  final int offsetInMessage; // For validation, if needed
+  Uint8List value;
+  final int offsetInMessage;
 
   StunAttribute(this.type, this.value, {this.offsetInMessage = 0});
 
@@ -202,8 +215,7 @@ class StunAttribute {
     var builder = BytesBuilder();
     var headerData = ByteData(stunAttributeHeaderSize);
     headerData.setUint16(0, type.value, Endian.big);
-    headerData.setUint16(
-        2, value.length, Endian.big); // Original length, not padded
+    headerData.setUint16(2, value.length, Endian.big);
     builder.add(headerData.buffer.asUint8List());
     builder.add(paddedValue);
     return builder.toBytes();
@@ -221,8 +233,15 @@ class StunAttribute {
         valStr = hex.encode(value);
       }
     } else if (type == StunAttributeType.xorMappedAddress) {
-      valStr = decodeXorMappedAddressAttribute(this, Uint8List(12))
-          .toString(); // Dummy TX ID for string
+      // Need a dummy transaction ID for decoding this attribute in isolation
+      valStr = decodeXorMappedAddressAttribute(this, Uint8List(12)).toString();
+    } else if (type == StunAttributeType.priority) {
+      if (value.length >= 4) {
+        valStr =
+            ByteData.sublistView(value).getUint32(0, Endian.big).toString();
+      } else {
+        valStr = hex.encode(value);
+      }
     } else {
       valStr = hex.encode(value);
     }
@@ -248,7 +267,6 @@ class StunMessage {
     if (buffer.length - offset < stunMessageHeaderSize) {
       return false;
     }
-    // First two bits of a STUN message must be 00
     if ((buffer[offset] & 0xC0) != 0) {
       return false;
     }
@@ -267,7 +285,7 @@ class StunMessage {
 
     var bd = ByteData.sublistView(buffer, offset);
     int typeVal = bd.getUint16(0, Endian.big);
-    int messageLength = bd.getUint16(2, Endian.big); // Length of attributes
+    int messageLength = bd.getUint16(2, Endian.big);
 
     if (buffer.length - offset - stunMessageHeaderSize < messageLength) {
       throw ArgumentError(
@@ -284,7 +302,6 @@ class StunMessage {
 
     while (currentOffset < attributesEndOffset) {
       if (attributesEndOffset - currentOffset < stunAttributeHeaderSize) {
-        // Not enough bytes for an attribute header, possibly padding or malformed
         break;
       }
       StunAttribute attr = StunAttribute.decode(buffer, currentOffset);
@@ -302,41 +319,31 @@ class StunMessage {
   }
 
   Uint8List encode({String? password}) {
-    // Prepare attributes for encoding (remove integrity/fingerprint, add software)
-    // This order is important for integrity calculation
     Map<StunAttributeType, StunAttribute> attrsToEncode = Map.from(attributes);
     attrsToEncode.remove(StunAttributeType.messageIntegrity);
     attrsToEncode.remove(StunAttributeType.fingerprint);
     attrsToEncode[StunAttributeType.software] = StunAttribute(
-        StunAttributeType.software, utf8.encode("Dart STUN Server v1.0"));
+        StunAttributeType.software, utf8.encode("Dart STUN Client v1.1"));
 
     var attrBuilder = BytesBuilder();
-    // Sort attributes for consistent encoding, though not strictly required by RFC 5389 for all cases
-    // However, some implementations might expect a certain order or it helps in debugging.
-    // For simplicity here, we'll iterate as is, but for production, consider sorting if issues arise.
     attrsToEncode.values.forEach((attr) {
       attrBuilder.add(attr.encode());
     });
     Uint8List encodedAttributes = attrBuilder.toBytes();
 
-    // Initial message construction (without integrity and fingerprint)
     var messageBuilder = BytesBuilder();
     var headerData = ByteData(stunMessageHeaderSize);
     headerData.setUint16(0, messageType.encode(), Endian.big);
-    // Length here is attributes length, will be updated later if integrity/fingerprint added
     headerData.setUint16(2, encodedAttributes.length, Endian.big);
     headerData.setUint32(4, stunMagicCookie, Endian.big);
-    messageBuilder.add(
-        headerData.buffer.asUint8List().sublist(0, 8)); // Type, Length, Cookie
-    messageBuilder.add(transactionId); // Transaction ID
+    messageBuilder.add(headerData.buffer.asUint8List().sublist(0, 8));
+    messageBuilder.add(transactionId);
     messageBuilder.add(encodedAttributes);
 
     Uint8List messageBeforeIntegrityAndFingerprint = messageBuilder.toBytes();
     Uint8List finalMessage = messageBeforeIntegrityAndFingerprint;
 
     if (password != null) {
-      // Calculate and add MESSAGE-INTEGRITY
-      // The length in the header needs to be temporarily adjusted for HMAC calculation
       ByteData tempBd = ByteData.sublistView(finalMessage);
       tempBd.setUint16(
           2,
@@ -352,8 +359,6 @@ class StunMessage {
           Uint8List.fromList([...finalMessage, ...integrityAttr.encode()]);
     }
 
-    // Calculate and add FINGERPRINT
-    // The length in the header needs to be temporarily adjusted for CRC32 calculation
     ByteData tempBdFp = ByteData.sublistView(finalMessage);
     tempBdFp.setUint16(
         2,
@@ -368,7 +373,6 @@ class StunMessage {
     finalMessage =
         Uint8List.fromList([...finalMessage, ...fingerprintAttr.encode()]);
 
-    // Final update of the message length in the header
     ByteData finalBd = ByteData.sublistView(finalMessage);
     finalBd.setUint16(
         2, finalMessage.length - stunMessageHeaderSize, Endian.big);
@@ -376,62 +380,58 @@ class StunMessage {
     return finalMessage;
   }
 
-  bool validate({String? ufrag, String? password}) {
-    // Validate USERNAME if ufrag is provided
-    if (ufrag != null) {
-      final usernameAttr = attributes[StunAttributeType.username];
-      if (usernameAttr == null) {
-        print(
-            "Validation Error: MESSAGE-INTEGRITY present but USERNAME attribute is missing.");
-        return false;
-      }
-      final parts = utf8.decode(usernameAttr.value).split(':');
-      if (parts.isEmpty || parts[0] != ufrag) {
-        print(
-            "Validation Error: USERNAME mismatch. Expected ufrag '$ufrag', got '${parts[0]}'");
-        return false;
-      }
-    }
+  /// Validates the STUN message.
+  /// [expectedServerUfrag] is the ufrag of this STUN server.
+  /// [expectedClientUfrag] is the ufrag of the client this server expects for this session.
+  /// [passwordForIntegrity] is the password associated with [expectedServerUfrag], used for MESSAGE-INTEGRITY.
+  bool validate({
+    String? expectedServerUfrag, // Made optional for client-side validation
+    String? expectedClientUfrag, // Made optional for client-side validation
+    String? passwordForIntegrity, // Made optional for client-side validation
+  }) {
+    // Client-side validation might be simpler, mainly checking message type and basic integrity.
+    // For a client, validating the USERNAME might not be necessary, or it might validate
+    // that its *own* ufrag is present if it's sent.
+    // The server would validate the combined username and password.
 
-    // Validate MESSAGE-INTEGRITY if present
+    // Validate MESSAGE-INTEGRITY if present and password is provided
     final integrityAttr = attributes[StunAttributeType.messageIntegrity];
-    if (integrityAttr != null) {
-      if (password == null) {
-        print(
-            "Validation Error: MESSAGE-INTEGRITY present but no password provided for validation.");
-        return false;
-      }
+    if (integrityAttr != null && passwordForIntegrity != null) {
       if (rawMessage == null) {
         print(
             "Validation Error: Raw message not available for MESSAGE-INTEGRITY check.");
         return false;
       }
 
-      // Message up to (but not including) MESSAGE-INTEGRITY attribute
-      int lengthBeforeIntegrity = integrityAttr.offsetInMessage;
-      Uint8List messageToHash = rawMessage!.sublist(0, lengthBeforeIntegrity);
+      // The length calculation needs to be precise for validation
+      // It's the length of the message *before* the MESSAGE-INTEGRITY attribute
+      // but with the length field in the header updated as if MESSAGE-INTEGRITY
+      // was already included.
+      int lengthOfMessageBeforeIntegrity = integrityAttr.offsetInMessage;
+      Uint8List messageToHash = Uint8List.fromList(
+          rawMessage!.sublist(0, lengthOfMessageBeforeIntegrity));
 
-      // Temporarily adjust message length in the header for HMAC calculation
-      // The length should be of the message as if MESSAGE-INTEGRITY was the *last* attribute
-      // and its value was not yet known.
-      Uint8List tempMessageToHash =
-          Uint8List.fromList(messageToHash); // Create a mutable copy
-      ByteData bd = ByteData.sublistView(tempMessageToHash);
+      ByteData bd = ByteData.sublistView(messageToHash);
+      // Temporarily set the length field in the header to include the size
+      // of the MESSAGE-INTEGRITY attribute and its header
       bd.setUint16(
           2,
-          (lengthBeforeIntegrity - stunMessageHeaderSize) +
+          (lengthOfMessageBeforeIntegrity - stunMessageHeaderSize) +
               stunAttributeHeaderSize +
               stunHmacSignatureSize,
           Endian.big);
 
-      Uint8List calculatedHmac = calculateHmacSha1(tempMessageToHash, password);
+      Uint8List calculatedHmac =
+          calculateHmacSha1(messageToHash, passwordForIntegrity);
       if (!_compareBytes(calculatedHmac, integrityAttr.value)) {
         print("Validation Error: MESSAGE-INTEGRITY mismatch.");
         print("  Expected: ${hex.encode(calculatedHmac)}");
         print("  Received: ${hex.encode(integrityAttr.value)}");
-        print("  Password used: $password");
         return false;
       }
+    } else if (integrityAttr != null && passwordForIntegrity == null) {
+      print(
+          "Warning: MESSAGE-INTEGRITY attribute present but no password provided for validation.");
     }
 
     // Validate FINGERPRINT if present
@@ -442,14 +442,17 @@ class StunMessage {
             "Validation Error: Raw message not available for FINGERPRINT check.");
         return false;
       }
-      // Message up to (but not including) FINGERPRINT attribute
+      // The length calculation needs to be precise for validation
+      // It's the length of the message *before* the FINGERPRINT attribute
+      // but with the length field in the header updated as if FINGERPRINT
+      // was already included.
       int lengthBeforeFingerprint = fingerprintAttr.offsetInMessage;
-      Uint8List messageForCrc = rawMessage!.sublist(0, lengthBeforeFingerprint);
+      Uint8List messageForCrc =
+          Uint8List.fromList(rawMessage!.sublist(0, lengthBeforeFingerprint));
 
-      // Temporarily adjust message length in the header for CRC calculation
-      Uint8List tempMessageForCrc =
-          Uint8List.fromList(messageForCrc); // Create a mutable copy
-      ByteData bd = ByteData.sublistView(tempMessageForCrc);
+      ByteData bd = ByteData.sublistView(messageForCrc);
+      // Temporarily set the length field in the header to include the size
+      // of the FINGERPRINT attribute and its header
       bd.setUint16(
           2,
           (lengthBeforeFingerprint - stunMessageHeaderSize) +
@@ -457,7 +460,7 @@ class StunMessage {
               stunFingerprintSize,
           Endian.big);
 
-      Uint8List calculatedCrc = calculateFingerprint(tempMessageForCrc);
+      Uint8List calculatedCrc = calculateFingerprint(messageForCrc);
       if (!_compareBytes(calculatedCrc, fingerprintAttr.value)) {
         print("Validation Error: FINGERPRINT mismatch.");
         print("  Expected: ${hex.encode(calculatedCrc)}");
@@ -498,11 +501,6 @@ Uint8List calculateHmacSha1(Uint8List message, String keyString) {
   return Uint8List.fromList(digest.bytes);
 }
 
-// Dart's CRC32 implementation might differ from Go's hash/crc32.ChecksumIEEE.
-// For STUN, it's CRC-32-IEEE which is often standard.
-// The `archive` package has a CRC32 implementation. For simplicity,
-// we'll use a basic one. If issues arise, a more robust library might be needed.
-// Or, more directly, implement the polynomial 0xEDB88320 (reversed 0x04C11DB7)
 int _crc32IeeePolynomial = 0xEDB88320;
 List<int>? _crc32Table;
 
@@ -532,18 +530,16 @@ int crc32Ieee(Uint8List data) {
 }
 
 Uint8List calculateFingerprint(Uint8List message) {
-  // The length in the header is already adjusted before this call in encode/validate
   int crc = crc32Ieee(message);
   int fingerprintValue = crc ^ stunFingerprintXorMask;
 
   var bd = ByteData(4);
-  bd.setInt32(0, fingerprintValue, Endian.big); // STUN uses big-endian
+  bd.setInt32(0, fingerprintValue, Endian.big);
   return bd.buffer.asUint8List();
 }
 
 // --- Attribute Specific Encoders/Decoders ---
 
-// Based on attributes.go
 enum StunIpFamily {
   ipv4(0x01),
   ipv6(0x02);
@@ -568,7 +564,7 @@ class MappedAddress {
 StunAttribute createXorMappedAddressAttribute(
     InternetAddress address, int port, Uint8List transactionId) {
   var valueBuilder = BytesBuilder();
-  valueBuilder.addByte(0); // Reserved, must be 0
+  valueBuilder.addByte(0);
 
   if (address.type == InternetAddressType.IPv4) {
     valueBuilder.addByte(StunIpFamily.ipv4.value);
@@ -576,16 +572,13 @@ StunAttribute createXorMappedAddressAttribute(
     valueBuilder.addByte(StunIpFamily.ipv6.value);
   }
 
-  // XOR Port
   var portBytes = ByteData(2);
   portBytes.setUint16(0, port, Endian.big);
-  int xorPort = port ^
-      (stunMagicCookie >> 16); // Use upper 16 bits of magic cookie for port XOR
+  int xorPort = port ^ (stunMagicCookie >> 16);
   var xorPortBytes = ByteData(2);
   xorPortBytes.setUint16(0, xorPort, Endian.big);
   valueBuilder.add(xorPortBytes.buffer.asUint8List());
 
-  // XOR IP Address
   Uint8List ipBytes = address.rawAddress;
   Uint8List xorIpBytes = Uint8List(ipBytes.length);
   var magicCookieBytes = ByteData(4)..setUint32(0, stunMagicCookie, Endian.big);
@@ -595,11 +588,8 @@ StunAttribute createXorMappedAddressAttribute(
       xorIpBytes[i] = ipBytes[i] ^ magicCookieBytes.getUint8(i);
     }
   } else {
-    // IPv6
-    var fullTransactionIdForXor = Uint8List.fromList([
-      ...magicCookieBytes.buffer.asUint8List(),
-      ...transactionId
-    ]); // 4 + 12 = 16 bytes
+    var fullTransactionIdForXor = Uint8List.fromList(
+        [...magicCookieBytes.buffer.asUint8List(), ...transactionId]);
     for (int i = 0; i < 16; i++) {
       xorIpBytes[i] = ipBytes[i] ^ fullTransactionIdForXor[i];
     }
@@ -616,7 +606,6 @@ MappedAddress decodeXorMappedAddressAttribute(
     throw ArgumentError("Attribute is not XOR-MAPPED-ADDRESS");
   }
   ByteData valueBd = ByteData.sublistView(attribute.value);
-  // int reserved = valueBd.getUint8(0); // Should be 0
   StunIpFamily family = (valueBd.getUint8(1) == StunIpFamily.ipv4.value)
       ? StunIpFamily.ipv4
       : StunIpFamily.ipv6;
@@ -638,7 +627,6 @@ MappedAddress decodeXorMappedAddressAttribute(
     }
     ipAddress = InternetAddress.fromRawAddress(originalIpBytes);
   } else {
-    // IPv6
     if (attribute.value.length < 20)
       throw ArgumentError("XOR-MAPPED-ADDRESS IPv6 value too short");
     xorIp = attribute.value.sublist(4, 20);
@@ -653,162 +641,284 @@ MappedAddress decodeXorMappedAddressAttribute(
   return MappedAddress(family, ipAddress, port);
 }
 
-// --- STUN Server ---
-class StunServer {
-  final InternetAddress _host;
-  final int _port;
-  RawDatagramSocket? _socket;
-  final String serverUfrag; // For validating incoming requests if needed
-  final String serverPassword; // For MESSAGE-INTEGRITY
+// --- STUN Client ---
+class StunClient {
+  final InternetAddress _serverHost;
+  final int _serverPort;
+  final String clientUfrag;
+  final String serverUfrag;
+  final String serverPassword; // Password for integrity check
 
-  StunServer(this._host, this._port,
-      {this.serverUfrag = "default-ufrag",
-      this.serverPassword = "default-password"});
+  final _random = Random.secure();
 
-  Future<void> start() async {
+  StunClient(this._serverHost, this._serverPort,
+      {required this.clientUfrag,
+      required this.serverUfrag,
+      required this.serverPassword});
+
+  Uint8List _generateTransactionId() {
+    return Uint8List.fromList(
+        List<int>.generate(stunTransactionIdSize, (i) => _random.nextInt(256)));
+  }
+
+  Future<void> sendBindingRequest({
+    required int localPort,
+    int? priority,
+    bool useCandidate = false,
+  }) async {
+    RawDatagramSocket? socket;
     try {
-      _socket = await RawDatagramSocket.bind(_host, _port);
+      socket = await RawDatagramSocket.bind(InternetAddress.anyIPv4, localPort);
       print(
-          'STUN server listening on ${_socket!.address.host}:${_socket!.port}');
-      print('Server Ufrag: $serverUfrag, Server Password: $serverPassword');
+          '\nSTUN Client bound to local address for candidate: ${socket.address.host}:${socket.port}');
 
-      _socket!.listen((RawSocketEvent event) {
+      Uint8List transactionId = _generateTransactionId();
+
+      StunAttribute? usernameAttr;
+      if (clientUfrag.isNotEmpty && serverUfrag.isNotEmpty) {
+        String usernameString = '$serverUfrag:$clientUfrag';
+        usernameAttr = StunAttribute(
+            StunAttributeType.username, utf8.encode(usernameString));
+      }
+
+      final Map<StunAttributeType, StunAttribute> attributes = {
+        if (usernameAttr != null) StunAttributeType.username: usernameAttr,
+      };
+
+      if (priority != null) {
+        final priorityBytes = ByteData(4)..setUint32(0, priority, Endian.big);
+        attributes[StunAttributeType.priority] = StunAttribute(
+            StunAttributeType.priority, priorityBytes.buffer.asUint8List());
+      }
+
+      if (useCandidate) {
+        attributes[StunAttributeType.useCandidate] = StunAttribute(
+            StunAttributeType.useCandidate,
+            Uint8List(0)); // Zero-length attribute
+      }
+
+      StunMessage request = StunMessage(
+        messageType: StunMessageType.bindingRequest,
+        transactionId: transactionId,
+        attributes: attributes,
+      );
+
+      Uint8List encodedRequest = request.encode(
+          password: serverPassword.isNotEmpty ? serverPassword : null);
+
+      print('Sending STUN Binding Request for candidate '
+          'from local port $localPort to '
+          '${_serverHost.host}:${_serverPort} with Transaction ID: '
+          '${hex.encode(transactionId)}');
+
+      try {
+        StunMessage decodedSentRequest = StunMessage.decode(encodedRequest);
+        print(
+            'Encoded STUN Request (for verification, local port $localPort):');
+        print(decodedSentRequest);
+      } catch (e) {
+        print(
+            "Could not decode the sent request for logging (local port $localPort): $e");
+      }
+
+      socket.send(encodedRequest, _serverHost, _serverPort);
+
+      socket.listen((RawSocketEvent event) {
         if (event == RawSocketEvent.read) {
-          Datagram? datagram = _socket!.receive();
+          Datagram? datagram = socket!.receive();
           if (datagram != null) {
-            _handleDatagram(datagram);
+            _handleResponse(datagram, transactionId, localPort);
+            socket.close(); // Close socket after receiving response
           }
         }
       });
+
+      // Future.delayed(Duration(seconds: 5), () {
+      //   if (socket != null && socket.isActive) {
+      //     print('STUN response timed out for local port $localPort.');
+      //     socket.close();
+      //   }
+      // });
     } catch (e) {
-      print('Error starting STUN server: $e');
+      print('Error sending binding request from local port $localPort: $e');
+      socket?.close();
     }
   }
 
-  void _handleDatagram(Datagram datagram) {
+  void _handleResponse(
+      Datagram datagram, Uint8List sentTransactionId, int localPort) {
     print(
-        '\nReceived ${datagram.data.length} bytes from ${datagram.address.host}:${datagram.port}');
-    // print('Raw data (hex): ${hex.encode(datagram.data)}');
+        '\nReceived ${datagram.data.length} bytes from ${datagram.address.host}:${datagram.port} for local port $localPort');
 
     if (!StunMessage.isStunMessage(datagram.data)) {
-      print('Not a STUN message. Ignoring.');
+      print('Not a STUN message. Ignoring for local port $localPort.');
       return;
     }
 
     try {
-      StunMessage request = StunMessage.decode(datagram.data);
-      print('Decoded STUN Request:');
-      print(request);
+      StunMessage response = StunMessage.decode(datagram.data);
+      print('Decoded STUN Response for local port $localPort:');
+      print(response);
 
-      // Validate the request (optional, but good practice)
-      // For binding requests, password might be derived from USERNAME if ICE is fully implemented.
-      // Here, we use the serverPassword.
-      bool isValid =
-          request.validate(ufrag: serverUfrag, password: serverPassword);
-      if (!isValid) {
-        print("STUN Request validation failed. Ignoring.");
-        // Optionally send an error response
+      if (!const ListEquality()
+          .equals(response.transactionId, sentTransactionId)) {
+        print('Error: Transaction ID mismatch for local port $localPort.');
         return;
       }
 
-      if (request.messageType.method == StunMessageMethod.binding &&
-          request.messageType.messageClass == StunMessageClass.request) {
-        print('Handling STUN Binding Request...');
-        _handleBindingRequest(request, datagram.address, datagram.port);
+      bool isValid = response.validate(
+          passwordForIntegrity:
+              serverPassword.isNotEmpty ? serverPassword : null);
+      if (!isValid) {
+        print("STUN Response validation failed for local port $localPort.");
+      }
+
+      if (response.messageType == StunMessageType.bindingSuccessResponse) {
+        print(
+            'STUN Binding Success Response received for local port $localPort!');
+        final xorMappedAddressAttr =
+            response.attributes[StunAttributeType.xorMappedAddress];
+        if (xorMappedAddressAttr != null) {
+          final mappedAddress = decodeXorMappedAddressAttribute(
+              xorMappedAddressAttr, response.transactionId);
+          print('Candidate from local port $localPort:');
+          print('  External IP: ${mappedAddress.ip.address}');
+          print('  External Port: ${mappedAddress.port}');
+        } else {
+          print(
+              'XOR-MAPPED-ADDRESS attribute not found in response for local port $localPort.');
+        }
+      } else if (response.messageType == StunMessageType.bindingErrorResponse) {
+        print(
+            'STUN Binding Error Response received for local port $localPort!');
+        final errorCodeAttr = response.attributes[StunAttributeType.errorCode];
+        if (errorCodeAttr != null && errorCodeAttr.value.length >= 4) {
+          var bd = ByteData.sublistView(errorCodeAttr.value);
+          int errorClass = bd.getUint8(2);
+          int errorNumber = bd.getUint8(3);
+          String reasonPhrase = '';
+          if (errorCodeAttr.value.length > 4) {
+            reasonPhrase = utf8.decode(errorCodeAttr.value.sublist(4));
+          }
+          print('Error Code: $errorClass$errorNumber - $reasonPhrase');
+        }
       } else {
         print(
-            'Received unsupported STUN message type: ${request.messageType}. Ignoring.');
-        // Optionally send an ErrorResponse with 400 Bad Request or 500 Server Error
+            'Received unexpected STUN message type: ${response.messageType} for local port $localPort.');
       }
     } catch (e, s) {
-      print('Error decoding STUN message: $e');
+      print('Error processing STUN response for local port $localPort: $e');
       print('Stack trace: $s');
-      // print('Problematic raw data (hex): ${hex.encode(datagram.data)}');
     }
   }
 
-  void _handleBindingRequest(
-      StunMessage request, InternetAddress clientAddress, int clientPort) {
-    // Create Binding Success Response
-    StunMessage response = StunMessage(
-      messageType: StunMessageType.bindingSuccessResponse,
-      transactionId: request.transactionId, // Must be the same transaction ID
-      attributes: {},
-    );
-
-    // Add XOR-MAPPED-ADDRESS attribute
-    response.attributes[StunAttributeType.xorMappedAddress] =
-        createXorMappedAddressAttribute(
-            clientAddress, clientPort, request.transactionId);
-
-    // Add USERNAME attribute (if present in request, reflect it)
-    // This is important for ICE. The password for MESSAGE-INTEGRITY is often
-    // the ICE password associated with this username.
-    String? requestUsername;
-    if (request.attributes.containsKey(StunAttributeType.username)) {
-      response.attributes[StunAttributeType.username] =
-          request.attributes[StunAttributeType.username]!;
-      try {
-        requestUsername =
-            utf8.decode(request.attributes[StunAttributeType.username]!.value);
-      } catch (_) {}
+  // Method to send multiple binding requests for different candidates
+  Future<void> sendMultipleBindingRequests(List<int> localPorts,
+      {List<int>? priorities}) async {
+    if (priorities != null && priorities.length != localPorts.length) {
+      print(
+          "Warning: Number of priorities does not match number of local ports. Priorities will be ignored.");
+      priorities = null; // Ignore if lengths don't match
     }
 
-    // Add SOFTWARE attribute (already handled in encode)
-    // Add MESSAGE-INTEGRITY and FINGERPRINT (handled in encode)
+    for (int i = 0; i < localPorts.length; i++) {
+      final int currentPort = localPorts[i];
+      final int? currentPriority = priorities != null ? priorities[i] : null;
+      final bool useCandidate =
+          i == 0; // Just an example: mark first candidate as 'Use-Candidate'
 
-    // The password for encoding the response's MESSAGE-INTEGRITY.
-    // In a full ICE implementation, this password would be tied to the ufrag.
-    // For simplicity, we use the server's global password.
-    String passwordForResponse = serverPassword;
-
-    Uint8List encodedResponse = response.encode(password: passwordForResponse);
-
-    print(
-        'Sending STUN Binding Success Response to ${clientAddress.host}:$clientPort');
-    print('Response Message:');
-    // Re-decode for printing (optional, good for debugging)
-    try {
-      StunMessage decodedSentResponse = StunMessage.decode(encodedResponse);
-      print(decodedSentResponse);
-    } catch (e) {
-      print("Could not decode the sent response for logging: $e");
+      print(
+          '\n--- Sending Request for Candidate ${i + 1} (Local Port: $currentPort) ---');
+      await sendBindingRequest(
+        localPort: currentPort,
+        priority: currentPriority,
+        useCandidate: useCandidate,
+      );
+      // Add a small delay to avoid overwhelming the server, especially when testing locally
+      await Future.delayed(Duration(milliseconds: 200));
     }
-    // print('Encoded response (hex): ${hex.encode(encodedResponse)}');
-
-    _socket?.send(encodedResponse, clientAddress, clientPort);
   }
 
-  void stop() {
-    print('Stopping STUN server...');
-    _socket?.close();
+  // No longer needed as sockets are closed individually
+  // void stop() {
+  //   _socket?.close();
+  //   print('STUN Client stopped.');
+  // }
+}
+
+// A simple ListEquality to compare Uint8List
+class ListEquality<E> {
+  const ListEquality();
+
+  bool equals(List<E>? a, List<E>? b) {
+    if (identical(a, b)) return true;
+    if (a == null || b == null) return false;
+    if (a.length != b.length) return false;
+    for (int i = 0; i < a.length; i++) {
+      if (a[i] != b[i]) return false;
+    }
+    return true;
   }
 }
 
-// --- Main Function to Run the Server ---
+// --- Main Function to Run the Client ---
 Future<void> main(List<String> arguments) async {
-  // Use 0.0.0.0 to listen on all available network interfaces
-  final host = InternetAddress.anyIPv4;
-  // Standard STUN port is 3478, but can be changed
-  final port =
-      arguments.isNotEmpty ? (int.tryParse(arguments[0]) ?? 4444) : 4444;
-  final ufrag = arguments.length > 1 ? arguments[1] : "testufrag";
-  final password = arguments.length > 2 ? arguments[2] : "testpassword";
+  // Google's public STUN server address and port
+  final serverHost =
+      InternetAddress.lookup('stun.l.google.com').then((list) => list.first);
+  final serverPort = 19302; // Standard STUN port
 
-  final server =
-      StunServer(host, port, serverUfrag: ufrag, serverPassword: password);
-  await server.start();
+  String clientUfrag = "";
+  String serverUfrag = "";
+  String serverPassword = "";
 
-  // // Keep the server running until interrupted
-  // ProcessSignal.sigint.watch().listen((signal) {
-  //   print('Received SIGINT. Shutting down...');
-  //   server.stop();
-  //   exit(0);
-  // });
+  // Example local ports to simulate different ICE candidates
+  // You can choose any available ports. Avoid well-known ports (<1024)
+  // and ports already in use by other applications.
+  List<int> candidateLocalPorts = [
+    50000, // Candidate 1
+    50001, // Candidate 2
+    50002, // Candidate 3
+  ];
 
-  // ProcessSignal.sigterm.watch().listen((signal) {
-  //   print('Received SIGTERM. Shutting down...');
-  //   server.stop();
-  //   exit(0);
-  // });
+  // Example priorities for the candidates (higher value means higher priority)
+  List<int> candidatePriorities = [
+    2130706431, // Typically highest for host candidates over UDP
+    2130706430, // Slightly lower
+    2130706429, // Even lower
+  ];
+
+  // Override server details if command-line arguments are provided
+  // if (arguments.length > 0) {
+  //   serverHost = InternetAddress.lookup(arguments[0]).then((list) => list.first);
+  // }
+  // if (arguments.length > 1) serverPort = int.tryParse(arguments[1]) ?? 19302;
+  // // Further arguments can override ufrag/password if connecting to a private STUN server
+  // if (arguments.length > 2) clientUfrag = arguments[2];
+  // if (arguments.length > 3) serverUfrag = arguments[3];
+  // if (arguments.length > 4) serverPassword = arguments[4];
+
+  print('STUN Client configuration:');
+  print('  Server: ${(await serverHost).host}:${serverPort}');
+  print('  Client Ufrag: ${clientUfrag.isEmpty ? "N/A" : clientUfrag}');
+  print('  Server Ufrag: ${serverUfrag.isEmpty ? "N/A" : serverUfrag}');
+  print(
+      '  Server Password: ${serverPassword.isEmpty ? "N/A" : "Provided (for integrity check)"}');
+
+  final client = StunClient(
+    await serverHost,
+    serverPort,
+    clientUfrag: clientUfrag,
+    serverUfrag: serverUfrag,
+    serverPassword: serverPassword,
+  );
+
+  // Send multiple requests simulating different ICE candidates
+  await client.sendMultipleBindingRequests(
+    candidateLocalPorts,
+    priorities: candidatePriorities,
+  );
+
+  print(
+      '\nAll candidate requests sent. Responses will appear as they are received or timed out.');
 }
