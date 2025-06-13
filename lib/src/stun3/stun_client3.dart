@@ -899,7 +899,7 @@ Future<void> main(List<String> arguments) async {
   // if (arguments.length > 4) serverPassword = arguments[4];
 
   print('STUN Client configuration:');
-  print('  Server: ${(await serverHost).host}:${serverPort}');
+  print('  Server: ${(await serverHost).host}:$serverPort');
   print('  Client Ufrag: ${clientUfrag.isEmpty ? "N/A" : clientUfrag}');
   print('  Server Ufrag: ${serverUfrag.isEmpty ? "N/A" : serverUfrag}');
   print(

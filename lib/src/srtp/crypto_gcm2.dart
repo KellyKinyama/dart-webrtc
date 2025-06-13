@@ -1,14 +1,12 @@
 // lib/srtp/cryptogcm.dart
 import 'dart:typed_data';
 import 'package:cryptography/cryptography.dart'; // New import for cryptography package
-import 'package:pointycastle/api.dart'
-    show
-        KeyParameter,
-        AEADParameters; // Only import necessary PointyCastle parts
+import 'package:pointycastle/api.dart' show KeyParameter;
+// AEADParameters; // Only import necessary PointyCastle parts
 import 'package:pointycastle/block/aes.dart'; // Keep AESEngine for key derivation
-import 'package:pointycastle/block/modes/gcm.dart'
-    show
-        GCMBlockCipher; // Keep for the old GCM class if needed, but not directly used for cipher operation now.
+// import 'package:pointycastle/block/modes/gcm.dart'
+//     show
+//         GCMBlockCipher; // Keep for the old GCM class if needed, but not directly used for cipher operation now.
 
 import 'rtp.dart'; // Contains Header and Packet
 import 'constants.dart'; // Contains label constants
@@ -214,8 +212,8 @@ class GCM {
 
   Future<Uint8List> encrypt(Packet packet, int roc) async {
     final Uint8List plaintextPayload = packet.payload;
-    final int aeadAuthTagLen = 16; // AES_128_GCM has 16-byte tag
-    final int explicitIvLen = 8; // Explicit IV is 8 bytes in SRTP
+    // final int aeadAuthTagLen = 16; // AES_128_GCM has 16-byte tag
+    // final int explicitIvLen = 8; // Explicit IV is 8 bytes in SRTP
 
     // The AAD (Additional Authenticated Data) is the RTP header.
     final Uint8List headerBytes =
