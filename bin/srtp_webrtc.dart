@@ -37,8 +37,8 @@ void main(List<String> arguments) {
     final handshaker = HandshakeManager(socket);
 
     SRTPContext srtpContext = SRTPContext(
-        addr: socket.address,
-        conn: socket,
+        //addr: socket.address,
+        //conn: socket,
         protectionProfile: ProtectionProfile.aes_128_gcm);
     final srtpManager = SRTPManager();
 

@@ -1,5 +1,4 @@
 // lib/srtp/srtpmanager.dart
-import 'dart:io';
 import 'dart:typed_data';
 
 import 'protection_profiles.dart';
@@ -12,11 +11,12 @@ import 'crypto_gcm.dart';
 class SRTPManager {
   SRTPManager();
 
-  SRTPContext newContext(InternetAddress addr, RawDatagramSocket conn,
+  SRTPContext newContext(
+      //InternetAddress addr, RawDatagramSocket conn,
       ProtectionProfile protectionProfile) {
     return SRTPContext(
-      addr: addr,
-      conn: conn,
+      // addr: addr,
+      // conn: conn,
       protectionProfile: protectionProfile,
     );
   }
@@ -72,6 +72,34 @@ class SRTPManager {
         "Extracted encryption keys from keying material (${keyingMaterial.length} bytes) [protection profile ${context.protectionProfile}]\n\tClientMasterKey: 0x${keys.clientMasterKey.map((e) => e.toRadixString(16).padLeft(2, '0')).join()} (${keys.clientMasterKey.length} bytes)\n\tClientMasterSalt: 0x${keys.clientMasterSalt.map((e) => e.toRadixString(16).padLeft(2, '0')).join()} (${keys.clientMasterSalt.length} bytes)\n\tServerMasterKey: 0x${keys.serverMasterKey.map((e) => e.toRadixString(16).padLeft(2, '0')).join()} (${keys.serverMasterKey.length} bytes)\n\tServerMasterSalt: 0x${keys.serverMasterSalt.map((e) => e.toRadixString(16).padLeft(2, '0')).join()} (${keys.serverMasterSalt.length} bytes)");
 
     context.gcm = await GCM.newGCM(keys.clientMasterKey, keys.clientMasterSalt);
+    // context.gcm = await GCM.newGCM(keys.serverMasterKey, keys.serverMasterSalt);
+  }
+
+  Future<void> initCipherFromKeySalt(
+      SRTPContext context, Uint8List masterKey, Uint8List masterSalt) async {
+    // logging.Descf(logging.ProtoSRTP, "Initializing SRTP Cipher Suite...");
+    print("Initializing SRTP Cipher Suite..."); // Placeholder for logging
+
+    // final EncryptionKeys keys =
+    //     _extractEncryptionKeys(context.protectionProfile, keyingMaterial);
+
+    // logging.Descf(
+    //     logging.ProtoSRTP,
+    //     "Extracted encryption keys from keying material (%d bytes) [protection profile %s]\n\tClientMasterKey: 0x%x (%d bytes)\n\tClientMasterSalt: 0x%x (%d bytes)\n\tServerMasterKey: 0x%x (%d bytes)\n\tServerMasterSalt: 0x%x (%d bytes)",
+    //     keyingMaterial.length,
+    //     context.protectionProfile,
+    //     keys.clientMasterKey,
+    //     keys.clientMasterKey.length,
+    //     keys.clientMasterSalt,
+    //     keys.clientMasterSalt.length,
+    //     keys.serverMasterKey,
+    //     keys.serverMasterKey.length,
+    //     keys.serverMasterSalt,
+    //     keys.serverMasterSalt.length);
+    // print(
+    //     "Extracted encryption keys from keying material (${keyingMaterial.length} bytes) [protection profile ${context.protectionProfile}]\n\tClientMasterKey: 0x${keys.clientMasterKey.map((e) => e.toRadixString(16).padLeft(2, '0')).join()} (${keys.clientMasterKey.length} bytes)\n\tClientMasterSalt: 0x${keys.clientMasterSalt.map((e) => e.toRadixString(16).padLeft(2, '0')).join()} (${keys.clientMasterSalt.length} bytes)\n\tServerMasterKey: 0x${keys.serverMasterKey.map((e) => e.toRadixString(16).padLeft(2, '0')).join()} (${keys.serverMasterKey.length} bytes)\n\tServerMasterSalt: 0x${keys.serverMasterSalt.map((e) => e.toRadixString(16).padLeft(2, '0')).join()} (${keys.serverMasterSalt.length} bytes)");
+
+    context.gcm = await GCM.newGCM(masterKey, masterSalt);
     // context.gcm = await GCM.newGCM(keys.serverMasterKey, keys.serverMasterSalt);
   }
 }

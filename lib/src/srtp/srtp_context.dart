@@ -1,4 +1,4 @@
-import 'dart:io';
+
 import 'dart:typed_data';
 
 import 'rtp2.dart'; // Changed import
@@ -7,8 +7,8 @@ import 'crypto_gcm.dart';
 import 'protection_profiles.dart';
 
 class SRTPContext {
-  final InternetAddress addr;
-  final RawDatagramSocket conn;
+  // final InternetAddress addr;
+  // final RawDatagramSocket conn;
   final ProtectionProfile protectionProfile;
   GCM? gcm;
   final Map<int, SsrcState> srtpSsrcStates; // For decryption
@@ -16,8 +16,8 @@ class SRTPContext {
       srtpSsrcStatesEncryption; // For encryption
 
   SRTPContext({
-    required this.addr,
-    required this.conn,
+    // required this.addr,
+    // required this.conn,
     required this.protectionProfile,
   })  : srtpSsrcStates = {},
         srtpSsrcStatesEncryption = {}; // Initialize new map

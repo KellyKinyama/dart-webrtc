@@ -33,19 +33,31 @@ class RtpError implements Exception {
   @override
   String toString() => 'RtpError: $message';
 
-  static const RtpError headerSizeInsufficient = RtpError('Header size insufficient');
-  static const RtpError headerSizeInsufficientForExtension = RtpError('Header size insufficient for extension');
-  static const RtpError malformedExtension = RtpError('Malformed RTP extension');
+  static const RtpError headerSizeInsufficient =
+      RtpError('Header size insufficient');
+  static const RtpError headerSizeInsufficientForExtension =
+      RtpError('Header size insufficient for extension');
+  static const RtpError malformedExtension =
+      RtpError('Malformed RTP extension');
   static const RtpError shortPacket = RtpError('Short packet');
-  static const RtpError bufferTooSmall = RtpError('Buffer too small'); // Equivalent to ErrBufferTooSmall
-  static const RtpError headerExtensionPayloadNot32BitWords = RtpError('Header extension payload not 32-bit words');
-  static const RtpError rfc3550headerIdrange = RtpError('RFC3550 header ID range error (must be 0)');
-  static const RtpError rfc8285oneByteHeaderIdrange = RtpError('RFC8285 one-byte header ID range (1-14)');
-  static const RtpError rfc8285oneByteHeaderSize = RtpError('RFC8285 one-byte header payload size (>16 bytes)');
-  static const RtpError rfc8285twoByteHeaderIdrange = RtpError('RFC8285 two-byte header ID range (>0)');
-  static const RtpError rfc8285twoByteHeaderSize = RtpError('RFC8285 two-byte header payload size (>255 bytes)');
-  static const RtpError headerExtensionNotFound = RtpError('Header extension not found');
-  static const RtpError headerExtensionsNotEnabled = RtpError('Header extensions not enabled');
+  static const RtpError bufferTooSmall =
+      RtpError('Buffer too small'); // Equivalent to ErrBufferTooSmall
+  static const RtpError headerExtensionPayloadNot32BitWords =
+      RtpError('Header extension payload not 32-bit words');
+  static const RtpError rfc3550headerIdrange =
+      RtpError('RFC3550 header ID range error (must be 0)');
+  static const RtpError rfc8285oneByteHeaderIdrange =
+      RtpError('RFC8285 one-byte header ID range (1-14)');
+  static const RtpError rfc8285oneByteHeaderSize =
+      RtpError('RFC8285 one-byte header payload size (>16 bytes)');
+  static const RtpError rfc8285twoByteHeaderIdrange =
+      RtpError('RFC8285 two-byte header ID range (>0)');
+  static const RtpError rfc8285twoByteHeaderSize =
+      RtpError('RFC8285 two-byte header payload size (>255 bytes)');
+  static const RtpError headerExtensionNotFound =
+      RtpError('Header extension not found');
+  static const RtpError headerExtensionsNotEnabled =
+      RtpError('Header extensions not enabled');
 }
 
 enum ExtensionProfile {
@@ -57,7 +69,8 @@ enum ExtensionProfile {
   final int value;
 
   factory ExtensionProfile.fromInt(int key) {
-    return values.firstWhere((element) => element.value == key, orElse: () => ExtensionProfile.unknown);
+    return values.firstWhere((element) => element.value == key,
+        orElse: () => ExtensionProfile.unknown);
   }
 }
 
@@ -190,15 +203,17 @@ class Header {
     int currentOffset = initialOffset;
     final int rawPacketLen = rawPacket.lengthInBytes;
 
-    print('DEBUG: Header.unmarshal - rawPacketLength: $rawPacketLen, initialOffset: $initialOffset');
+    // print(
+    //     'DEBUG: Header.unmarshal - rawPacketLength: $rawPacketLen, initialOffset: $initialOffset');
 
-
-    final ByteData reader = ByteData.view(rawPacket.buffer, rawPacket.offsetInBytes + initialOffset);
+    final ByteData reader = ByteData.view(
+        rawPacket.buffer, rawPacket.offsetInBytes + initialOffset);
 
     final int remainingLength = rawPacketLen - initialOffset;
 
     if (remainingLength < HEADER_LENGTH) {
-      print('DEBUG: Header.unmarshal - Error: Remaining length ($remainingLength) < HEADER_LENGTH ($HEADER_LENGTH)');
+      // print(
+      //     'DEBUG: Header.unmarshal - Error: Remaining length ($remainingLength) < HEADER_LENGTH ($HEADER_LENGTH)');
       throw RtpError.headerSizeInsufficient;
     }
 
@@ -210,11 +225,13 @@ class Header {
     final bool extension = ((b0 >> EXTENSION_SHIFT) & EXTENSION_MASK) > 0;
     final int cc = b0 & CC_MASK;
 
-    print('DEBUG: Header.unmarshal - b0: ${b0.toRadixString(16)}, version: $version, padding: $padding, extension: $extension, cc: $cc');
+    // print(
+    //     'DEBUG: Header.unmarshal - b0: ${b0.toRadixString(16)}, version: $version, padding: $padding, extension: $extension, cc: $cc');
 
     final int expectedMinLength = HEADER_LENGTH + (cc * CSRC_LENGTH);
     if (remainingLength < expectedMinLength) {
-      print('DEBUG: Header.unmarshal - Error: Remaining length ($remainingLength) < expectedMinLength ($expectedMinLength)');
+      // print(
+      //     'DEBUG: Header.unmarshal - Error: Remaining length ($remainingLength) < expectedMinLength ($expectedMinLength)');
       throw RtpError.headerSizeInsufficient;
     }
 
@@ -224,11 +241,14 @@ class Header {
     final bool marker = ((b1 >> MARKER_SHIFT) & MARKER_MASK) > 0;
     final int payloadType = b1 & PT_MASK;
 
-    final int sequenceNumber = reader.getUint16(currentOffset - initialOffset, Endian.big);
+    final int sequenceNumber =
+        reader.getUint16(currentOffset - initialOffset, Endian.big);
     currentOffset += 2;
-    final int timestamp = reader.getUint32(currentOffset - initialOffset, Endian.big);
+    final int timestamp =
+        reader.getUint32(currentOffset - initialOffset, Endian.big);
     currentOffset += 4;
-    final int ssrc = reader.getUint32(currentOffset - initialOffset, Endian.big);
+    final int ssrc =
+        reader.getUint32(currentOffset - initialOffset, Endian.big);
     currentOffset += 4;
 
     List<int> csrc = [];
@@ -236,33 +256,39 @@ class Header {
       csrc.add(reader.getUint32(currentOffset - initialOffset, Endian.big));
       currentOffset += 4;
     }
-    print('DEBUG: Header.unmarshal - marker: $marker, payloadType: $payloadType, sequenceNumber: $sequenceNumber, timestamp: $timestamp, ssrc: $ssrc, csrcCount: ${csrc.length}');
-
+    // print(
+    //     'DEBUG: Header.unmarshal - marker: $marker, payloadType: $payloadType, sequenceNumber: $sequenceNumber, timestamp: $timestamp, ssrc: $ssrc, csrcCount: ${csrc.length}');
 
     int extensionsPadding = 0;
     ExtensionProfile extensionProfile = ExtensionProfile.unknown;
     List<Extension> extensions = [];
 
     if (extension) {
-      print('DEBUG: Header.unmarshal - Extension bit is set. Current offset: $currentOffset');
+      // print(
+      //     'DEBUG: Header.unmarshal - Extension bit is set. Current offset: $currentOffset');
       if (remainingLength < (currentOffset - initialOffset) + 4) {
-        print('DEBUG: Header.unmarshal - Error: Not enough bytes for extension header (expected at least 4 more)');
+        // print(
+        //     'DEBUG: Header.unmarshal - Error: Not enough bytes for extension header (expected at least 4 more)');
         throw RtpError.headerSizeInsufficientForExtension;
       }
 
-      final int intExtProfile = reader.getUint16(currentOffset - initialOffset, Endian.big);
+      final int intExtProfile =
+          reader.getUint16(currentOffset - initialOffset, Endian.big);
       extensionProfile = ExtensionProfile.fromInt(intExtProfile);
       currentOffset += 2;
 
-      final int extensionLengthWords = reader.getUint16(currentOffset - initialOffset, Endian.big);
+      final int extensionLengthWords =
+          reader.getUint16(currentOffset - initialOffset, Endian.big);
       final int extensionLengthBytes = extensionLengthWords * 4;
       currentOffset += 2;
 
-      print('DEBUG: Header.unmarshal - Extension Profile: ${extensionProfile.value.toRadixString(16)}, Length (words): $extensionLengthWords, Length (bytes): $extensionLengthBytes');
+      // print(
+      //     'DEBUG: Header.unmarshal - Extension Profile: ${extensionProfile.value.toRadixString(16)}, Length (words): $extensionLengthWords, Length (bytes): $extensionLengthBytes');
 
-
-      if (remainingLength < (currentOffset - initialOffset) + extensionLengthBytes) {
-        print('DEBUG: Header.unmarshal - Error: Not enough bytes for extension payload (expected $extensionLengthBytes more)');
+      if (remainingLength <
+          (currentOffset - initialOffset) + extensionLengthBytes) {
+        // print(
+        //     'DEBUG: Header.unmarshal - Error: Not enough bytes for extension payload (expected $extensionLengthBytes more)');
         throw RtpError.headerSizeInsufficientForExtension;
       }
 
@@ -271,88 +297,100 @@ class Header {
       switch (extensionProfile) {
         case ExtensionProfile.OneByte:
           {
-            print('DEBUG: Header.unmarshal - Parsing OneByte extensions');
+            // print('DEBUG: Header.unmarshal - Parsing OneByte extensions');
             while (currentOffset < extensionDataEnd) {
               final int b = reader.getUint8(currentOffset - initialOffset);
               currentOffset += 1;
 
               if (b == 0x00) {
                 extensionsPadding += 1;
-                print('DEBUG: Header.unmarshal - OneByte Padding byte (0x00)');
+                // print('DEBUG: Header.unmarshal - OneByte Padding byte (0x00)');
                 continue;
               }
 
               final int extId = b >> 4;
-              final int len = (b & 0x0F) + 1; // Length in bytes for one-byte extension
+              final int len =
+                  (b & 0x0F) + 1; // Length in bytes for one-byte extension
 
-              print('DEBUG: Header.unmarshal - OneByte Extension found: ID=$extId, declared length=$len bytes');
+              // print(
+              //     'DEBUG: Header.unmarshal - OneByte Extension found: ID=$extId, declared length=$len bytes');
 
               if (extId == EXTENSION_ID_RESERVED) {
-                print('DEBUG: Header.unmarshal - OneByte Reserved ID (0xF), skipping remaining extension data as padding');
+                // print(
+                //     'DEBUG: Header.unmarshal - OneByte Reserved ID (0xF), skipping remaining extension data as padding');
                 extensionsPadding += (extensionDataEnd - currentOffset);
                 currentOffset = extensionDataEnd;
                 break;
               }
 
               if (currentOffset + len > extensionDataEnd) {
-                print('DEBUG: Header.unmarshal - Error: Malformed OneByte Extension, declared payload length ($len) exceeds remaining extension data');
+                // print(
+                //     'DEBUG: Header.unmarshal - Error: Malformed OneByte Extension, declared payload length ($len) exceeds remaining extension data');
                 throw RtpError.malformedExtension;
               }
 
-              final Uint8List payload = Uint8List.view(
-                  rawPacket.buffer, rawPacket.offsetInBytes + currentOffset, len);
+              final Uint8List payload = Uint8List.view(rawPacket.buffer,
+                  rawPacket.offsetInBytes + currentOffset, len);
               extensions.add(Extension(id: extId, payload: payload));
               currentOffset += len;
-              print('DEBUG: Header.unmarshal - Added OneByte Extension (ID: $extId, Payload Len: ${payload.length})');
+              // print(
+              //     'DEBUG: Header.unmarshal - Added OneByte Extension (ID: $extId, Payload Len: ${payload.length})');
             }
           }
           break;
 
         case ExtensionProfile.TwoByte:
           {
-            print('DEBUG: Header.unmarshal - Parsing TwoByte extensions');
+            // print('DEBUG: Header.unmarshal - Parsing TwoByte extensions');
             while (currentOffset < extensionDataEnd) {
               final int b = reader.getUint8(currentOffset - initialOffset);
               currentOffset += 1;
 
               if (b == 0x00) {
                 extensionsPadding += 1;
-                print('DEBUG: Header.unmarshal - TwoByte Padding byte (0x00)');
+                // print('DEBUG: Header.unmarshal - TwoByte Padding byte (0x00)');
                 continue;
               }
 
               final int extId = b; // ID is 8 bits for two-byte extension
               if (currentOffset + 1 > extensionDataEnd) {
-                print('DEBUG: Header.unmarshal - Error: Malformed TwoByte Extension, not enough bytes for length field');
-                  throw RtpError.malformedExtension;
+                // print(
+                //     'DEBUG: Header.unmarshal - Error: Malformed TwoByte Extension, not enough bytes for length field');
+                throw RtpError.malformedExtension;
               }
-              final int len = reader.getUint8(currentOffset - initialOffset); // Length in bytes for two-byte extension
+              final int len = reader.getUint8(currentOffset -
+                  initialOffset); // Length in bytes for two-byte extension
               currentOffset += 1;
 
-              print('DEBUG: Header.unmarshal - TwoByte Extension found: ID=$extId, declared length=$len bytes');
-
+              // print(
+              //     'DEBUG: Header.unmarshal - TwoByte Extension found: ID=$extId, declared length=$len bytes');
 
               if (currentOffset + len > extensionDataEnd) {
-                print('DEBUG: Header.unmarshal - Error: Malformed TwoByte Extension, declared payload length ($len) exceeds remaining extension data');
+                // print(
+                //     'DEBUG: Header.unmarshal - Error: Malformed TwoByte Extension, declared payload length ($len) exceeds remaining extension data');
                 throw RtpError.malformedExtension;
               }
 
-              final Uint8List payload = Uint8List.view(
-                  rawPacket.buffer, rawPacket.offsetInBytes + currentOffset, len);
+              final Uint8List payload = Uint8List.view(rawPacket.buffer,
+                  rawPacket.offsetInBytes + currentOffset, len);
               extensions.add(Extension(id: extId, payload: payload));
               currentOffset += len;
-              print('DEBUG: Header.unmarshal - Added TwoByte Extension (ID: $extId, Payload Len: ${payload.length})');
+              // print(
+              //     'DEBUG: Header.unmarshal - Added TwoByte Extension (ID: $extId, Payload Len: ${payload.length})');
             }
           }
           break;
 
         default: // RFC3550 Extension or unknown profile
-          print('DEBUG: Header.unmarshal - Parsing RFC3550 or unknown profile extension. Entire extension payload will be treated as one extension.');
-          final Uint8List payload = Uint8List.view(
-              rawPacket.buffer, rawPacket.offsetInBytes + currentOffset, extensionLengthBytes);
-          extensions.add(Extension(id: 0, payload: payload)); // ID 0 for generic RFC3550
+          // print(
+          //     'DEBUG: Header.unmarshal - Parsing RFC3550 or unknown profile extension. Entire extension payload will be treated as one extension.');
+          final Uint8List payload = Uint8List.view(rawPacket.buffer,
+              rawPacket.offsetInBytes + currentOffset, extensionLengthBytes);
+          extensions.add(
+              Extension(id: 0, payload: payload)); // ID 0 for generic RFC3550
           currentOffset += extensionLengthBytes;
-          print('DEBUG: Header.unmarshal - Added RFC3550 Extension (ID: 0, Payload Len: ${payload.length})');
+          // print(
+          //     'DEBUG: Header.unmarshal - Added RFC3550 Extension (ID: 0, Payload Len: ${payload.length})');
           break;
       }
     }
@@ -371,7 +409,8 @@ class Header {
       extensions: extensions,
       extensionsPadding: extensionsPadding,
     );
-    print('DEBUG: Header.unmarshal - Finished parsing header. Final header: $header');
+    // print(
+    //     'DEBUG: Header.unmarshal - Finished parsing header. Final header: $header');
 
     return (header, currentOffset - initialOffset);
   }
@@ -383,8 +422,10 @@ class Header {
     if (extension) {
       size += 4; // Extension header (profile + length)
       int extensionPayloadLen = getExtensionPayloadLen();
-      int extensionPayloadSizeWords = (extensionPayloadLen + 3) ~/ 4; // Round up to nearest 4-byte word
-      size += extensionPayloadSizeWords * 4; // Actual bytes written for extension data including padding
+      int extensionPayloadSizeWords =
+          (extensionPayloadLen + 3) ~/ 4; // Round up to nearest 4-byte word
+      size += extensionPayloadSizeWords *
+          4; // Actual bytes written for extension data including padding
     }
     return size;
   }
@@ -461,7 +502,8 @@ class Header {
       offset += 2;
 
       int extensionPayloadLen = getExtensionPayloadLen();
-      int extensionLengthWords = (extensionPayloadLen + 3) ~/ 4; // Round up to nearest 4-byte word
+      int extensionLengthWords =
+          (extensionPayloadLen + 3) ~/ 4; // Round up to nearest 4-byte word
       writer.setUint16(offset, extensionLengthWords, Endian.big);
       offset += 2;
 
@@ -472,7 +514,8 @@ class Header {
           throw RtpError.headerExtensionPayloadNot32BitWords;
         }
         if (extensions.length != 1) {
-          throw RtpError.rfc3550headerIdrange; // Or a more specific error for multiple extensions
+          throw RtpError
+              .rfc3550headerIdrange; // Or a more specific error for multiple extensions
         }
       }
 
@@ -502,7 +545,8 @@ class Header {
         default: // RFC3550 or unknown
           // Already validated to have 1 extension and 32-bit aligned payload for non-RFC8285 profiles
           if (extensions.isNotEmpty) {
-            buf.setRange(offset, offset + extensions.first.payload.length, extensions.first.payload);
+            buf.setRange(offset, offset + extensions.first.payload.length,
+                extensions.first.payload);
             offset += extensions.first.payload.length;
           }
           break;
@@ -511,8 +555,10 @@ class Header {
       // Add padding bytes for extensions
       // This loop is explicitly for adding 0-padding to reach the 4-byte word boundary
       // after writing the actual extension data.
-      final int actualExtensionDataWritten = offset - (requiredSize - (extensionLengthWords * 4));
-      final int paddingNeeded = (extensionLengthWords * 4) - actualExtensionDataWritten;
+      final int actualExtensionDataWritten =
+          offset - (requiredSize - (extensionLengthWords * 4));
+      final int paddingNeeded =
+          (extensionLengthWords * 4) - actualExtensionDataWritten;
 
       for (int i = 0; i < paddingNeeded; i++) {
         writer.setUint8(offset, 0);
@@ -572,9 +618,9 @@ class Packet {
   /// Unmarshal parses the passed byte slice and stores the result in the Packet this method is called upon
   /// Returns the unmarshalled Packet or throws an RtpError.
   static Packet unmarshal(Uint8List rawPacket) {
-    print('DEBUG: Packet.unmarshal - Starting unmarshal for rawPacket length: ${rawPacket.length}');
+    // print('DEBUG: Packet.unmarshal - Starting unmarshal for rawPacket length: ${rawPacket.length}');
     final (header, headerLen) = Header.unmarshal(rawPacket, initialOffset: 0);
-    print('DEBUG: Packet.unmarshal - Header unmarshalled. Header length: $headerLen');
+    // print('DEBUG: Packet.unmarshal - Header unmarshalled. Header length: $headerLen');
 
     int payloadLen = rawPacket.length - headerLen;
     Uint8List payload;
@@ -583,13 +629,12 @@ class Packet {
     } else {
       payload = Uint8List(0);
     }
-    print('DEBUG: Packet.unmarshal - Payload length: ${payload.length}, Padding enabled: ${header.padding}');
-
+    // print('DEBUG: Packet.unmarshal - Payload length: ${payload.length}, Padding enabled: ${header.padding}');
 
     if (header.padding) {
       if (payload.isNotEmpty) {
         final int paddingLen = payload[payload.length - 1];
-        print('DEBUG: Packet.unmarshal - Packet has padding. Declared padding length: $paddingLen');
+        // print('DEBUG: Packet.unmarshal - Packet has padding. Declared padding length: $paddingLen');
 
         if (paddingLen <= payload.length) {
           return Packet(
@@ -599,19 +644,19 @@ class Packet {
             headerSize: headerLen,
           );
         } else {
-          print('DEBUG: Packet.unmarshal - Error: Short packet due to padding (paddingLen > payload.length)');
+          // print('DEBUG: Packet.unmarshal - Error: Short packet due to padding (paddingLen > payload.length)');
           throw RtpError.shortPacket;
         }
       } else {
-        print('DEBUG: Packet.unmarshal - Error: Short packet, padding enabled but payload is empty');
+        // print('DEBUG: Packet.unmarshal - Error: Short packet, padding enabled but payload is empty');
         throw RtpError.shortPacket;
       }
     } else {
       return Packet(
-          header: header,
-          payload: payload,
-          rawData: rawPacket,
-          headerSize: headerLen,
+        header: header,
+        payload: payload,
+        rawData: rawPacket,
+        headerSize: headerLen,
       );
     }
   }
@@ -637,7 +682,8 @@ class Packet {
 
     int offset = 0;
     // Marshal the header first
-    offset += header.marshalTo(Uint8List.view(buf.buffer, buf.offsetInBytes + offset));
+    offset += header
+        .marshalTo(Uint8List.view(buf.buffer, buf.offsetInBytes + offset));
 
     // Then write the payload
     if (payload.isNotEmpty) {
