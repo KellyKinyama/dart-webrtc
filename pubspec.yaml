@@ -1,7 +1,8 @@
-name: dart_webrtc
-description: A sample command-line application.
+name: pure_dart_webrtc
+description: A pure Dart implementation of WebRTC, including support for ICE, STUN, TURN, DTLS, TLS, SRTP, RTP, RTCP, and SDP.
 version: 1.0.0
-# repository: https://github.com/my_org/my_repo
+repository: https://github.com/KellyKinyama/dart-webrtc
+homepage: https://github.com/KellyKinyama/dart-webrtc
 
 environment:
   sdk: ^3.6.2
