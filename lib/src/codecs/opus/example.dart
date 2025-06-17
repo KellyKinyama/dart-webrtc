@@ -2,14 +2,17 @@ import 'dart:async';
 import 'dart:typed_data';
 import 'dart:convert';
 import 'dart:math';
-// import 'package:example/example.dart';
 import 'init_ffi.dart';
-import 'opus_dart.dart';
+import 'package:opus_dart/opus_dart.dart';
+
+import 's16le_16000hz_mono.dart';
+import 'save.dart';
 
 /// Should be run from the example
 Future<void> main() async {
   await initFfi();
   initOpus(openOpus());
+  print(getOpusVersion());
   Uint8List data = await example();
   await saveOrDownload(data);
 }

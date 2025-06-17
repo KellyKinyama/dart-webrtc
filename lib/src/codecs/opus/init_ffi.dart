@@ -1,4 +1,5 @@
 // Notice that in this file, we import dart:ffi and not proxy_ffi.dart
+// import 'dart:ffi';
 import 'dart:ffi';
 import 'dart:io' show Platform;
 

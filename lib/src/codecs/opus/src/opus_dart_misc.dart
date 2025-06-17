@@ -1,6 +1,4 @@
 import 'dart:convert';
-import 'package:dart_webrtc/src/codecs/opus/src/init_ffi.dart';
-
 import 'proxy_ffi.dart';
 
 import '../wrappers/opus_libinfo.dart' as opus_libinfo;

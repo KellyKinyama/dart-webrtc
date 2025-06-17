@@ -21,8 +21,11 @@ dependencies:
   ecdsa: ^0.1.2
   elliptic: ^0.3.11
   events_emitter: ^0.5.2
+  ffi: ^2.1.4
   fixnum: ^1.1.1
   hex: ^0.2.0
+  intl: ^0.20.2
+  opus_dart: ^3.0.1
   pointycastle: ^3.9.1
   sdp_transform: ^0.3.2
   shelf: ^1.4.2
