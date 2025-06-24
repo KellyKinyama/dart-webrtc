@@ -1,18 +1,25 @@
 // import type { MediaDirection } from "./rtpTransceiver";
 
 class RTCRtpParameters {
- List<RTCRtpCodecParameters> codecs;
- List<RTCRtpHeaderExtensionParameters> headerExtensions;
+  List<RTCRtpCodecParameters> codecs;
+  List<RTCRtpHeaderExtensionParameters> headerExtensions;
   String? muxId;
   String? rtpStreamId;
   String? repairedRtpStreamId;
- RTCRtcpParameters? rtcp;
+  RTCRtcpParameters? rtcp;
+
+  RTCRtpParameters(this.codecs, this.headerExtensions);
 }
 
-enum RTCPFB{}// = { type: string; parameter?: string };
-enum MediaDirection{
+enum RTCPFB {
+  fb;
+} 
+// = { type: string; parameter?: string };
+
+enum MediaDirection {
   all,
-  send,recv;
+  send,
+  recv;
 }
 
 class RTCRtpCodecParameters {
@@ -26,16 +33,9 @@ class RTCRtpCodecParameters {
   int? channels;
   List<RTCPFB> rtcpFeedback = [];
   String? parameters;
-  MediaDirection direction=MediaDirection.all;
+  MediaDirection direction = MediaDirection.all;
 
-  RTCRtpCodecParameters(this.mimeType,this.clockRate);
-
-  // constructor(
-  //   props: Pick<RTCRtpCodecParameters, "mimeType" | "clockRate"> &
-  //     Partial<RTCRtpCodecParameters>,
-  // ) {
-  //   Object.assign(this, props);
-  // }
+  RTCRtpCodecParameters(this.mimeType, this.clockRate, this.payloadType);
 
   get name {
     return mimeType.split("/")[1];
@@ -55,6 +55,8 @@ class RTCRtpCodecParameters {
 class RTCRtpHeaderExtensionParameters {
   int id;
   int uri;
+
+  RTCRtpHeaderExtensionParameters(this.id, this.uri);
 
   // constructor(
   //   props: Partial<RTCRtpHeaderExtensionParameters> &
@@ -78,12 +80,17 @@ class RTCRtcpFeedback {
   String type;
   String? parameter;
 
+  RTCRtcpFeedback(this.type);
+
   // constructor(props: Partial<RTCRtcpFeedback> = {}) {
   //   Object.assign(this, props);
   // }
 }
+
 class RTCRtpRtxParameters {
   int ssrc;
+
+  RTCRtpRtxParameters(this.ssrc);
 
   // constructor(props: Partial<RTCRtpRtxParameters> = {}) {
   //   Object.assign(this, props);
@@ -93,7 +100,9 @@ class RTCRtpRtxParameters {
 class RTCRtpCodingParameters {
   int ssrc;
   int payloadType;
- RTCRtpRtxParameters? rtx;
+  RTCRtpRtxParameters? rtx;
+
+  RTCRtpCodingParameters(this.ssrc, this.payloadType);
 
   // constructor(
   //   props: Partial<RTCRtpCodingParameters> &
@@ -104,15 +113,22 @@ class RTCRtpCodingParameters {
 }
 
 class RTCRtpReceiveParameters extends RTCRtpParameters {
- List<RTCRtpCodingParameters> encodings;
+  List<RTCRtpCodingParameters> encodings;
+  List<RTCRtpHeaderExtensionParameters> headerExtensions;
+
+  RTCRtpReceiveParameters(this.encodings, this.headerExtensions)
+      : super([], headerExtensions);
+  // : super(encodings, null);
 }
 
 typedef RTCRtpSendParameters = RTCRtpParameters;
 
 class RTCRtpSimulcastParameters {
   String rid;
- MediaDirection direction=MediaDirection.all;
+  MediaDirection direction = MediaDirection.all;
   // constructor(props: RTCRtpSimulcastParameters) {
   //   Object.assign(this, props);
   // }
+
+  RTCRtpSimulcastParameters(this.rid);
 }
