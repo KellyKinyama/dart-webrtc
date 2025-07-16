@@ -10,6 +10,8 @@ environment:
 # Add regular dependencies here.
 dependencies:
   # path: ^1.8.0
+  archive: ^3.6.1
+  args: ^2.7.0
   asn1lib: ^1.5.9
   basic_utils: ^5.7.0
   bits: ^1.4.0
