@@ -25,6 +25,7 @@ dependencies:
   elliptic: ^0.3.11
   events_emitter: ^0.5.2
   ffi: ^2.1.4
+  ffigen: ^19.0.0
   fixnum: ^1.1.1
   hex: ^0.2.0
   intl: ^0.20.2
@@ -37,7 +38,30 @@ dependencies:
   web_socket_channel: ^3.0.3
   x25519: ^0.1.1
   x509b: ^0.2.5
+  
 
 dev_dependencies:
   lints: ^5.0.0
   test: ^1.24.0
+ffigen:
+  output: 'generated_bindings.dart'
+  headers:
+    entry-points:
+      - 'C:\msys64\mingw64\include\vpx\vp8.h'
+      - 'C:\msys64\mingw64\include\vpx\vpx_codec.h'
+      - 'C:\msys64\mingw64\include\vpx\vp8cx.h'
+      - 'C:\msys64\mingw64\include\vpx\vp8dx.h'
+      - 'C:\msys64\mingw64\include\vpx\vpx_encoder.h'
+      - 'C:\msys64\mingw64\include\vpx\vpx_decoder.h'
+      - 'C:\msys64\mingw64\include\vpx\vpx_ext_ratectrl.h'
+      - 'C:\msys64\mingw64\include\vpx\vpx_ext_ratectrl.h'
+      - 'C:\msys64\mingw64\include\vpx\vpx_ext_ratectrl.h'
+      - 'C:\msys64\mingw64\include\vpx\vpx_frame_buffer.h'
+      - 'C:\msys64\mingw64\include\vpx\vpx_frame_buffer.h'
+      - 'C:\msys64\mingw64\include\vpx\vpx_image.h'
+      - 'C:\msys64\mingw64\include\vpx\vpx_integer.h'
+      - 'C:\msys64\mingw64\include\vpx\vpx_tpl.h'
+    include-directives:
+      - 'C:\msys64\mingw64\include\vpx\**.h'
+  llvm-path: 
+    - 'C:\kelly\llvm'

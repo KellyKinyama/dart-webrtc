@@ -1418,7 +1418,7 @@ String getLibvpxPath() {
   } else if (Platform.isMacOS || Platform.isIOS) {
     return 'libvpx.dylib';
   } else if (Platform.isWindows) {
-    return 'assets/codecs/libvpx.dll';
+    return 'C:/msys64/mingw64/bin/libvpx-1.dll';
   } else {
     throw UnsupportedError('Unsupported platform: ${Platform.operatingSystem}');
   }
