@@ -12,3 +12,6 @@
 gst-launch-1.0 -em udpsrc port=5100 caps="application/x-rtp,media=video,encoding-name=H264,payload=96" timeout=2000000000 ! queue ! rtph264depay ! queue ! h264parse ! queue ! mp4mux name=mux ! queue ! filesink location="./output_recording.mp4" udpsrc port=5200 caps="application/x-rtp,media=audio,encoding-name=OPUS,payload=96" timeout=2000000000 ! queue ! rtpopusdepay ! queue ! opusparse ! queue ! mux.
 
 gst-launch-1.0 -v videotestsrc ! vp8enc ! rtpvp8pay ! udpsink host=127.0.0.1 port=5000
+
+gst-launch-1.0 -v videotestsrc ! videoconvert ! videoscale ! video/x-raw,width=640,height=480 ! mfh264enc ! rtspclientsink location=rtsp://localhost:8554/test
+gst-launch-1.0 -em udpsrc port=5100 caps="application/x-rtp,media=video,encoding-name=H264,payload=96" timeout=2000000000 ! queue ! rtph264depay ! queue ! h264parse ! queue ! mp4mux name=mux ! queue ! filesink location="./output_recording.mp4" udpsrc port=5200 caps="application/x-rtp,media=audio,encoding-name=OPUS,payload=96" timeout=2000000000 ! queue ! rtpopusdepay ! queue ! opusparse ! queue ! mux.

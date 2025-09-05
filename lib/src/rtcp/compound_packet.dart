@@ -86,8 +86,9 @@ class RtcpCompoundPacket {
     if (sDesReport != null) packetBytes.add(sDesReport!.getBytes());
     if (bye != null) packetBytes.add(bye!.getBytes());
     if (twccFeedback != null) packetBytes.add(twccFeedback!.getBytes());
-    if (feedback != null && twccFeedback == null)
+    if (feedback != null && twccFeedback == null) {
       packetBytes.add(feedback!.getBytes());
+    }
 
     int totalLength = packetBytes.fold(0, (sum, bytes) => sum + bytes.length);
     final Uint8List compoundBuffer = Uint8List(totalLength);
