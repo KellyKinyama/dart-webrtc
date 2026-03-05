@@ -28,6 +28,7 @@ dependencies:
   ffigen: ^19.0.0
   fixnum: ^1.1.1
   hex: ^0.2.0
+  image: ^4.3.0
   intl: ^0.20.2
   opus_dart: ^3.0.1
   pointycastle: ^3.9.1
