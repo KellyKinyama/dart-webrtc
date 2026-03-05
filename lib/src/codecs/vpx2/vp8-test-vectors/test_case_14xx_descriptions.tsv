@@ -1,0 +1,39 @@
+vp80-01-intra-1400.ivf	vp8_intra	Intra stream. Segmentation id update disabled. One residual partition.	10	176	144	1400
+vp80-03-segmentation-1401.ivf	vp8_intra	Intra stream. Segmentation id update enabled. One residual partition.	10	176	144	1401
+vp80-02-inter-1402.ivf	vp8_inter	Inter stream. Segmentation id update disabled. One residual partition.	10	176	144	1402
+vp80-03-segmentation-1403.ivf	vp8_inter	Inter stream. Segmentation id update nabled. One residual partition.	10	176	144	1403
+vp80-04-partitions-1404.ivf	vp8_inter_multi_coeff	Inter stream. Segmentation id update disabled. Two residual partition.	20	176	144	1404
+vp80-04-partitions-1405.ivf	vp8_inter_multi_coeff	Inter stream. Segmentation id update disabled. Four residual partition.	20	176	144	1405
+vp80-04-partitions-1406.ivf	vp8_inter_multi_coeff	Inter stream. Segmentation id update disabled. Eight residual partition.	20	176	144	1406
+vp80-03-segmentation-1407.ivf	vp8_inter_segment	Inter stream. Segmentation id update enabled. One residual partition.	20	352	288	1407
+vp80-03-segmentation-1408.ivf	vp8_inter_multi_coeff	Inter stream. Segmentation id update enabled. Two residual partition.	20	352	288	1408
+vp80-03-segmentation-1409.ivf	vp8_inter_multi_coeff	Inter stream. Segmentation id update enabled. Four residual partition.	20	352	288	1409
+vp80-03-segmentation-1410.ivf	vp8_inter_multi_coeff	Inter stream. Segmentation id update enabled. Eight residual partition.	30	352	288	1410
+vp80-01-intra-1411.ivf	vp8_intra	Intra stream. Segmentation id update disabled. One residual partition. Noise case with lot of RLC data.	30	96	96	1411
+vp80-02-inter-1412.ivf	vp8_inter	Inter stream. Segmentation id update disabled. One residual partition. Noise case with lot of RLC data.	30	96	96	1412
+vp80-03-segmentation-1413.ivf	vp8_inter_multi_coeff	Inter stream. Segmentation id update enabled. Eight residual partition. Noise case with lot of RLC data.	30	96	96	1413
+vp80-03-segmentation-1414.ivf	vp8_intra_multi_coeff	Intra stream. Segmentation id update enabled. Two residual partition.	30	320	240	1414
+vp80-03-segmentation-1415.ivf	vp8_intra_segment	Intra stream. Segmentation id update enabled. One residual partition.	30	320	240	1415
+vp80-01-intra-1416.ivf	vp8_intra	Intra stream. Segmentation id update disabled. One residual partition. One pass encoding  mode (Mode 2).	1	176	144	1416
+vp80-01-intra-1417.ivf	vp8_intra	Intra stream. Segmentation id update disabled. One residual partition. Good quality fast encoding mode (Mode 1).	1	176	144	1417
+vp80-02-inter-1418.ivf	vp8_inter	Inter stream. Segmentation id update disabled. One residual partition. Noise case with lot of RLC data.	108	200	200	1418
+vp80-02-inter-1424.ivf	vp8_inter	Inter stream. Segmentation id update disabled. One residual partition. For testing HW filter error pic 1 mb 0.	14	176	144	1424
+vp80-03-segmentation-1425.ivf	vp8_inter	Inter stream. Segmentation id update enabled. One residual partition.Number of passes 2, profile 0, max number of threads 3, resize allowed (cif to qcif), sharpness 1, noise sensitivity 1.	14	176	144	1425
+vp80-03-segmentation-1426.ivf	vp8_inter	Inter stream. Segmentation id update enabled. One residual partition. Profile 0,max number of threads 1, sharpness 1, noise-sensitivity 1.	13	352	288	1426
+vp80-03-segmentation-1427.ivf	vp8_inter	Inter stream. Segmentation id update enabled. One residual partition. Profile 0, max number of threads 4, resize allowed, sharpness 7, noise-sensitivity 1.	12	352	288	1427
+vp80-05-sharpness-1428.ivf	vp8_inter	Inter stream. Segmentation id update disabled. One residual partition. Profile 0, max number of threadst 2,  resize allowed, sharpness 3, noise-sensitivity 0.	13	352	288	1428
+vp80-05-sharpness-1429.ivf	vp8_inter	Inter stream. Segmentation id update disabled. One residual partition. Profile 0, max number of threads 4, resize allowed, sharpness 6, noise-sensitivity 1.	12	352	288	1429
+vp80-05-sharpness-1430.ivf	vp8_inter	Inter stream. Segmentation id update disabled. One residual partition. Profile 0, max number of threads 3, resize allowed, sharpness 0, noise-sensitivity 0.	14	352	288	1430
+vp80-05-sharpness-1431.ivf	vp8_inter	Inter stream. Segmentation id update disabled. One residual partition. Profile 0, max number of threads 4, resize allowed 0, sharpness 0, noise-sensitivity 1.	12	352	288	1431
+vp80-03-segmentation-1432.ivf	vp8_inter	Inter stream. Segmentation id update enabled. One residual partition. Profile 0, ax number of threads 4, sharpness 6, noise-sensitivity 0.	10	352	288	1432
+vp80-05-sharpness-1433.ivf	vp8_inter	Inter stream. Segmentation id update disabled. One residual partition. Profile 0, max number of threads 4, sharpness 0, noise-sensitivity 0.	13	352	288	1433
+vp80-05-sharpness-1434.ivf	vp8_inter	Inter stream. Segmentation id update disabled. One residual partition. Profile 0, max number of threads 1,  resize allowed, sharpness 6, noise-sensitivity 0.	15	352	288	1434
+vp80-03-segmentation-1435.ivf	vp8_inter	Inter stream. Segmentation id update enabled. One residual partition. Number of passes 2, profile 0, max number of threads 3, resize allowed, sharpness 1,noise-sensitivity 1.	13	352	288	1435
+vp80-03-segmentation-1436.ivf	vp8_inter	Inter stream. Segmentation id update enabled. One residual partition. Profile 0, max number of threads 1, resize allowed, sharpness 1, noise-sensitivity 1.	2	352	288	1436
+vp80-03-segmentation-1437.ivf	vp8_inter	Inter stream. Segmentation id update enabled. One residual partition. Profile 0, max numbr of threads 2, resize allowed, sharpness 0, noise-sensitivity 0.	15	352	288	1437
+vp80-05-sharpness-1438.ivf	vp8_inter	Inter stream. Segmentation id update disabled. One residual partition. Profile 0, max number of threads 1, resize allowed, sharpness 1, noise-sensitivity 1.	11	352	288	1438
+vp80-05-sharpness-1439.ivf	vp8_inter	Inter stream. Segmentation id update disabled. One residual partition. Number of passes 2, profile 0, max number of threads 1, resize allowed, sharpness 4 , noise-sensitivity 1.	15	352	288	1439
+vp80-05-sharpness-1440.ivf	vp8_inter	Inter stream. Segmentation id update disabled. One residual partition. Profile 0, max number of threads 1, resize allowed, sharpness 1, noise-sensitivity 1.	13	352	288	1440
+vp80-03-segmentation-1441.ivf	vp8_inter	Inter stream. Segmentation id update enabled. One residual partition. Profile 0, max number f threads 1, resize allowed, sharpness 5, noise-sensitivity 0.	14	352	288	1441
+vp80-03-segmentation-1442.ivf	vp8_inter	Inter stream. Segmentation id update enabled. One residual partition. Profile 0, max number of threads 2, resize allowed, sharpness 7, noise-sensitivity 1.	13	352	288	1442
+vp80-05-sharpness-1443.ivf	vp8_inter	Inter stream. Segmentation id update disabled. One residual partition. Profile 0, max number of threads 1, sharpness 5, noise-sensitivity 1.	8	1920	96	1443
