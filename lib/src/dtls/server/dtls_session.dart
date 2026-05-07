@@ -54,8 +54,13 @@ class DtlsSession {
   DtlsSession({
     required EcdsaCert serverCert,
     required void Function(List<int> bytes) sendRaw,
+    int maxHandshakeFragmentLength = defaultMaxHandshakeFragmentLength,
   }) : _serverCert = serverCert {
-    _writer = RecordWriter(context: _ctx, sendRaw: sendRaw);
+    _writer = RecordWriter(
+      context: _ctx,
+      sendRaw: sendRaw,
+      maxHandshakeFragmentLength: maxHandshakeFragmentLength,
+    );
   }
 
   HandshakeContext get context => _ctx;

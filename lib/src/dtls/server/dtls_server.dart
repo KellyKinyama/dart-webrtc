@@ -23,6 +23,7 @@ import 'dart:typed_data';
 import '../tests/verify_ecdsa_256_cert1.dart';
 
 import 'dtls_session.dart';
+import 'record_io.dart' show defaultMaxHandshakeFragmentLength;
 
 /// Identifies a remote peer by `(host, port)`.
 class PeerKey {
@@ -45,6 +46,7 @@ class PeerKey {
 class DtlsServer {
   final RawDatagramSocket _socket;
   final EcdsaCert _cert;
+  final int _maxHandshakeFragmentLength;
   final Map<PeerKey, DtlsSession> _sessions = {};
   late final StreamSubscription<RawSocketEvent> _sub;
   bool _closed = false;
@@ -54,20 +56,29 @@ class DtlsServer {
   void Function(DtlsSession session, InternetAddress address, int port)?
       onSession;
 
-  DtlsServer._(this._socket, this._cert) {
+  DtlsServer._(this._socket, this._cert, this._maxHandshakeFragmentLength) {
     _sub = _socket.listen(_onEvent);
   }
 
   /// Binds a UDP socket on [address]:[port] and starts listening for DTLS
   /// peers. Pass [certificate] (an [EcdsaCert]) to control the server
   /// identity; otherwise a fresh self-signed P-256 cert is generated.
+  ///
+  /// [maxHandshakeFragmentLength] caps the size of each outgoing handshake
+  /// fragment in bytes; larger handshake messages will be split across
+  /// multiple DTLS records.
   static Future<DtlsServer> bind(
     InternetAddress address,
     int port, {
     EcdsaCert? certificate,
+    int maxHandshakeFragmentLength = defaultMaxHandshakeFragmentLength,
   }) async {
     final socket = await RawDatagramSocket.bind(address, port);
-    return DtlsServer._(socket, certificate ?? generateSelfSignedCertificate());
+    return DtlsServer._(
+      socket,
+      certificate ?? generateSelfSignedCertificate(),
+      maxHandshakeFragmentLength,
+    );
   }
 
   InternetAddress get address => _socket.address;
@@ -100,6 +111,7 @@ class DtlsServer {
     final session = DtlsSession(
       serverCert: _cert,
       sendRaw: (bytes) => _socket.send(bytes, remoteAddr, remotePort),
+      maxHandshakeFragmentLength: _maxHandshakeFragmentLength,
     );
     onSession?.call(session, remoteAddr, remotePort);
     return session;

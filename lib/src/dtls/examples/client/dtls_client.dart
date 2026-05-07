@@ -101,6 +101,10 @@ class DtlsClient {
   // in the transcript (the first one and the HelloVerifyRequest are dropped).
   final Map<int, Uint8List> _sent = {};
   final Map<int, Uint8List> _recv = {};
+  // Reassembly buffers for fragmented handshake messages, keyed by
+  // `message_seq`. Records sharing the same message_seq carry pieces of
+  // the same logical handshake message.
+  final Map<int, _Reasm> _reasm = {};
   // Defines the canonical concatenation order used for verify_data PRF input.
   static const List<int> _transcriptOrder = [
     _hsTypeClientHello, // sent
@@ -127,6 +131,9 @@ class DtlsClient {
 
   Future<void> connect() async {
     _socket = await RawDatagramSocket.bind(InternetAddress.anyIPv4, 0);
+    // Bump the receive buffer to absorb bursts of fragmented handshake
+    // records on loopback. Best-effort across platforms.
+    _trySetRcvBuf(_socket, 1 << 20);
     _sub = _socket.listen(_onEvent);
 
     final keys = generateP256Keys();
@@ -431,11 +438,16 @@ class DtlsClient {
 
   void _onEvent(RawSocketEvent e) {
     if (e != RawSocketEvent.read) return;
-    final dg = _socket.receive();
-    if (dg == null) return;
-    _incoming.add(dg.data);
+    // Drain *all* datagrams currently buffered by the kernel, not just one,
+    // to avoid OS-level UDP drops when the peer sends a burst of records
+    // (e.g. several handshake fragments back-to-back).
+    while (true) {
+      final dg = _socket.receive();
+      if (dg == null) break;
+      _incoming.add(dg.data);
+    }
     final w = _waitForData;
-    if (w != null && !w.isCompleted) {
+    if (_incoming.isNotEmpty && w != null && !w.isCompleted) {
       _waitForData = null;
       w.complete();
     }
@@ -509,27 +521,77 @@ class DtlsClient {
       }
 
       // A single record may contain several handshake messages back-to-back
-      // (e.g. ServerHello+Certificate+SKE+SHD).
+      // (e.g. ServerHello+Certificate+SKE+SHD). It may also contain
+      // fragments of a larger logical message (RFC 6347 §4.2.3).
       int o = 0;
       while (o + 12 <= handshake.length) {
         final hsType = handshake[o];
         final length = (handshake[o + 1] << 16) |
             (handshake[o + 2] << 8) |
             handshake[o + 3];
+        final messageSeq = (handshake[o + 4] << 8) | handshake[o + 5];
         final fragOff = (handshake[o + 6] << 16) |
             (handshake[o + 7] << 8) |
             handshake[o + 8];
         final fragLen = (handshake[o + 9] << 16) |
             (handshake[o + 10] << 8) |
             handshake[o + 11];
-        if (fragOff != 0 || fragLen != length) {
-          throw UnimplementedError('handshake fragmentation not supported');
+
+        if (o + 12 + fragLen > handshake.length) {
+          throw StateError('truncated handshake fragment');
         }
-        final body =
-            Uint8List.fromList(handshake.sublist(o + 12, o + 12 + length));
-        final fullMsg =
-            Uint8List.fromList(handshake.sublist(o, o + 12 + length));
-        o += 12 + length;
+
+        Uint8List? body; // populated when this iteration completes a message
+        Uint8List? fullMsg;
+
+        if (fragOff == 0 && fragLen == length) {
+          // Unfragmented — fast path.
+          body = Uint8List.fromList(handshake.sublist(o + 12, o + 12 + length));
+          fullMsg = Uint8List.fromList(handshake.sublist(o, o + 12 + length));
+        } else {
+          // Fragment — accumulate.
+          final r = _reasm.putIfAbsent(
+            messageSeq,
+            () => _Reasm(hsType: hsType, length: length),
+          );
+          if (r.hsType != hsType || r.length != length) {
+            throw StateError(
+                'inconsistent fragment metadata for message_seq=$messageSeq');
+          }
+          if (fragOff + fragLen > length) {
+            throw StateError('fragment exceeds message length');
+          }
+          r.buffer.setRange(
+            fragOff,
+            fragOff + fragLen,
+            handshake.sublist(o + 12, o + 12 + fragLen),
+          );
+          r.received += fragLen;
+          if (r.received >= r.length) {
+            // Reassembled — synthesize canonical (un-fragmented) bytes.
+            body = r.buffer;
+            final hdr = Uint8List(12);
+            hdr[0] = hsType;
+            hdr[1] = (length >> 16) & 0xff;
+            hdr[2] = (length >> 8) & 0xff;
+            hdr[3] = length & 0xff;
+            hdr[4] = (messageSeq >> 8) & 0xff;
+            hdr[5] = messageSeq & 0xff;
+            // fragment_offset = 0, fragment_length = length
+            hdr[9] = (length >> 16) & 0xff;
+            hdr[10] = (length >> 8) & 0xff;
+            hdr[11] = length & 0xff;
+            fullMsg = Uint8List.fromList([...hdr, ...body]);
+            _reasm.remove(messageSeq);
+          }
+        }
+
+        o += 12 + fragLen;
+
+        if (body == null || fullMsg == null) {
+          // This fragment did not complete a message; keep parsing.
+          continue;
+        }
 
         _recv[hsType] = fullMsg;
 
@@ -554,7 +616,8 @@ class DtlsClient {
         }
       }
 
-      throw StateError('did not find handshake type $wantType in datagram');
+      // Datagram exhausted without yielding the wanted message — go read
+      // the next datagram (might be more fragments).
     }
   }
 
@@ -645,6 +708,36 @@ class _Frame {
   final Uint8List record;
   _Frame(
       {required this.contentType, required this.epoch, required this.record});
+}
+
+/// Per-`message_seq` reassembly buffer for fragmented handshake messages.
+class _Reasm {
+  final int hsType;
+  final int length;
+  final Uint8List buffer;
+  int received = 0;
+  _Reasm({required this.hsType, required this.length})
+      : buffer = Uint8List(length);
+}
+
+/// Best-effort enlargement of the UDP receive buffer.
+void _trySetRcvBuf(RawDatagramSocket s, int size) {
+  // SOL_SOCKET / SO_RCVBUF differ across platforms.
+  // Linux:   level=1   option=8
+  // macOS:   level=0xffff option=0x1002
+  // Windows: level=0xffff option=0x1002
+  final attempts = <List<int>>[
+    if (Platform.isLinux) [1, 8],
+    if (Platform.isMacOS || Platform.isWindows) [0xffff, 0x1002],
+  ];
+  for (final lvlOpt in attempts) {
+    try {
+      s.setRawOption(RawSocketOption.fromInt(lvlOpt[0], lvlOpt[1], size));
+      return;
+    } catch (_) {
+      // try next
+    }
+  }
 }
 
 // -------- Demo entry point --------
