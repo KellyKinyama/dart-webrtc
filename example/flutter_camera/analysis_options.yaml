@@ -1,0 +1,6 @@
+include: package:flutter_lints/flutter.yaml
+
+analyzer:
+  errors:
+    # The example targets Flutter 3.16+; allow newer dart features.
+    invalid_annotation_target: ignore

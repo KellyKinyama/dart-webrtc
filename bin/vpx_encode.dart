@@ -14,8 +14,8 @@ import 'dart:typed_data';
 import 'package:args/args.dart';
 import 'package:ffi/ffi.dart';
 
-import 'package:pure_dart_webrtc/src/codecs/vpx2/vpx_bindings.dart';
-import 'package:pure_dart_webrtc/src/codecs/vpx2/vpx_loader.dart';
+import 'package:pure_dart_webrtc/src/codecs/vpx/vpx_bindings.dart';
+import 'package:pure_dart_webrtc/src/codecs/vpx/vpx_loader.dart';
 
 Future<int> main(List<String> args) async {
   final parser = ArgParser()

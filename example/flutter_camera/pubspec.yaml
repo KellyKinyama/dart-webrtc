@@ -1,0 +1,22 @@
+name: vpx_camera_demo
+description: "Cross-platform Flutter demo: capture from camera, encode with VP8/VP9, decode and display."
+publish_to: "none"
+version: 0.1.0
+
+environment:
+  sdk: ^3.6.2
+  flutter: ">=3.16.0"
+
+dependencies:
+  flutter:
+    sdk: flutter
+  camera: ^0.11.0
+  path_provider: ^2.1.4
+  pure_dart_webrtc:
+    path: ../../
+
+dev_dependencies:
+  flutter_lints: ^4.0.0
+
+flutter:
+  uses-material-design: true
