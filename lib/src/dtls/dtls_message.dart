@@ -202,7 +202,8 @@ class DecodeDtlsMessageResult {
               "Application data: ${utf8.decode(decryptedBytes.sublist(decryptedOffset))}");
 
           final (appData, decodedApplicationData, _) =
-              ApplicationData.unmarshal(buf, offset, decryptedBytes.length);
+              ApplicationData.unmarshal(
+                  decryptedBytes, decryptedOffset, decryptedBytes.length);
           return DecodeDtlsMessageResult(
               header, null, appData, decodedApplicationData);
         }
