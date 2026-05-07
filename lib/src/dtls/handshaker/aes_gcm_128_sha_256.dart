@@ -2,8 +2,8 @@ import 'dart:io';
 import 'dart:math';
 import 'dart:typed_data';
 
-import 'package:dart_webrtc/src/dtls/handshake/alert.dart';
-import 'package:dart_webrtc/src/dtls/tests/verify_ecdsa_256_cert1.dart';
+import '../handshake/alert.dart';
+import '../tests/verify_ecdsa_256_cert1.dart';
 
 import '../examples/server/dtls_server.dart';
 import '../handshake/application.dart';
