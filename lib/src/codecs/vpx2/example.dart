@@ -5,6 +5,7 @@ import 'package:ffi/ffi.dart';
 
 // Ensure this matches your ffigen output file name
 import 'vpx_bindings.dart';
+import 'vpx_loader.dart';
 
 void main(List<String> args) async {
   // --- 1. SETTINGS ---
@@ -22,9 +23,8 @@ void main(List<String> args) async {
   }
 
   // --- 2. FFI INITIALIZATION ---
-  // Ensure this points to your v1.14 DLL
-  final vpxLib = ffi.DynamicLibrary.open('C:/msys64/mingw64/bin/libvpx-1.dll');
-  final bindings = NativeLibrary(vpxLib);
+  // Resolves libvpx via VPX_LIB_PATH env var or platform default paths.
+  final bindings = loadVpx();
 
   final ctx = calloc<vpx_codec_ctx_t>();
   final cfg = calloc<vpx_codec_enc_cfg_t>();
@@ -43,10 +43,9 @@ void main(List<String> args) async {
   cfg.ref.g_timebase.den = fps;
   cfg.ref.rc_target_bitrate = bitrate;
 
-  // --- ABI VERSION FIX ---
-  // Changed from 1 to 9 to match your libvpx v1.14 version.
-  final initRes = bindings.vpx_codec_enc_init_ver(ctx, iface, cfg, 0, 9);
-  if (initRes != 0) {
+  final initRes = bindings.vpx_codec_enc_init_ver(
+      ctx, iface, cfg, 0, VPX_ENCODER_ABI_VERSION);
+  if (initRes != vpx_codec_err_t.VPX_CODEC_OK) {
     print('Encoder init failed with error code: $initRes');
     return;
   }
@@ -81,7 +80,7 @@ void main(List<String> args) async {
 
     // 1 = VPX_DL_REALTIME
     final encRes = bindings.vpx_codec_encode(ctx, vpxImg, frameCount, 1, 0, 1);
-    if (encRes != 0) {
+    if (encRes != vpx_codec_err_t.VPX_CODEC_OK) {
       print('Encoding error: $encRes');
       break;
     }
@@ -113,7 +112,6 @@ void _optimizedRgbToYuvNative(
 
   final yStr = img.stride[0];
   final uStr = img.stride[1];
-  final vStr = img.stride[2];
 
   for (int y = 0; y < h; y += 2) {
     for (int x = 0; x < w; x += 2) {
@@ -154,7 +152,8 @@ void _optimizedRgbToYuvNative(
 
 void _writeIvfFileHeader(IOSink sink, int w, int h, int fps) {
   final header = ByteData(32);
-  header.setUint32(0, 0x46564944, Endian.little);
+  // 'DKIF' magic = bytes 0x44,0x4B,0x49,0x46.
+  header.setUint32(0, 0x46494B44, Endian.little);
   header.setUint16(4, 0, Endian.little);
   header.setUint16(6, 32, Endian.little);
   header.setUint32(8, 0x30385056, Endian.little);
@@ -171,13 +170,15 @@ void _pullAndWriteIvfPackets(
   final iter = calloc<vpx_codec_iter_t>();
   ffi.Pointer<vpx_codec_cx_pkt_t> pkt;
   while ((pkt = lib.vpx_codec_get_cx_data(ctx, iter)) != ffi.nullptr) {
-    if (pkt.ref.kind == 0) {
+    if (pkt.ref.kind == vpx_codec_cx_pkt_kind.VPX_CODEC_CX_FRAME_PKT) {
       final frame = pkt.ref.data.frame;
       final fHeader = ByteData(12);
       fHeader.setUint32(0, frame.sz, Endian.little);
       fHeader.setUint64(4, frame.pts, Endian.little);
       sink.add(fHeader.buffer.asUint8List());
-      sink.add(frame.buf.cast<ffi.Uint8>().asTypedList(frame.sz));
+      // Native buffer is reused by the encoder; copy before queuing.
+      sink.add(Uint8List.fromList(
+          frame.buf.cast<ffi.Uint8>().asTypedList(frame.sz)));
     }
   }
   malloc.free(iter);
