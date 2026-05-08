@@ -3,10 +3,10 @@
 import 'dart:io';
 import 'dart:typed_data';
 
-import 'package:dart_webrtc/src/dtls3/crypto_gcm.dart';
-import 'package:dart_webrtc/src/dtls3/dtls.dart';
-import 'package:dart_webrtc/src/dtls3/enums.dart';
-import 'package:dart_webrtc/src/dtls3/extensions.dart';
+import 'package:pure_dart_webrtc/src/dtls3/crypto_gcm.dart';
+import 'package:pure_dart_webrtc/src/dtls3/dtls.dart';
+import 'package:pure_dart_webrtc/src/dtls3/enums.dart';
+import 'package:pure_dart_webrtc/src/dtls3/extensions.dart';
 
 import 'cert_utils.dart';
 import 'crypto.dart';

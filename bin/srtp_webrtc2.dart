@@ -1,14 +1,14 @@
 import 'dart:io';
 import 'dart:typed_data';
 
-import 'package:dart_webrtc/src/dtls/dtls_message.dart' as dtls;
-import 'package:dart_webrtc/src/dtls3/enums.dart';
-import 'package:dart_webrtc/src/dtls3/handshaker/server/srtp_server.dart';
-import 'package:dart_webrtc/src/srtp/protection_profiles.dart';
-import 'package:dart_webrtc/src/srtp/rtp2.dart';
-import 'package:dart_webrtc/src/srtp/srtp_context.dart';
-import 'package:dart_webrtc/src/srtp/srtp_manager.dart';
-import 'package:dart_webrtc/src/stun3/stun_server8.dart' as stun;
+import 'package:pure_dart_webrtc/src/dtls/dtls_message.dart' as dtls;
+import 'package:pure_dart_webrtc/src/dtls3/enums.dart';
+import 'package:pure_dart_webrtc/src/dtls3/handshaker/server/srtp_server.dart';
+import 'package:pure_dart_webrtc/src/srtp/protection_profiles.dart';
+import 'package:pure_dart_webrtc/src/srtp/rtp2.dart';
+import 'package:pure_dart_webrtc/src/srtp/srtp_context.dart';
+import 'package:pure_dart_webrtc/src/srtp/srtp_manager.dart';
+import 'package:pure_dart_webrtc/src/stun3/stun_server8.dart' as stun;
 
 bool isRtpPacket(Uint8List buf, int offset, int arrayLen) {
   // Initial segment of RTP header; 7 bit payload
@@ -49,12 +49,22 @@ void main(List<String> arguments) {
         } else if (dtls.isDtlsPacket(d.data, 0, d.data.length)) {
           // Handle DTLS packet
           print("DTLS packet received");
-          // You can decode the DTLS message here
-          // dtls_server.handleDtls(d, socket, serverEcCertificate);
-          handshaker.handleDtlsMessage(d);
-          if (handshaker.client!.dTLSState == DTLSState.connected) {
+          // Once the handshake has completed, ignore any stray DTLS-shaped
+          // datagrams (retransmissions, duplicate Finished, peer
+          // close_notify, etc.) instead of feeding them back into the
+          // handshake state machine — which would crash on `Null message`.
+          if (handshaker.client?.dTLSState == DTLSState.connected) {
+            print("DTLS already connected — ignoring extra record");
+          } else {
+            try {
+              handshaker.handleDtlsMessage(d);
+            } catch (e, st) {
+              print("handleDtlsMessage failed: $e\n$st");
+            }
+          }
+          if (handshaker.client?.dTLSState == DTLSState.connected &&
+              !initSrtp) {
             print("DTLS state: ${handshaker.client!.dTLSState}");
-            // Future.delayed(Duration(seconds: 2)).then((onValue) {
             final keyLength = srtpContext.protectionProfile.keyLength();
             final saltLength = srtpContext.protectionProfile.saltLength();
             final keyingMaterial = handshaker.client!
@@ -62,12 +72,12 @@ void main(List<String> arguments) {
 
             print("Srtp keying material: $keyingMaterial");
 
-            srtpManager.initCipherSuite(srtpContext, keyingMaterial);
+            // Initialize for *both* directions; for a server, outbound uses
+            // server keys/salt and inbound uses client keys/salt.
+            srtpManager.initCipherSuiteForRole(
+                srtpContext, keyingMaterial, SrtpRole.server);
             initSrtp = true;
-            // });
           }
-          // print("DTLS msg: $dtlsMsg");
-        } else if (isRtpPacket(d.data, 0, d.data.length)) {
           print("encrypted data: ${d.data}");
           final packet = Packet.unmarshal(d.data);
           print("encrypted: $packet");

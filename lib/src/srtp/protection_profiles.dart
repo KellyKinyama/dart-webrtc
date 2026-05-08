@@ -1,6 +1,15 @@
 import 'dart:typed_data';
 import 'crypto_gcm.dart'; // Assuming cryptogcm.dart is in the same package
 
+/// Which side of the DTLS-SRTP exchange this endpoint plays.
+///
+/// Sending uses the *local* write key/salt and receiving uses the *remote*
+/// write key/salt:
+///
+///   * `client`: outbound = clientMasterKey/Salt, inbound = serverMasterKey/Salt
+///   * `server`: outbound = serverMasterKey/Salt, inbound = clientMasterKey/Salt
+enum SrtpRole { client, server }
+
 enum ProtectionProfile {
   aes_128_gcm(0x0007, "SRTP_AEAD_AES_128_GCM");
 

@@ -23,10 +23,20 @@ import 'package:ffi/ffi.dart';
 import 'package:pure_dart_webrtc/src/codecs/vpx/vpx_bindings.dart';
 import 'package:pure_dart_webrtc/src/codecs/vpx/vpx_loader.dart';
 
+import 'srtp_client.dart' as srtp_demo;
+
 Future<int> main(List<String> args) async {
   String dir = 'lib/src/codecs/vpx/vp8-test-vectors';
   String? filter;
   bool includeVp9 = false;
+
+  // --send mode forwards to the DTLS+SRTP+VP8 demo in `srtp_client.dart`.
+  // Any args after `--send` are passed through verbatim.
+  for (var i = 0; i < args.length; i++) {
+    if (args[i] == '--send') {
+      return srtp_demo.main(args.sublist(i + 1));
+    }
+  }
 
   for (var i = 0; i < args.length; i++) {
     final a = args[i];
@@ -37,8 +47,10 @@ Future<int> main(List<String> args) async {
     } else if (a == '--vp9') {
       includeVp9 = true;
     } else if (a == '-h' || a == '--help') {
-      stdout.writeln('Usage: vpx_test_vectors '
-          '[--dir <path>] [--filter <substr>] [--vp9]');
+      stdout.writeln('Usage:\n'
+          '  vpx_test_vectors [--dir <path>] [--filter <substr>] [--vp9]\n'
+          '  vpx_test_vectors --send [--host H] [--port P] [--ivf F] '
+          '[--ssrc N] [--pt N] [--loop]');
       return 0;
     }
   }

@@ -33,6 +33,7 @@ import '../../key_exchange_algorithm.dart'
         createHash,
         generateEncryptionKeys,
         generateExtendedMasterSecret,
+        generateKeyingMaterial,
         generatePreMasterSecret,
         prfVerifyDataClient,
         prfVerifyDataServer;
@@ -126,6 +127,11 @@ class DtlsClient {
   // Completer that fires once the handshake completes.
   final Completer<void> _handshakeDone = Completer<void>();
   Future<void> get done => _handshakeDone.future;
+
+  /// Optional sink for non-DTLS datagrams that arrive on the socket after
+  /// the handshake completes (e.g. SRTP traffic when the same UDP socket is
+  /// shared with an [SRTPClient]).
+  void Function(Datagram datagram)? onApplicationDatagram;
 
   DtlsClient(this.serverAddress, this.serverPort);
 
@@ -237,6 +243,38 @@ class DtlsClient {
   Future<void> close() async {
     await _sub.cancel();
     _socket.close();
+  }
+
+  /// Export RFC 5705 keying material (e.g. for SRTP key derivation).
+  ///
+  /// Uses label `"EXTRACTOR-dtls_srtp"` and seeds the PRF with
+  /// `client_random || server_random`, matching what the server-side
+  /// `HandshakeContext.exportKeyingMaterial` produces. For SRTP_AEAD_AES_128_GCM
+  /// pass `length = 2 * 16 + 2 * 12 = 56`.
+  Uint8List exportKeyingMaterial(int length) {
+    if (_masterSecret == null) {
+      throw StateError('handshake not complete');
+    }
+    return generateKeyingMaterial(
+        _masterSecret!, _clientRandom, _serverRandom, length);
+  }
+
+  /// Returns the underlying [RawDatagramSocket] without cancelling the
+  /// internal stream subscription. Inbound datagrams continue to flow
+  /// through [_onEvent], which after handshake completion routes non-DTLS
+  /// traffic to [onApplicationDatagram] (typically an SRTP client). Use
+  /// this to share the same UDP socket with another component.
+  RawDatagramSocket get socket => _socket;
+
+  /// Stop the internal socket listener and return the underlying
+  /// [RawDatagramSocket]. Useful for handing the socket off to another
+  /// component (e.g. an SRTP client) once the DTLS handshake is done.
+  ///
+  /// After calling this, the [DtlsClient] no longer reads from the socket
+  /// and [close] only cancels the (already-cancelled) subscription.
+  Future<RawDatagramSocket> detachSocket() async {
+    await _sub.cancel();
+    return _socket;
   }
 
   // -------- Handshake message builders --------
@@ -444,6 +482,16 @@ class DtlsClient {
     while (true) {
       final dg = _socket.receive();
       if (dg == null) break;
+      // After the handshake completes, route non-DTLS datagrams to the
+      // application sink (typically an SRTP client). DTLS records and
+      // anything that *looks* like one (content-type 20-23) still goes
+      // through the handshake state machine.
+      if (_handshakeDone.isCompleted &&
+          onApplicationDatagram != null &&
+          !_looksLikeDtls(dg.data)) {
+        onApplicationDatagram!(dg);
+        continue;
+      }
       _incoming.add(dg.data);
     }
     final w = _waitForData;
@@ -451,6 +499,12 @@ class DtlsClient {
       _waitForData = null;
       w.complete();
     }
+  }
+
+  static bool _looksLikeDtls(List<int> b) {
+    if (b.length < 13) return false;
+    final ct = b[0];
+    return ct >= 20 && ct <= 23;
   }
 
   // -------- Pull-based message dispatch --------

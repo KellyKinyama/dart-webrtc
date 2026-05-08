@@ -3,7 +3,7 @@ import 'dart:typed_data';
 import 'dart:convert';
 import 'dart:math';
 // import 'package:example/example.dart';
-import 'package:dart_webrtc/codecs/opus/init_ffi.dart';
+import 'package:pure_dart_webrtc/codecs/opus/init_ffi.dart';
 import 'package:opus_dart/opus_dart.dart';
 
 /// Should be run from the example

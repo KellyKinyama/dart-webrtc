@@ -75,6 +75,40 @@ class SRTPManager {
     // context.gcm = await GCM.newGCM(keys.serverMasterKey, keys.serverMasterSalt);
   }
 
+  /// Initialize SRTP cipher suites for both directions, picking which set of
+  /// keys is local vs remote based on [role].
+  ///
+  /// * `client`: outbound = clientMasterKey/Salt, inbound = serverMasterKey/Salt
+  /// * `server`: outbound = serverMasterKey/Salt, inbound = clientMasterKey/Salt
+  Future<void> initCipherSuiteForRole(
+      SRTPContext context, Uint8List keyingMaterial, SrtpRole role) async {
+    final keys =
+        _extractEncryptionKeys(context.protectionProfile, keyingMaterial);
+
+    final Uint8List localKey;
+    final Uint8List localSalt;
+    final Uint8List remoteKey;
+    final Uint8List remoteSalt;
+
+    switch (role) {
+      case SrtpRole.client:
+        localKey = keys.clientMasterKey;
+        localSalt = keys.clientMasterSalt;
+        remoteKey = keys.serverMasterKey;
+        remoteSalt = keys.serverMasterSalt;
+        break;
+      case SrtpRole.server:
+        localKey = keys.serverMasterKey;
+        localSalt = keys.serverMasterSalt;
+        remoteKey = keys.clientMasterKey;
+        remoteSalt = keys.clientMasterSalt;
+        break;
+    }
+
+    context.outboundGcm = await GCM.newGCM(localKey, localSalt);
+    context.inboundGcm = await GCM.newGCM(remoteKey, remoteSalt);
+  }
+
   Future<void> initCipherFromKeySalt(
       SRTPContext context, Uint8List masterKey, Uint8List masterSalt) async {
     // logging.Descf(logging.ProtoSRTP, "Initializing SRTP Cipher Suite...");

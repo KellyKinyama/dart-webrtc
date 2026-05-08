@@ -1,6 +1,6 @@
 import 'dart:convert';
 import 'dart:typed_data';
-import 'package:dart_webrtc/src/dtls3/enums.dart';
+import 'package:pure_dart_webrtc/src/dtls3/enums.dart';
 
 import 'alert.dart';
 import 'application.dart';

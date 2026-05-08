@@ -1,4 +1,3 @@
-
 import 'dart:typed_data';
 
 import 'rtp2.dart'; // Changed import
@@ -10,7 +9,22 @@ class SRTPContext {
   // final InternetAddress addr;
   // final RawDatagramSocket conn;
   final ProtectionProfile protectionProfile;
-  GCM? gcm;
+
+  /// Cipher used to decrypt traffic *received* from the peer.
+  GCM? inboundGcm;
+
+  /// Cipher used to encrypt traffic *sent* to the peer.
+  GCM? outboundGcm;
+
+  /// Backward-compatible alias. Older call sites assigned a single `gcm`
+  /// cipher and used it for both directions; we mirror writes to both
+  /// inbound and outbound so existing code keeps working.
+  GCM? get gcm => inboundGcm;
+  set gcm(GCM? v) {
+    inboundGcm = v;
+    outboundGcm ??= v;
+  }
+
   final Map<int, SsrcState> srtpSsrcStates; // For decryption
   final Map<int, SsrcStateEncryption>
       srtpSsrcStatesEncryption; // For encryption
@@ -43,8 +57,9 @@ class SRTPContext {
   }
 
   Future<Uint8List> decryptRtpPacket(Packet packet) async {
-    if (gcm == null) {
-      throw Exception("GCM cipher not initialized for SRTPContext");
+    final cipher = inboundGcm;
+    if (cipher == null) {
+      throw Exception("GCM cipher not initialized for SRTPContext (inbound)");
     }
 
     final SsrcState s = _getSrtpSsrcState(packet.header.ssrc);
@@ -52,7 +67,7 @@ class SRTPContext {
         s.nextRolloverCount(packet.header.sequenceNumber);
 
     // The decrypt method in GCM returns the full decrypted packet (header + payload)
-    final Uint8List result = await gcm!.decrypt(packet, rocResult.roc);
+    final Uint8List result = await cipher.decrypt(packet, rocResult.roc);
     rocResult.updateRoc(); // Update decryption ROC after successful decryption
     // Return only the payload portion
     // return Uint8List.fromList(result.sublist(packet.headerSize));
@@ -60,8 +75,9 @@ class SRTPContext {
   }
 
   Future<Uint8List> encryptRtpPacket(Packet packet) async {
-    if (gcm == null) {
-      throw Exception("GCM cipher not initialized for SRTPContext");
+    final cipher = outboundGcm;
+    if (cipher == null) {
+      throw Exception("GCM cipher not initialized for SRTPContext (outbound)");
     }
 
     final SsrcStateEncryption s =
@@ -76,7 +92,7 @@ class SRTPContext {
     }
     s.lastSequenceNumber = packet.header.sequenceNumber;
 
-    final Uint8List result = await gcm!.encrypt(packet, s.roc);
+    final Uint8List result = await cipher.encrypt(packet, s.roc);
     return result;
   }
 }

@@ -1,9 +1,9 @@
 import 'dart:io';
 
-import 'package:dart_webrtc/src/dtls/dtls_message.dart' as dtls;
-import 'package:dart_webrtc/src/dtls3/handshaker/server/server.dart';
-import 'package:dart_webrtc/src/srtp/srtp_manager.dart';
-import 'package:dart_webrtc/src/stun3/stun_server8.dart' as stun;
+import 'package:pure_dart_webrtc/src/dtls/dtls_message.dart' as dtls;
+import 'package:pure_dart_webrtc/src/dtls3/handshaker/server/server.dart';
+import 'package:pure_dart_webrtc/src/srtp/srtp_manager.dart';
+import 'package:pure_dart_webrtc/src/stun3/stun_server8.dart' as stun;
 
 void main(List<String> arguments) {
   // String ip = "192.168.160.1";
