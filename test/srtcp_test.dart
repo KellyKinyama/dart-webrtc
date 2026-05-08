@@ -56,10 +56,12 @@ void main() {
       final a = await ctx.encryptRtcpPacket(rtcp);
       final b = await ctx.encryptRtcpPacket(rtcp);
 
-      final idxA = ByteData.sublistView(a, a.length - 4).getUint32(0, Endian.big)
-          & 0x7FFFFFFF;
-      final idxB = ByteData.sublistView(b, b.length - 4).getUint32(0, Endian.big)
-          & 0x7FFFFFFF;
+      final idxA =
+          ByteData.sublistView(a, a.length - 4).getUint32(0, Endian.big) &
+              0x7FFFFFFF;
+      final idxB =
+          ByteData.sublistView(b, b.length - 4).getUint32(0, Endian.big) &
+              0x7FFFFFFF;
       expect(idxB, equals(idxA + 1));
       // Different ciphertexts since IV differs.
       expect(a, isNot(equals(b)));
