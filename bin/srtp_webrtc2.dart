@@ -78,6 +78,7 @@ void main(List<String> arguments) {
                 srtpContext, keyingMaterial, SrtpRole.server);
             initSrtp = true;
           }
+        } else if (isRtpPacket(d.data, 0, d.data.length)) {
           print("encrypted data: ${d.data}");
           final packet = Packet.unmarshal(d.data);
           print("encrypted: $packet");
@@ -93,10 +94,9 @@ void main(List<String> arguments) {
               });
             });
           }
-          if (handshaker.client!.dTLSState == DTLSState.connected &&
+          if (handshaker.client?.dTLSState == DTLSState.connected &&
               !initSrtp) {
             print("DTLS state: ${handshaker.client!.dTLSState}");
-            // Future.delayed(Duration(seconds: 2)).then((onValue) {
             final keyLength = srtpContext.protectionProfile.keyLength();
             final saltLength = srtpContext.protectionProfile.saltLength();
             final keyingMaterial = handshaker.client!
@@ -104,9 +104,9 @@ void main(List<String> arguments) {
 
             print("Srtp keying material: $keyingMaterial");
 
-            srtpManager.initCipherSuite(srtpContext, keyingMaterial);
+            srtpManager.initCipherSuiteForRole(
+                srtpContext, keyingMaterial, SrtpRole.server);
             initSrtp = true;
-            // });
           }
         } else {
           print("Unknown packet type received: ");
