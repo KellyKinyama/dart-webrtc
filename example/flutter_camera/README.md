@@ -29,6 +29,11 @@ cd example/flutter_camera
 flutter pub get
 ```
 
+Platform folders (`android/`, `ios/`, `windows/`, `macos/`, `linux/`) were
+generated with `flutter create . --platforms=windows,android,ios,macos,linux`.
+If you ever need to regenerate them after a Flutter SDK upgrade, run that
+same command from this directory.
+
 The app depends on the host package via `path: ../../`, so any local edits to `lib/src/codecs/vpx/**` are picked up automatically.
 
 ### Native libvpx — required on every platform

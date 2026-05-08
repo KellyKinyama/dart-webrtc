@@ -8,13 +8,12 @@
 // is rebuilt on the fly).
 
 import 'dart:async';
-import 'dart:typed_data';
 import 'dart:ui' as ui;
 
 import 'package:camera/camera.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
-import 'package:pure_dart_webrtc/src/codecs/vpx/vpx.dart';
+import 'package:pure_dart_webrtc/vpx.dart';
 
 import 'camera_image_to_i420.dart';
 import 'vpx_pipeline.dart';
@@ -144,8 +143,7 @@ class _DemoPageState extends State<_DemoPage> {
   }
 
   Future<void> _switchCodec() async {
-    final next =
-        _codec == VpxCodec.vp8 ? VpxCodec.vp9 : VpxCodec.vp8;
+    final next = _codec == VpxCodec.vp8 ? VpxCodec.vp9 : VpxCodec.vp8;
     final old = _pipeline;
     setState(() {
       _codec = next;
@@ -181,20 +179,24 @@ class _DemoPageState extends State<_DemoPage> {
         ],
       ),
       body: _error != null
-          ? Center(child: Text(_error!, style: const TextStyle(color: Colors.red)))
+          ? Center(
+              child: Text(_error!, style: const TextStyle(color: Colors.red)))
           : (controller == null || !controller.value.isInitialized)
               ? const Center(child: CircularProgressIndicator())
               : LayoutBuilder(
                   builder: (ctx, c) {
                     final wide = c.maxWidth > c.maxHeight;
                     final children = [
-                      Expanded(child: _LabeledBox('Camera', CameraPreview(controller))),
+                      Expanded(
+                          child:
+                              _LabeledBox('Camera', CameraPreview(controller))),
                       Expanded(
                         child: _LabeledBox(
                           'Decoded (${_codec == VpxCodec.vp8 ? "VP8" : "VP9"})',
                           _decodedImage == null
                               ? const Center(child: Text('warming up…'))
-                              : RawImage(image: _decodedImage, fit: BoxFit.contain),
+                              : RawImage(
+                                  image: _decodedImage, fit: BoxFit.contain),
                         ),
                       ),
                     ];
