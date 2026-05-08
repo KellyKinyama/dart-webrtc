@@ -17,6 +17,12 @@ bool isRtpPacket(Uint8List buf, int offset, int arrayLen) {
   return (payloadType <= 35) || (payloadType >= 96 && payloadType <= 127);
 }
 
+bool isRtcpPacket(Uint8List buf, int offset, int arrayLen) {
+  if (arrayLen < 2) return false;
+  final pt = buf[offset + 1] & 0x7f;
+  return pt >= 64 && pt <= 95;
+}
+
 void main(List<String> arguments) {
   String ip = "192.168.56.1";
   // String ip = "127.0.0.1";
@@ -77,6 +83,18 @@ void main(List<String> arguments) {
             srtpManager.initCipherSuiteForRole(
                 srtpContext, keyingMaterial, SrtpRole.server);
             initSrtp = true;
+          }
+        } else if (isRtcpPacket(d.data, 0, d.data.length)) {
+          if (initSrtp && srtpContext.gcm != null) {
+            srtpContext.decryptRtcpPacket(d.data).then((rtcp) {
+              print(
+                  "[server] decrypted RTCP (${rtcp.length} bytes), pt=${rtcp[1] & 0x7f}");
+              srtpContext.encryptRtcpPacket(rtcp).then((srtcp) {
+                socket.send(srtcp, d.address, d.port);
+              });
+            }).catchError((e, st) {
+              print("[server] RTCP decrypt failed: $e");
+            });
           }
         } else if (isRtpPacket(d.data, 0, d.data.length)) {
           print("encrypted data: ${d.data}");

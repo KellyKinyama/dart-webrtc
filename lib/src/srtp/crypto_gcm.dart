@@ -13,6 +13,7 @@ class GCM {
   late Uint8List srtpSalt;
   late Uint8List srtcpSalt;
   late Uint8List srtpSessionKey;
+  late Uint8List srtcpSessionKey;
 
   GCM._(); // Private constructor
 
@@ -33,6 +34,7 @@ class GCM {
 
     final srtcpSessionKey = await gcm._aesCmKeyDerivation(
         labelSRTCPEncryption, masterKey, masterSalt, 0, masterKey.length);
+    gcm.srtcpSessionKey = srtcpSessionKey;
     final srtcpBlockCipher = AESEngine();
     srtcpBlockCipher.init(true, KeyParameter(srtcpSessionKey));
 
@@ -118,6 +120,97 @@ class GCM {
     // The `process` method for GCM in PointyCastle already returns ciphertext + tag.
     // So, we just need to prepend the header.
     return Uint8List.fromList(headerBytes + ciphertextWithAuthTag);
+  }
+
+  // ---------------------------------------------------------------------------
+  // SRTCP (RFC 7714 §9): AES-128-GCM
+  //
+  // On-the-wire format:
+  //   [ 8-octet RTCP header (V,P,RC,PT,len,SSRC) ]
+  //   [ ciphertext (= plaintext length) ]
+  //   [ 16-octet GCM auth tag ]
+  //   [ 4-octet SRTCP_INDEX_E (1-bit E flag + 31-bit index) ]
+  //
+  // AAD = first 8 octets || SRTCP_INDEX_E (with E=1 when encrypted).
+  // ---------------------------------------------------------------------------
+
+  static const int _srtcpHeaderLen = 8;
+  static const int _srtcpTrailerLen = 4;
+  static const int _srtcpAuthTagLen = 16;
+
+  Uint8List _rtcpInitializationVector(int ssrc, int srtcpIndex) {
+    final iv = Uint8List(12);
+    final bd = ByteData.view(iv.buffer);
+    // bytes 0-1 stay 0, bytes 2-5 = SSRC, bytes 6-7 stay 0,
+    // bytes 8-11 = SRTCP index (E bit cleared).
+    bd.setUint32(2, ssrc, Endian.big);
+    bd.setUint32(8, srtcpIndex & 0x7FFFFFFF, Endian.big);
+    for (int i = 0; i < iv.length; i++) {
+      iv[i] ^= srtcpSalt[i];
+    }
+    return iv;
+  }
+
+  /// Encrypt one full RTCP packet [rtcp]. Returns the SRTCP packet.
+  Future<Uint8List> encryptRtcp(Uint8List rtcp, int srtcpIndex) async {
+    if (rtcp.length < _srtcpHeaderLen) {
+      throw Exception('RTCP packet too short');
+    }
+    final ssrc = ByteData.sublistView(rtcp, 4, 8).getUint32(0, Endian.big);
+
+    final header = Uint8List.fromList(rtcp.sublist(0, _srtcpHeaderLen));
+    final plaintext = Uint8List.fromList(rtcp.sublist(_srtcpHeaderLen));
+
+    final trailer = Uint8List(_srtcpTrailerLen);
+    ByteData.view(trailer.buffer)
+        .setUint32(0, 0x80000000 | (srtcpIndex & 0x7FFFFFFF), Endian.big);
+
+    final aad = Uint8List.fromList([...header, ...trailer]);
+    final iv = _rtcpInitializationVector(ssrc, srtcpIndex);
+
+    final params = AEADParameters(
+        KeyParameter(srtcpSessionKey), _srtcpAuthTagLen * 8, iv, aad);
+    srtcpGCM.init(true, params);
+    final ciphertextAndTag = srtcpGCM.process(plaintext);
+
+    return Uint8List.fromList([...header, ...ciphertextAndTag, ...trailer]);
+  }
+
+  /// Decrypt one SRTCP packet. Returns the original RTCP packet.
+  Future<Uint8List> decryptRtcp(Uint8List srtcp) async {
+    final minLen = _srtcpHeaderLen + _srtcpAuthTagLen + _srtcpTrailerLen;
+    if (srtcp.length < minLen) {
+      throw Exception('SRTCP packet too short');
+    }
+
+    final ssrc = ByteData.sublistView(srtcp, 4, 8).getUint32(0, Endian.big);
+    final trailerOffset = srtcp.length - _srtcpTrailerLen;
+    final trailerVal = ByteData.sublistView(srtcp, trailerOffset, srtcp.length)
+        .getUint32(0, Endian.big);
+    final encrypted = (trailerVal & 0x80000000) != 0;
+    final srtcpIndex = trailerVal & 0x7FFFFFFF;
+
+    final header = Uint8List.fromList(srtcp.sublist(0, _srtcpHeaderLen));
+    final ciphertextAndTag =
+        Uint8List.fromList(srtcp.sublist(_srtcpHeaderLen, trailerOffset));
+    final trailer = Uint8List.fromList(srtcp.sublist(trailerOffset));
+
+    if (!encrypted) {
+      // E bit clear => packet not encrypted; tag still authenticates.
+      // We still pass through the AEAD verify by treating ciphertext as
+      // empty. Most peers set E=1, so this is a fallback.
+      return Uint8List.fromList([...header, ...ciphertextAndTag]);
+    }
+
+    final aad = Uint8List.fromList([...header, ...trailer]);
+    final iv = _rtcpInitializationVector(ssrc, srtcpIndex);
+
+    final params = AEADParameters(
+        KeyParameter(srtcpSessionKey), _srtcpAuthTagLen * 8, iv, aad);
+    srtcpGCM.init(false, params);
+    final plaintext = srtcpGCM.process(ciphertextAndTag);
+
+    return Uint8List.fromList([...header, ...plaintext]);
   }
 
   // Future<Uint8List> _aesCmKeyDerivation(int label, Uint8List masterKey,

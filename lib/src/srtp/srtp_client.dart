@@ -39,6 +39,13 @@ bool isRtpPacket(Uint8List buf, int offset, int arrayLen) {
   return (payloadType <= 35) || (payloadType >= 96 && payloadType <= 127);
 }
 
+/// True if [buf] looks like an RTCP packet (PT in 64-95 per RFC 5761).
+bool isRtcpPacket(Uint8List buf, int offset, int arrayLen) {
+  if (arrayLen < 2) return false;
+  final pt = buf[offset + 1] & 0x7f;
+  return pt >= 64 && pt <= 95;
+}
+
 /// One decrypted RTP packet received from the peer, together with the
 /// remote socket address it came from.
 class SrtpPacket {
@@ -46,6 +53,14 @@ class SrtpPacket {
   final int remotePort;
   final Packet packet;
   SrtpPacket(this.remoteAddress, this.remotePort, this.packet);
+}
+
+/// One decrypted RTCP packet (raw bytes) received from the peer.
+class SrtcpPacket {
+  final InternetAddress remoteAddress;
+  final int remotePort;
+  final Uint8List rtcp;
+  SrtcpPacket(this.remoteAddress, this.remotePort, this.rtcp);
 }
 
 /// SRTP client wrapping a UDP socket and an [SRTPContext].
@@ -75,6 +90,12 @@ class SRTPClient {
 
   /// Stream of decrypted RTP packets received from the peer.
   Stream<SrtpPacket> get packets => _packets.stream;
+
+  final StreamController<SrtcpPacket> _rtcpPackets =
+      StreamController<SrtcpPacket>.broadcast();
+
+  /// Stream of decrypted RTCP packets received from the peer.
+  Stream<SrtcpPacket> get rtcpPackets => _rtcpPackets.stream;
 
   /// Optional hook for non-RTP datagrams (STUN / DTLS / unknown). Useful if
   /// the caller wants to multiplex DTLS handshake traffic on the same
@@ -164,11 +185,21 @@ class SRTPClient {
   Future<int> sendRtpBytes(Uint8List rtpBytes) =>
       sendRtp(Packet.unmarshal(rtpBytes));
 
+  /// Encrypt a full RTCP packet (or compound RTCP) and send it to the peer.
+  Future<int> sendRtcp(Uint8List rtcp) async {
+    if (!_initialized) {
+      throw StateError('SRTPClient.initialize() has not been called');
+    }
+    final encrypted = await context.encryptRtcpPacket(rtcp);
+    return socket.send(encrypted, remoteAddress, remotePort);
+  }
+
   /// Close the underlying socket and the packet stream.
   Future<void> close() async {
     await _subscription?.cancel();
     socket.close();
     await _packets.close();
+    await _rtcpPackets.close();
   }
 
   void _onEvent(RawSocketEvent event) {
@@ -185,6 +216,23 @@ class SRTPClient {
     if (stun.StunMessage.isStunMessage(data) ||
         dtls.isDtlsPacket(data, 0, data.length)) {
       onNonRtp?.call(datagram);
+      return;
+    }
+
+    if (isRtcpPacket(data, 0, data.length)) {
+      if (!_initialized) {
+        onNonRtp?.call(datagram);
+        return;
+      }
+      () async {
+        try {
+          final decrypted = await context.decryptRtcpPacket(data);
+          _rtcpPackets
+              .add(SrtcpPacket(datagram.address, datagram.port, decrypted));
+        } catch (e, st) {
+          _rtcpPackets.addError(e, st);
+        }
+      }();
       return;
     }
 

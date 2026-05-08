@@ -99,6 +99,16 @@ Future<int> main(List<String> args) async {
     print('[demo] <-- ${p.packet.payload.length} byte VP8 RTP from '
         '${p.remoteAddress.address}:${p.remotePort}');
   });
+  srtp.rtcpPackets.listen((p) {
+    final pt = p.rtcp.length >= 2 ? (p.rtcp[1] & 0x7f) : -1;
+    print('[demo] <-- ${p.rtcp.length} byte RTCP (pt=$pt) from '
+        '${p.remoteAddress.address}:${p.remotePort}');
+  });
+
+  // 4a) Send a small RTCP Receiver Report before media to exercise SRTCP.
+  final rr = _buildEmptyRtcpRr(ssrc);
+  final n = await srtp.sendRtcp(rr);
+  print('[demo] sent $n byte SRTCP RR (ssrc=0x${ssrc.toRadixString(16)})');
 
   // 4) Send VP8 frames from the IVF file.
   do {
@@ -109,6 +119,18 @@ Future<int> main(List<String> args) async {
   await srtp.close();
   await dtls.close();
   return 0;
+}
+
+/// Build a minimal RTCP Receiver Report (RFC 3550 §6.4.2) with no report
+/// blocks. 8 bytes total: header (V=2,P=0,RC=0,PT=201,len=1) + sender SSRC.
+Uint8List _buildEmptyRtcpRr(int ssrc) {
+  final b = Uint8List(8);
+  final bd = ByteData.view(b.buffer);
+  b[0] = 0x80; // V=2, P=0, RC=0
+  b[1] = 201; // PT=RR
+  bd.setUint16(2, 1, Endian.big); // length in 32-bit words minus 1
+  bd.setUint32(4, ssrc, Endian.big);
+  return b;
 }
 
 Future<void> _sendIvf(File ivfFile, SRTPClient srtp,

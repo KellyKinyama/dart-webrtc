@@ -29,6 +29,9 @@ class SRTPContext {
   final Map<int, SsrcStateEncryption>
       srtpSsrcStatesEncryption; // For encryption
 
+  /// Per-SSRC outbound SRTCP index counter (31-bit, monotonically increasing).
+  final Map<int, int> _srtcpOutIndex = {};
+
   SRTPContext({
     // required this.addr,
     // required this.conn,
@@ -94,6 +97,31 @@ class SRTPContext {
 
     final Uint8List result = await cipher.encrypt(packet, s.roc);
     return result;
+  }
+
+  /// Encrypt a full RTCP packet [rtcp] using the outbound cipher. The
+  /// per-SSRC SRTCP index is allocated automatically.
+  Future<Uint8List> encryptRtcpPacket(Uint8List rtcp) async {
+    final cipher = outboundGcm;
+    if (cipher == null) {
+      throw Exception('GCM cipher not initialized for SRTPContext (outbound)');
+    }
+    if (rtcp.length < 8) {
+      throw Exception('RTCP packet too short');
+    }
+    final ssrc = ByteData.sublistView(rtcp, 4, 8).getUint32(0, Endian.big);
+    final next = ((_srtcpOutIndex[ssrc] ?? 0) + 1) & 0x7FFFFFFF;
+    _srtcpOutIndex[ssrc] = next;
+    return cipher.encryptRtcp(rtcp, next);
+  }
+
+  /// Decrypt a full SRTCP packet [srtcp] using the inbound cipher.
+  Future<Uint8List> decryptRtcpPacket(Uint8List srtcp) async {
+    final cipher = inboundGcm;
+    if (cipher == null) {
+      throw Exception('GCM cipher not initialized for SRTPContext (inbound)');
+    }
+    return cipher.decryptRtcp(srtcp);
   }
 }
 
