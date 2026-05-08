@@ -1,9 +1,11 @@
-// Per-codec configuration for [SdpOfferBuilder]. Each instance describes
-// one RTP payload type that should appear in a media section: rtpmap, fmtp,
-// rtcp-fb, and (for video) the canonical RTX/red companion lines callers
-// usually want.
-
-import 'sdp_session.dart';
+// Codec descriptors that emit `rtpmap`, `fmtp`, and `rtcp-fb` entries into
+// a media-section map produced by `package:sdp_transform`.
+//
+// Each [SdpCodec.applyTo] call:
+//   - appends its payload type to `media['payloads']`,
+//   - pushes one entry into `media['rtp']`,
+//   - optionally pushes one entry into `media['fmtp']`,
+//   - pushes zero or more entries into `media['rtcpFb']`.
 
 /// Direction attribute (`a=sendrecv` etc.).
 enum SdpDirection {
@@ -17,10 +19,11 @@ enum SdpDirection {
 
 /// Base codec descriptor.
 abstract class SdpCodec {
-  /// Dynamic RTP payload type.
+  /// RTP payload type. Dynamic codecs (VP8/VP9/Opus) typically use 96-127;
+  /// G.711 PCMU/PCMA have static numbers (0 / 8) per RFC 3551.
   int get payloadType;
 
-  /// Encoding name as it appears in `a=rtpmap` (e.g. `VP8`, `PCMA`).
+  /// Encoding name as it appears in `a=rtpmap`.
   String get name;
 
   /// Clock rate in Hz.
@@ -29,32 +32,52 @@ abstract class SdpCodec {
   /// Optional channel count (audio only).
   int? get channels => null;
 
-  /// Apply this codec's lines (rtpmap / fmtp / rtcp-fb) to [m] and add the
-  /// payload type to [SdpMedia.payloadTypes]. Returns the payload type
-  /// for convenience.
-  int applyTo(SdpMedia m) {
-    m.payloadTypes.add(payloadType);
-    final ch = channels;
-    final mapValue = ch == null ? '$name/$clockRate' : '$name/$clockRate/$ch';
-    m.attributes.add(SdpAttribute('rtpmap', '$payloadType $mapValue'));
-    final fmtp = fmtpValue;
-    if (fmtp != null) {
-      m.attributes.add(SdpAttribute('fmtp', '$payloadType $fmtp'));
-    }
-    for (final fb in rtcpFeedback) {
-      m.attributes.add(SdpAttribute('rtcp-fb', '$payloadType $fb'));
-    }
-    return payloadType;
-  }
-
-  /// Optional `fmtp` parameter list (everything after the payload type).
+  /// Optional `fmtp` config (everything after `a=fmtp:<pt> `).
   String? get fmtpValue => null;
 
-  /// Zero or more `rtcp-fb` parameter strings (everything after the PT).
+  /// Zero or more `rtcp-fb` parameter strings (everything after `<pt>`).
   List<String> get rtcpFeedback => const [];
+
+  /// Append this codec's lines to a media map. Returns the payload type for
+  /// chaining. The map must use the `sdp_transform` shape.
+  int applyTo(Map<String, dynamic> media) {
+    final pt = payloadType;
+    final payloads = (media['payloads'] as String? ?? '').trim();
+    media['payloads'] = payloads.isEmpty ? '$pt' : '$payloads $pt';
+
+    final rtp = (media['rtp'] as List?) ?? <Map<String, dynamic>>[];
+    final entry = <String, dynamic>{
+      'payload': pt,
+      'codec': name,
+      'rate': clockRate,
+    };
+    final ch = channels;
+    if (ch != null) entry['encoding'] = ch;
+    rtp.add(entry);
+    media['rtp'] = rtp;
+
+    final fmtp = fmtpValue;
+    if (fmtp != null) {
+      final list = (media['fmtp'] as List?) ?? <Map<String, dynamic>>[];
+      list.add({'payload': pt, 'config': fmtp});
+      media['fmtp'] = list;
+    }
+    final fb = rtcpFeedback;
+    if (fb.isNotEmpty) {
+      final list = (media['rtcpFb'] as List?) ?? <Map<String, dynamic>>[];
+      for (final item in fb) {
+        final parts = item.split(' ');
+        final m = <String, dynamic>{'payload': pt, 'type': parts[0]};
+        if (parts.length > 1) m['subtype'] = parts.sublist(1).join(' ');
+        list.add(m);
+      }
+      media['rtcpFb'] = list;
+    }
+    return pt;
+  }
 }
 
-/// VP8 video codec (`a=rtpmap:<pt> VP8/90000`). PT 96 is the WebRTC default.
+/// VP8 (`VP8/90000`). PT 96 is the WebRTC default.
 class Vp8Codec extends SdpCodec {
   @override
   final int payloadType;
@@ -73,13 +96,12 @@ class Vp8Codec extends SdpCodec {
       ];
 }
 
-/// VP9 video codec (`a=rtpmap:<pt> VP9/90000`). PT 98 is a common default.
+/// VP9 (`VP9/90000`). PT 98 is a common default.
 class Vp9Codec extends SdpCodec {
   @override
   final int payloadType;
 
-  /// VP9 profile id reported in `a=fmtp` (`profile-id=0` is 8-bit 4:2:0,
-  /// the only profile most browsers accept).
+  /// VP9 profile reported in `a=fmtp` (`profile-id=0` is 8-bit 4:2:0).
   final int profileId;
 
   Vp9Codec({this.payloadType = 98, this.profileId = 0});
@@ -99,7 +121,7 @@ class Vp9Codec extends SdpCodec {
       ];
 }
 
-/// G.711 A-law (`PCMA/8000`). Static payload type 8 per RFC 3551.
+/// G.711 A-law (`PCMA/8000`). Static payload type 8.
 class PcmaCodec extends SdpCodec {
   @override
   final int payloadType;
@@ -112,7 +134,7 @@ class PcmaCodec extends SdpCodec {
   int? get channels => 1;
 }
 
-/// G.711 µ-law (`PCMU/8000`). Static payload type 0 per RFC 3551.
+/// G.711 µ-law (`PCMU/8000`). Static payload type 0.
 class PcmuCodec extends SdpCodec {
   @override
   final int payloadType;
@@ -125,7 +147,7 @@ class PcmuCodec extends SdpCodec {
   int? get channels => 1;
 }
 
-/// Comfort-noise companion. Often paired with PCMA / PCMU.
+/// `telephone-event` (DTMF) companion, usually paired with PCMA / PCMU.
 class TelephoneEventCodec extends SdpCodec {
   @override
   final int payloadType;

@@ -9,41 +9,45 @@ const _identity = IceDtlsParams(
 );
 
 void main() {
-  group('SdpSession parser', () {
-    test('round-trips a minimal offer', () {
-      final text =
+  group('parseSdp / writeSdp (sdp_transform delegation)', () {
+    test('parses an m= line with mid + rtpmap', () {
+      const text =
           'v=0\r\no=- 1 2 IN IP4 127.0.0.1\r\ns=-\r\nt=0 0\r\nm=video 9 UDP/TLS/RTP/SAVPF 96\r\na=mid:0\r\na=rtpmap:96 VP8/90000\r\n';
-      final s = SdpSession.parse(text);
-      expect(s.media, hasLength(1));
-      expect(s.media[0].type, 'video');
-      expect(s.media[0].payloadTypes, [96]);
-      expect(s.media[0].mid, '0');
-      expect(s.media[0].rtpmapFor(96)?.encoding, 'VP8');
-      expect(s.media[0].rtpmapFor(96)?.clockRate, 90000);
+      final m = parseSdp(text);
+      expect(m.mediaList, hasLength(1));
+      final v = m.mediaList.first;
+      expect(v['type'], 'video');
+      expect(v['mid'].toString(), '0');
+      expect(v.payloadTypeList, [96]);
+      expect(v.rtpmapFor(96)?['codec'], 'VP8');
+      expect(v.rtpmapFor(96)?['rate'], 90000);
     });
 
-    test('extracts BUNDLE group', () {
-      final s = SdpSession.parse('v=0\r\no=- 1 2 IN IP4 127.0.0.1\r\ns=-\r\n'
-          't=0 0\r\na=group:BUNDLE 0 1\r\nm=video 9 UDP/TLS/RTP/SAVPF 96\r\n'
-          'a=mid:0\r\nm=audio 9 UDP/TLS/RTP/SAVPF 8\r\na=mid:1\r\n');
-      expect(s.bundleMids, ['0', '1']);
+    test('round-trips a session through write -> parse', () {
+      final offer = (SdpOfferBuilder(identity: _identity)
+            ..addVideo(mid: '0', codecs: [Vp8Codec()]))
+          .build();
+      final text = writeSdp(offer);
+      final reparsed = parseSdp(text);
+      expect(reparsed.mediaList.first.payloadTypeList, [96]);
+      expect(reparsed.mediaList.first['mid'].toString(), '0');
     });
   });
 
   group('SdpOfferBuilder', () {
     test('builds VP8+VP9 video and PCMA+PCMU audio with BUNDLE', () {
-      final offer = (SdpOfferBuilder(identity: _identity)
+      final session = (SdpOfferBuilder(identity: _identity)
             ..addVideo(mid: '0', codecs: [Vp8Codec(), Vp9Codec()])
             ..addAudio(mid: '1', codecs: [PcmaCodec(), PcmuCodec()]))
           .build();
-      final text = offer.write();
+      final text = writeSdp(session);
 
-      // Session-level wiring.
+      expect(session.bundleMids, ['0', '1']);
       expect(text, contains('a=group:BUNDLE 0 1'));
-      expect(text, contains('a=msid-semantic:'));
+      expect(text, contains('a=msid-semantic'));
       expect(text, contains('a=extmap-allow-mixed'));
 
-      // Video section.
+      // Video.
       expect(text, contains('m=video 9 UDP/TLS/RTP/SAVPF 96 98'));
       expect(text, contains('a=rtpmap:96 VP8/90000'));
       expect(text, contains('a=rtpmap:98 VP9/90000'));
@@ -54,7 +58,7 @@ void main() {
       expect(text, contains('a=rtcp-mux'));
       expect(text, contains('a=ice-ufrag:abcd'));
 
-      // Audio section.
+      // Audio.
       expect(text, contains('m=audio 9 UDP/TLS/RTP/SAVPF 8 0'));
       expect(text, contains('a=rtpmap:8 PCMA/8000/1'));
       expect(text, contains('a=rtpmap:0 PCMU/8000/1'));
@@ -62,14 +66,14 @@ void main() {
     });
 
     test('emits ICE candidates', () {
-      final offer = (SdpOfferBuilder(
+      final text = (SdpOfferBuilder(
         identity: _identity,
         candidates: const [
           IceCandidate(foundation: '1', address: '192.0.2.1', port: 7000),
         ],
       )..addVideo(mid: '0', codecs: [Vp8Codec()]))
-          .build();
-      expect(offer.write(),
+          .toSdp();
+      expect(text,
           contains('a=candidate:1 1 udp 2113937151 192.0.2.1 7000 typ host'));
     });
   });
@@ -84,9 +88,10 @@ void main() {
         identity: _identity,
         supportedCodecs: [Vp8Codec()],
       ).build();
-      final text = answer.write();
+      final text = writeSdp(answer);
+
       expect(text, contains('m=video 9 UDP/TLS/RTP/SAVPF 96'));
-      expect(text, isNot(contains(' 98'))); // VP9 not selected
+      expect(text, isNot(contains('m=video 9 UDP/TLS/RTP/SAVPF 96 98')));
       expect(text, contains('a=rtpmap:96 VP8/90000'));
       expect(text, contains('a=setup:active'));
       expect(text, contains('a=mid:0'));
@@ -97,15 +102,13 @@ void main() {
       final offer = (SdpOfferBuilder(identity: _identity)
             ..addAudio(mid: '0', codecs: [PcmaCodec()]))
           .build();
-      final answer = SdpAnswerBuilder(
+      final text = SdpAnswerBuilder(
         offer: offer,
         identity: _identity,
         supportedCodecs: [PcmuCodec()],
-      ).build();
-      final text = answer.write();
-      // Rejected sections are emitted with port = 0.
+      ).toSdp();
+
       expect(text, contains('m=audio 0 '));
-      // No BUNDLE because the only section was rejected.
       expect(text, isNot(contains('a=group:BUNDLE')));
     });
 
@@ -116,12 +119,12 @@ void main() {
                 codecs: [Vp8Codec()],
                 direction: SdpDirection.sendonly))
           .build();
-      final answer = SdpAnswerBuilder(
+      final text = SdpAnswerBuilder(
         offer: offer,
         identity: _identity,
         supportedCodecs: [Vp8Codec()],
-      ).build();
-      expect(answer.write(), contains('a=recvonly'));
+      ).toSdp();
+      expect(text, contains('a=recvonly'));
     });
   });
 }

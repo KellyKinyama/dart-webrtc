@@ -1,19 +1,10 @@
-// High-level builder for WebRTC offer / answer SDPs.
-//
-// `SdpOfferBuilder` produces a session with one media section per
-// `addVideo(...)` / `addAudio(...)` call, automatically wiring up the
-// session-level `a=group:BUNDLE` line and the per-section ICE / DTLS /
-// rtcp-mux / mid attributes that browsers require.
-//
-// `SdpAnswerBuilder.fromOffer(offer)` mirrors an incoming offer: it picks
-// the first compatible codec for each media section, copies the BUNDLE
-// group, and sets the right `a=setup:` value (offer `actpass` -> answer
-// `active`).
+// Builders that produce WebRTC offer / answer session maps in the
+// `sdp_transform` shape. Use `writeSdp(map)` to serialize.
 
 import 'sdp_codec.dart';
 import 'sdp_session.dart';
 
-/// One ICE candidate to advertise in `a=candidate:...`.
+/// One ICE candidate in `a=candidate:...`.
 class IceCandidate {
   final String foundation;
   final int component; // 1 = RTP, 2 = RTCP (unused with rtcp-mux)
@@ -33,8 +24,15 @@ class IceCandidate {
     this.type = 'host',
   });
 
-  String toAttrValue() => '$foundation $component $transport $priority '
-      '$address $port typ $type';
+  Map<String, dynamic> toMap() => {
+        'foundation': foundation,
+        'component': component,
+        'transport': transport,
+        'priority': priority,
+        'ip': address,
+        'port': port,
+        'type': type,
+      };
 }
 
 /// DTLS setup attribute (`a=setup:`).
@@ -49,7 +47,7 @@ class IceDtlsParams {
   final String iceUfrag;
   final String icePwd;
 
-  /// Hex fingerprint, lower or upper case, with `:` separators.
+  /// Hex fingerprint with `:` separators.
   final String fingerprintHash;
   final String fingerprintAlg; // e.g. 'sha-256'
 
@@ -65,12 +63,10 @@ class IceDtlsParams {
 class SdpOfferBuilder {
   final IceDtlsParams identity;
   final List<IceCandidate> candidates;
-
-  /// Stream id used in `a=msid:<stream> <track>` and `a=msid-semantic:`.
   final String streamId;
   final String sessionId;
 
-  final List<SdpMedia> _media = [];
+  final List<Map<String, dynamic>> _media = [];
 
   SdpOfferBuilder({
     required this.identity,
@@ -80,7 +76,7 @@ class SdpOfferBuilder {
   })  : streamId = streamId ?? _newId(),
         sessionId = sessionId ?? _newSessionId();
 
-  /// Add a video section with the given codecs (offer order is preference).
+  /// Add a video section.
   void addVideo({
     required String mid,
     required List<SdpCodec> codecs,
@@ -116,74 +112,82 @@ class SdpOfferBuilder {
     _media.add(m);
   }
 
-  SdpMedia _newMedia(String type, String mid, SdpDirection dir, DtlsSetup setup,
-      String? trackId) {
-    final m = SdpMedia(type: type)
-      ..connection =
-          SdpConnection(netType: 'IN', addrType: 'IP4', address: '0.0.0.0');
-    m.attributes.add(SdpAttribute('rtcp', '9 IN IP4 0.0.0.0'));
-    for (final c in candidates) {
-      m.attributes.add(SdpAttribute('candidate', c.toAttrValue()));
-    }
-    m.attributes.add(SdpAttribute('ice-ufrag', identity.iceUfrag));
-    m.attributes.add(SdpAttribute('ice-pwd', identity.icePwd));
-    m.attributes.add(SdpAttribute('ice-options', 'trickle'));
-    m.attributes.add(SdpAttribute('fingerprint',
-        '${identity.fingerprintAlg} ${identity.fingerprintHash}'));
-    m.attributes.add(SdpAttribute('setup', setup.attr));
-    m.attributes.add(SdpAttribute('mid', mid));
-    m.attributes.add(SdpAttribute(dir.attr));
-    m.attributes.add(const SdpAttribute('rtcp-mux'));
-    m.attributes.add(const SdpAttribute('rtcp-rsize'));
+  Map<String, dynamic> _newMedia(String type, String mid, SdpDirection dir,
+      DtlsSetup setup, String? trackId) {
     final tid = trackId ?? _newId();
-    m.attributes.add(SdpAttribute('msid', '$streamId $tid'));
-    return m;
+    return <String, dynamic>{
+      'type': type,
+      'port': 9,
+      'protocol': 'UDP/TLS/RTP/SAVPF',
+      'payloads': '',
+      'connection': {'version': 4, 'ip': '0.0.0.0'},
+      'rtcp': {'port': 9, 'netType': 'IN', 'ipVer': 4, 'address': '0.0.0.0'},
+      'iceUfrag': identity.iceUfrag,
+      'icePwd': identity.icePwd,
+      'iceOptions': 'trickle',
+      'fingerprint': {
+        'type': identity.fingerprintAlg,
+        'hash': identity.fingerprintHash,
+      },
+      'setup': setup.attr,
+      'mid': mid,
+      'direction': dir.attr,
+      'rtcpMux': 'rtcp-mux',
+      'rtcpRsize': 'rtcp-rsize',
+      'msid': '$streamId $tid',
+      'candidates': candidates.map((c) => c.toMap()).toList(),
+    };
   }
 
-  /// Produce the final session.
-  SdpSession build() {
-    final session = SdpSession(
-      origin: SdpOrigin(
-        username: '-',
-        sessionId: sessionId,
-        sessionVersion: 2,
-        netType: 'IN',
-        addrType: 'IP4',
-        address: '127.0.0.1',
-      ),
-      sessionName: '-',
-      timing: '0 0',
-    );
-    final mids =
-        _media.map((m) => m.mid ?? '').where((s) => s.isNotEmpty).toList();
-    if (mids.isNotEmpty) {
-      session.attributes.add(SdpAttribute('group', 'BUNDLE ${mids.join(' ')}'));
-    }
-    session.attributes.add(const SdpAttribute('extmap-allow-mixed'));
-    session.attributes.add(SdpAttribute('msid-semantic', ' WMS $streamId'));
-    session.media.addAll(_media);
-    return session;
+  /// Produce the final session map.
+  Map<String, dynamic> build() {
+    final mids = _media
+        .map((m) => m['mid']?.toString() ?? '')
+        .where((s) => s.isNotEmpty)
+        .toList();
+
+    return <String, dynamic>{
+      'version': 0,
+      'origin': {
+        'username': '-',
+        'sessionId': sessionId,
+        'sessionVersion': 2,
+        'netType': 'IN',
+        'ipVer': 4,
+        'address': '127.0.0.1',
+      },
+      'name': '-',
+      'timing': {'start': 0, 'stop': 0},
+      if (mids.isNotEmpty)
+        'groups': [
+          {'type': 'BUNDLE', 'mids': mids.join(' ')},
+        ],
+      // Marker consumed by `writeSdp` (sdp_transform 0.3.2 has no formatter
+      // for `a=extmap-allow-mixed`).
+      'extmapAllowMixed': true,
+      'msidSemantic': {'semantic': 'WMS', 'token': streamId},
+      'media': _media,
+    };
   }
+
+  /// Convenience: build and serialize in one call.
+  String toSdp() => writeSdp(build());
 }
 
 /// Builds an answer SDP that mirrors a remote offer.
 ///
-/// For each media section in the offer this picks **one** payload type out
-/// of [supportedCodecs] (the first codec whose `name`+`clockRate` matches
-/// any of the offer's payload types) and emits a clean answer section with
-/// `a=setup:active` (assuming the offer was `actpass`).
-///
-/// Sections that have no compatible codec are echoed back with `port=0`,
-/// which signals rejection in offer/answer.
+/// For each section in the offer this picks **one** payload type whose
+/// rtpmap matches the first compatible entry in [supportedCodecs]. Sections
+/// with no compatible codec are echoed back with `port=0`, signalling
+/// rejection per RFC 3264.
 class SdpAnswerBuilder {
-  final SdpSession offer;
+  final Map<String, dynamic> offer;
   final IceDtlsParams identity;
   final List<IceCandidate> candidates;
 
-  /// Codecs this endpoint is willing to use. Order is preference.
+  /// Codecs this endpoint accepts. Order is preference.
   final List<SdpCodec> supportedCodecs;
 
-  /// Stream id used for outgoing tracks (`a=msid:<stream> <track>`).
   final String streamId;
   final String sessionId;
 
@@ -197,77 +201,86 @@ class SdpAnswerBuilder {
   })  : streamId = streamId ?? _newId(),
         sessionId = sessionId ?? _newSessionId();
 
-  SdpSession build() {
-    final answer = SdpSession(
-      origin: SdpOrigin(
-        username: '-',
-        sessionId: sessionId,
-        sessionVersion: 2,
-        address: '127.0.0.1',
-      ),
-      sessionName: '-',
-      timing: '0 0',
-    );
+  Map<String, dynamic> build() {
     final answeredMids = <String>[];
+    final answerMedia = <Map<String, dynamic>>[];
 
-    for (final om in offer.media) {
+    for (final om in offer.mediaList) {
       final picked = _pickCodec(om);
       if (picked == null) {
-        // Reject this section.
-        answer.media.add(SdpMedia(
-          type: om.type,
-          port: 0,
-          protocol: om.protocol,
-          payloadTypes: om.payloadTypes.isEmpty ? [0] : [om.payloadTypes.first],
-          attributes: [
-            if (om.mid != null) SdpAttribute('mid', om.mid!),
-          ],
-        ));
+        answerMedia.add(<String, dynamic>{
+          'type': om['type'],
+          'port': 0,
+          'protocol': om['protocol'] ?? 'UDP/TLS/RTP/SAVPF',
+          'payloads': om['payloads']?.toString().split(' ').first ?? '0',
+          if (om['mid'] != null) 'mid': om['mid'],
+        });
         continue;
       }
-      final mid = om.mid ?? '0';
+      final mid = om['mid']?.toString() ?? '0';
       answeredMids.add(mid);
-      final am = SdpMedia(type: om.type, protocol: om.protocol)
-        ..connection =
-            SdpConnection(netType: 'IN', addrType: 'IP4', address: '0.0.0.0');
-      am.attributes.add(SdpAttribute('rtcp', '9 IN IP4 0.0.0.0'));
-      for (final c in candidates) {
-        am.attributes.add(SdpAttribute('candidate', c.toAttrValue()));
-      }
-      am.attributes.add(SdpAttribute('ice-ufrag', identity.iceUfrag));
-      am.attributes.add(SdpAttribute('ice-pwd', identity.icePwd));
-      am.attributes.add(SdpAttribute('ice-options', 'trickle'));
-      am.attributes.add(SdpAttribute('fingerprint',
-          '${identity.fingerprintAlg} ${identity.fingerprintHash}'));
-      am.attributes.add(SdpAttribute('setup', _answerSetupFor(om).attr));
-      am.attributes.add(SdpAttribute('mid', mid));
-      am.attributes.add(SdpAttribute(_mirrorDirection(om).attr));
-      am.attributes.add(const SdpAttribute('rtcp-mux'));
-      am.attributes.add(const SdpAttribute('rtcp-rsize'));
-      am.attributes.add(SdpAttribute('msid', '$streamId ${_newId()}'));
-      // Apply the chosen codec's lines after the meta-attrs so payloadTypes
-      // ends up with exactly one PT and rtpmap/fmtp/rtcp-fb appear together.
+      final am = <String, dynamic>{
+        'type': om['type'],
+        'port': 9,
+        'protocol': om['protocol'] ?? 'UDP/TLS/RTP/SAVPF',
+        'payloads': '',
+        'connection': {'version': 4, 'ip': '0.0.0.0'},
+        'rtcp': {'port': 9, 'netType': 'IN', 'ipVer': 4, 'address': '0.0.0.0'},
+        'iceUfrag': identity.iceUfrag,
+        'icePwd': identity.icePwd,
+        'iceOptions': 'trickle',
+        'fingerprint': {
+          'type': identity.fingerprintAlg,
+          'hash': identity.fingerprintHash,
+        },
+        'setup': _answerSetupFor(om).attr,
+        'mid': mid,
+        'direction': _mirrorDirection(om).attr,
+        'rtcpMux': 'rtcp-mux',
+        'rtcpRsize': 'rtcp-rsize',
+        'msid': '$streamId ${_newId()}',
+        'candidates': candidates.map((c) => c.toMap()).toList(),
+      };
       picked.applyTo(am);
-      answer.media.add(am);
+      answerMedia.add(am);
     }
 
-    if (answeredMids.isNotEmpty) {
-      answer.attributes
-          .add(SdpAttribute('group', 'BUNDLE ${answeredMids.join(' ')}'));
-    }
-    answer.attributes.add(const SdpAttribute('extmap-allow-mixed'));
-    answer.attributes.add(SdpAttribute('msid-semantic', ' WMS $streamId'));
-    return answer;
+    return <String, dynamic>{
+      'version': 0,
+      'origin': {
+        'username': '-',
+        'sessionId': sessionId,
+        'sessionVersion': 2,
+        'netType': 'IN',
+        'ipVer': 4,
+        'address': '127.0.0.1',
+      },
+      'name': '-',
+      'timing': {'start': 0, 'stop': 0},
+      if (answeredMids.isNotEmpty)
+        'groups': [
+          {'type': 'BUNDLE', 'mids': answeredMids.join(' ')},
+        ],
+      'extmapAllowMixed': true,
+      'msidSemantic': {'semantic': 'WMS', 'token': streamId},
+      'media': answerMedia,
+    };
   }
 
-  SdpCodec? _pickCodec(SdpMedia om) {
+  /// Convenience: build and serialize in one call.
+  String toSdp() => writeSdp(build());
+
+  SdpCodec? _pickCodec(Map<String, dynamic> om) {
     for (final cand in supportedCodecs) {
-      for (final pt in om.payloadTypes) {
-        final m = om.rtpmapFor(pt);
-        if (m == null) continue;
-        if (m.encoding.toUpperCase() == cand.name.toUpperCase() &&
-            m.clockRate == cand.clockRate) {
-          // Reuse the offer's PT so PT mappings stay in sync.
+      for (final pt in om.payloadTypeList) {
+        final r = om.rtpmapFor(pt);
+        if (r == null) continue;
+        final codec = (r['codec'] as String? ?? '').toUpperCase();
+        final rate = r['rate'] is int
+            ? r['rate'] as int
+            : int.tryParse('${r['rate']}') ?? 0;
+        if (codec == cand.name.toUpperCase() && rate == cand.clockRate) {
+          // Reuse the offer's PT so PT mappings stay aligned.
           return _withPayloadType(cand, pt);
         }
       }
@@ -285,45 +298,42 @@ class SdpAnswerBuilder {
     if (cand is TelephoneEventCodec) {
       return TelephoneEventCodec(payloadType: pt, clockRate: cand.clockRate);
     }
-    return cand; // unknown subclass: keep original PT
+    return cand;
   }
 
-  DtlsSetup _answerSetupFor(SdpMedia om) {
-    final s = om.setup;
+  DtlsSetup _answerSetupFor(Map<String, dynamic> om) {
+    final s = om['setup'];
     if (s == 'actpass' || s == 'passive' || s == null) return DtlsSetup.active;
     if (s == 'active') return DtlsSetup.passive;
     return DtlsSetup.active;
   }
 
-  SdpDirection _mirrorDirection(SdpMedia om) {
-    if (om.attr('sendonly') != null) return SdpDirection.recvonly;
-    if (om.attr('recvonly') != null) return SdpDirection.sendonly;
-    if (om.attr('inactive') != null) return SdpDirection.inactive;
+  SdpDirection _mirrorDirection(Map<String, dynamic> om) {
+    final d = om['direction'];
+    if (d == 'sendonly') return SdpDirection.recvonly;
+    if (d == 'recvonly') return SdpDirection.sendonly;
+    if (d == 'inactive') return SdpDirection.inactive;
     return SdpDirection.sendrecv;
   }
 }
 
-/// 16-byte URL-safe random token (used as msid track id).
 String _newId() {
-  final bytes = List<int>.generate(16, (_) => _rand.nextInt(256));
-  // Hex is fine; browsers don't care as long as it matches.
   final sb = StringBuffer();
-  for (final b in bytes) {
-    sb.write(b.toRadixString(16).padLeft(2, '0'));
+  for (var i = 0; i < 16; i++) {
+    sb.write(_rand.nextInt(256).toRadixString(16).padLeft(2, '0'));
   }
   return sb.toString();
 }
 
 String _newSessionId() {
-  // 19-digit numeric session id (browser convention).
   final n = _rand.nextInt(0x7fffffff);
   return '${DateTime.now().microsecondsSinceEpoch}$n';
 }
 
 final _rand = _SeededRandom();
 
-/// Tiny xorshift PRNG to avoid pulling in `dart:math`'s `Random.secure()`
-/// (which can throw on platforms without a CSPRNG, e.g. some embedded VMs).
+/// Tiny xorshift PRNG to avoid `Random.secure()` (which can throw on some
+/// embedded VMs without a CSPRNG).
 class _SeededRandom {
   int _state = DateTime.now().microsecondsSinceEpoch ^ 0xdeadbeef;
   int nextInt(int max) {
