@@ -26,7 +26,7 @@ import 'dart:io';
 import 'dart:typed_data';
 
 import '../dtls/dtls_message.dart' as dtls;
-import '../stun3/stun_server8.dart' as stun;
+import '../stun/stun_server8.dart' as stun;
 import 'protection_profiles.dart';
 import 'rtp2.dart';
 import 'srtp_context.dart';

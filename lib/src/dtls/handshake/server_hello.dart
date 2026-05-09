@@ -2,7 +2,7 @@ import 'dart:typed_data';
 
 import '../../dtls3/extensions.dart';
 import '../crypto.dart';
-// import 'extensions/extensions.dart';
+import 'extensions/extensions.dart';
 
 // import 'extension.dart';
 import 'handshake.dart';

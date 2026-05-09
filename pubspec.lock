@@ -385,14 +385,6 @@ packages:
       url: "https://pub.dev"
     source: hosted
     version: "2.0.2"
-  opus_dart:
-    dependency: "direct main"
-    description:
-      name: opus_dart
-      sha256: e8ab4774409997af33cbfdfe91a186854ed6458b2fec66b0e52f4434b1af2f7c
-      url: "https://pub.dev"
-    source: hosted
-    version: "3.0.1"
   package_config:
     dependency: transitive
     description:
@@ -633,14 +625,6 @@ packages:
       url: "https://pub.dev"
     source: hosted
     version: "1.1.1"
-  web_ffi:
-    dependency: transitive
-    description:
-      name: web_ffi
-      sha256: "48ef8037f7bc051d11b88d0f2903e02bec21092c51833d37c3361c36e3edc4f7"
-      url: "https://pub.dev"
-    source: hosted
-    version: "0.7.2"
   web_socket:
     dependency: transitive
     description:

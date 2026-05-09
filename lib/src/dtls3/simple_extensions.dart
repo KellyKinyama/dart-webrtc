@@ -1,310 +1,194 @@
-// simple_extensions.dart (Converted from simpleextensions.go)
+// Minimal restoration of the legacy `lib/src/dtls3/simple_extensions.dart`.
+//
+// Concrete TLS extension types referenced by `lib/src/dtls/handshake/...`.
+// They round-trip through [Extension.encode] / their `decode(...)` factory
+// so handshake messages can be re-serialized verbatim.
 
 import 'dart:typed_data';
-import 'extensions.dart'; // For Extension and ExtensionTypeValue
 
-// Define enums based on Go types
-enum SRTPProtectionProfile {
-  SRTPProtectionProfile_AEAD_AES_128_GCM(0x0007),
-  UnSupported(9999);
+import 'extensions.dart';
 
-  const SRTPProtectionProfile(this.value);
-  final int value;
+/// `use_srtp` (RFC 5764). Carries the negotiated SRTP protection profile
+/// list and an MKI value.
+class ExtUseSRTP extends Extension {
+  final List<int> protectionProfiles;
+  final Uint8List mki;
 
-  factory SRTPProtectionProfile.fromInt(int key) {
-    return values.firstWhere((element) => element.value == key,
-        orElse: () => SRTPProtectionProfile.UnSupported);
+  ExtUseSRTP(this.protectionProfiles, this.mki);
+
+  @override
+  ExtensionTypeValue extensionType() => ExtensionTypeValue.UseSrtp;
+
+  @override
+  Uint8List encode() {
+    final out = Uint8List(2 + protectionProfiles.length * 2 + 1 + mki.length);
+    final bd = ByteData.sublistView(out);
+    var offset = 0;
+    bd.setUint16(offset, protectionProfiles.length * 2);
+    offset += 2;
+    for (final p in protectionProfiles) {
+      bd.setUint16(offset, p);
+      offset += 2;
+    }
+    out[offset++] = mki.length;
+    out.setRange(offset, offset + mki.length, mki);
+    return out;
+  }
+
+  static ExtUseSRTP decode(int extensionLength, Uint8List data) {
+    final bd = ByteData.sublistView(data);
+    var offset = 0;
+    final ppLen = bd.getUint16(offset);
+    offset += 2;
+    final count = ppLen ~/ 2;
+    final pps = List<int>.filled(count, 0);
+    for (var i = 0; i < count; i++) {
+      pps[i] = bd.getUint16(offset);
+      offset += 2;
+    }
+    final mkiLen = data[offset++];
+    final mki = Uint8List.fromList(data.sublist(offset, offset + mkiLen));
+    return ExtUseSRTP(pps, mki);
   }
 
   @override
-  String toString() {
-    switch (this) {
-      case SRTPProtectionProfile_AEAD_AES_128_GCM:
-        return "SRTPProtectionProfile_AEAD_AES_128_GCM";
-      default:
-        return "Unsupported";
-    }
-  }
+  String toString() =>
+      '[UseSRTP] profiles=$protectionProfiles, mki=${mki.length} bytes';
 }
 
-enum PointFormat {
-  Uncompressed(0x00);
+/// `supported_groups` / supported elliptic curves (RFC 8422).
+class ExtSupportedEllipticCurves extends Extension {
+  final List<int> curves;
+  ExtSupportedEllipticCurves(this.curves);
 
-  const PointFormat(this.value);
-  final int value;
+  @override
+  ExtensionTypeValue extensionType() =>
+      ExtensionTypeValue.SupportedEllipticCurves;
 
-  factory PointFormat.fromInt(int key) {
-    return values.firstWhere((element) => element.value == key,
-        orElse: () => PointFormat.Uncompressed);
+  @override
+  Uint8List encode() {
+    final out = Uint8List(2 + curves.length * 2);
+    final bd = ByteData.sublistView(out);
+    bd.setUint16(0, curves.length * 2);
+    for (var i = 0; i < curves.length; i++) {
+      bd.setUint16(2 + i * 2, curves[i]);
+    }
+    return out;
+  }
+
+  static ExtSupportedEllipticCurves decode(
+      int extensionLength, Uint8List data) {
+    final bd = ByteData.sublistView(data);
+    final byteLen = bd.getUint16(0);
+    final count = byteLen ~/ 2;
+    final out = List<int>.filled(count, 0);
+    for (var i = 0; i < count; i++) {
+      out[i] = bd.getUint16(2 + i * 2);
+    }
+    return ExtSupportedEllipticCurves(out);
   }
 
   @override
-  String toString() {
-    switch (this) {
-      case Uncompressed:
-        return "Uncompressed";
-      default:
-        return "Unsupported";
-    }
-  }
+  String toString() => '[SupportedEllipticCurves] $curves';
 }
 
-enum Curve {
-  X25519(0x001D),
-  prime256v1(0x0017),
-  secp256k1(0x0012),
-  Unsupported(9999);
+/// `ec_point_formats` (RFC 8422).
+class ExtSupportedPointFormats extends Extension {
+  final List<int> pointFormats;
+  ExtSupportedPointFormats(this.pointFormats);
 
-  const Curve(this.value);
-  final int value;
+  @override
+  ExtensionTypeValue extensionType() =>
+      ExtensionTypeValue.SupportedPointFormats;
 
-  factory Curve.fromInt(int key) {
-    return values.firstWhere((element) => element.value == key,
-        orElse: () => Curve.Unsupported);
+  @override
+  Uint8List encode() {
+    final out = Uint8List(1 + pointFormats.length);
+    out[0] = pointFormats.length;
+    out.setRange(1, 1 + pointFormats.length, pointFormats);
+    return out;
+  }
+
+  static ExtSupportedPointFormats decode(int extensionLength, Uint8List data) {
+    final count = data[0];
+    final pf = List<int>.filled(count, 0);
+    for (var i = 0; i < count; i++) {
+      pf[i] = data[1 + i];
+    }
+    return ExtSupportedPointFormats(pf);
   }
 
   @override
-  String toString() {
-    switch (this) {
-      case X25519:
-        return "X25519";
-      default:
-        return "Unsupported";
-    }
-  }
+  String toString() => '[SupportedPointFormats] $pointFormats';
 }
 
-// ExtUseExtendedMasterSecret
+/// `extended_master_secret` (RFC 7627). Empty body.
 class ExtUseExtendedMasterSecret extends Extension {
   @override
-  String toString() {
-    return "[UseExtendedMasterSecret]";
-  }
+  ExtensionTypeValue extensionType() =>
+      ExtensionTypeValue.UseExtendedMasterSecret;
 
   @override
-  ExtensionTypeValue extensionType() {
-    return ExtensionTypeValue.UseExtendedMasterSecret;
-  }
+  Uint8List encode() => Uint8List(0);
+
+  static ExtUseExtendedMasterSecret decode(int extensionLength, Uint8List _) =>
+      ExtUseExtendedMasterSecret();
 
   @override
-  Uint8List encode() {
-    return Uint8List(0); // Empty byte array
-  }
-
-  static ExtUseExtendedMasterSecret decode(int extensionLength, Uint8List buf) {
-    return ExtUseExtendedMasterSecret();
-  }
+  String toString() => '[UseExtendedMasterSecret]';
 }
 
-// ExtRenegotiationInfo
+/// `renegotiation_info` (RFC 5746). Empty body for the initial handshake.
 class ExtRenegotiationInfo extends Extension {
-  @override
-  String toString() {
-    return "[RenegotiationInfo]";
-  }
+  final Uint8List renegotiatedConnection;
+  ExtRenegotiationInfo([Uint8List? data])
+      : renegotiatedConnection = data ?? Uint8List(0);
 
   @override
-  ExtensionTypeValue extensionType() {
-    return ExtensionTypeValue.RenegotiationInfo;
-  }
+  ExtensionTypeValue extensionType() => ExtensionTypeValue.RenegotiationInfo;
 
   @override
   Uint8List encode() {
-    return Uint8List.fromList(
-        [0]); // Go version encodes a single byte '0' for length
+    final out = Uint8List(1 + renegotiatedConnection.length);
+    out[0] = renegotiatedConnection.length;
+    out.setRange(1, out.length, renegotiatedConnection);
+    return out;
   }
 
-  static ExtRenegotiationInfo decode(int extensionLength, Uint8List buf) {
-    return ExtRenegotiationInfo();
+  static ExtRenegotiationInfo decode(int extensionLength, Uint8List data) {
+    if (data.isEmpty) return ExtRenegotiationInfo();
+    final len = data[0];
+    return ExtRenegotiationInfo(
+      Uint8List.fromList(data.sublist(1, 1 + len)),
+    );
   }
+
+  @override
+  String toString() => '[RenegotiationInfo] ${renegotiatedConnection.length}B';
 }
 
-// ExtUseSRTP
-class ExtUseSRTP extends Extension {
-  List<SRTPProtectionProfile> protectionProfiles;
-  Uint8List mki;
-
-  ExtUseSRTP({required this.protectionProfiles, required this.mki});
-
-  @override
-  String toString() {
-    final protectionProfilesStr = protectionProfiles
-        .map((p) => p.toString())
-        .join('\n')
-        .split('\n')
-        .map((line) => '    $line')
-        .join('\n');
-    return "[UseSRTP]\n" + "  Protection Profiles:\n" + protectionProfilesStr;
-  }
-
-  @override
-  ExtensionTypeValue extensionType() {
-    return ExtensionTypeValue.UseSrtp;
-  }
-
-  @override
-  Uint8List encode() {
-    final builder = BytesBuilder();
-    final lengthBytes = (ByteData(2)
-          ..setUint16(0, protectionProfiles.length * 2))
-        .buffer
-        .asUint8List();
-    builder.add(lengthBytes);
-    for (var p in protectionProfiles) {
-      builder.add((ByteData(2)..setUint16(0, p.value)).buffer.asUint8List());
-    }
-    builder.addByte(mki.length);
-    builder.add(mki);
-    return builder.toBytes();
-  }
-
-  static ExtUseSRTP decode(int extensionLength, Uint8List buf) {
-    var reader = ByteData.sublistView(buf);
-    int offset = 0;
-
-    final protectionProfilesLength = reader.getUint16(offset);
-    offset += 2;
-    final protectionProfilesCount = protectionProfilesLength ~/ 2;
-    List<SRTPProtectionProfile> protectionProfiles = [];
-    for (int i = 0; i < protectionProfilesCount; i++) {
-      final protectionProfile =
-          SRTPProtectionProfile.fromInt(reader.getUint16(offset));
-
-      if (protectionProfile != SRTPProtectionProfile.UnSupported) {
-        protectionProfiles.add(protectionProfile);
-      }
-      offset += 2;
-    }
-
-    final mkiLength = reader.getUint8(offset);
-    offset++;
-    final mki = buf.sublist(offset, offset + mkiLength);
-
-    return ExtUseSRTP(protectionProfiles: protectionProfiles, mki: mki);
-  }
-}
-
-// ExtSupportedPointFormats
-class ExtSupportedPointFormats extends Extension {
-  List<PointFormat> pointFormats;
-
-  ExtSupportedPointFormats({required this.pointFormats});
-
-  @override
-  String toString() {
-    return "[SupportedPointFormats] Point Formats: ${pointFormats.map((pf) => pf.toString()).join(', ')}";
-  }
-
-  @override
-  ExtensionTypeValue extensionType() {
-    return ExtensionTypeValue.SupportedPointFormats;
-  }
-
-  @override
-  Uint8List encode() {
-    final builder = BytesBuilder();
-    builder.addByte(pointFormats.length);
-    for (var pf in pointFormats) {
-      builder.addByte(pf.value);
-    }
-    return builder.toBytes();
-  }
-
-  static ExtSupportedPointFormats decode(int extensionLength, Uint8List buf) {
-    var reader = ByteData.sublistView(buf);
-    int offset = 0;
-
-    final pointFormatsCount = reader.getUint8(offset);
-    offset++;
-    List<PointFormat> pointFormats = [];
-    for (int i = 0; i < pointFormatsCount; i++) {
-      pointFormats.add(PointFormat.fromInt(reader.getUint8(offset)));
-      offset++;
-    }
-    return ExtSupportedPointFormats(pointFormats: pointFormats);
-  }
-}
-
-// ExtSupportedEllipticCurves
-class ExtSupportedEllipticCurves extends Extension {
-  List<Curve> curves;
-
-  ExtSupportedEllipticCurves({required this.curves});
-
-  @override
-  String toString() {
-    final curvesStr = curves
-        .map((c) => c.toString())
-        .join('\n')
-        .split('\n')
-        .map((line) => '    $line')
-        .join('\n');
-    return "[SupportedEllipticCurves]\n" + "  Curves:\n" + curvesStr;
-  }
-
-  @override
-  ExtensionTypeValue extensionType() {
-    return ExtensionTypeValue.SupportedEllipticCurves;
-  }
-
-  @override
-  Uint8List encode() {
-    final builder = BytesBuilder();
-    builder.add(
-        (ByteData(2)..setUint16(0, curves.length * 2)).buffer.asUint8List());
-    for (var c in curves) {
-      final curveBytes =
-          (ByteData(2)..setUint16(0, c.value)).buffer.asUint8List();
-      builder.add(curveBytes);
-    }
-    return builder.toBytes();
-  }
-
-  static ExtSupportedEllipticCurves decode(int extensionLength, Uint8List buf) {
-    var reader = ByteData.sublistView(buf);
-    int offset = 0;
-
-    final curvesLength = reader.getUint16(offset);
-    offset += 2;
-    final curvesCount = curvesLength ~/ 2;
-    List<Curve> curves = [];
-    for (int i = 0; i < curvesCount; i++) {
-      final curve = Curve.fromInt(reader.getUint16(offset));
-      if (curve != Curve.Unsupported) {
-        curves.add(curve);
-      }
-      offset += 2;
-    }
-    return ExtSupportedEllipticCurves(curves: curves);
-  }
-}
-
-// ExtUnknown (for debugging, as per Go file)
+/// Catch-all for extensions we don't decode. Preserves the body so it can
+/// be re-emitted byte-for-byte.
 class ExtUnknown extends Extension {
-  ExtensionTypeValue type;
-  int dataLength;
+  final int dataLength;
+  final Uint8List data;
+  final int rawType;
 
-  ExtUnknown({required this.type, required this.dataLength});
-
-  @override
-  String toString() {
-    return "[Unknown Extension Type] Ext Type: ${type.value}, Data: $dataLength bytes";
-  }
-
-  @override
-  ExtensionTypeValue extensionType() {
-    return ExtensionTypeValue.Unsupported; // Or any appropriate unknown value
-  }
+  ExtUnknown({
+    required this.dataLength,
+    required this.data,
+    this.rawType = 0xFFFF,
+  });
 
   @override
-  Uint8List encode() {
-    throw UnimplementedError("ExtUnknown cannot be encoded, it's readonly");
-  }
+  ExtensionTypeValue extensionType() => ExtensionTypeValue.Unsupported;
 
-  static ExtUnknown decode(int extensionLength, Uint8List buf) {
-    // In Go, it takes extensionLength directly, but the constructor likely needs the type.
-    // Assuming type would come from the outer parsing loop.
-    return ExtUnknown(
-        type: ExtensionTypeValue.Unsupported, dataLength: extensionLength);
-  }
+  @override
+  Uint8List encode() => data;
+
+  static ExtUnknown decode(int extensionLength, Uint8List data) =>
+      ExtUnknown(dataLength: extensionLength, data: Uint8List.fromList(data));
+
+  @override
+  String toString() => '[Unknown ext] ${data.length}B';
 }
