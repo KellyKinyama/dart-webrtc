@@ -132,4 +132,111 @@ void main() {
     },
     timeout: const Timeout(Duration(seconds: 30)),
   );
+
+  test(
+    'SFU sends a PLI to alice when bob connects with alice already producing',
+    () async {
+      final sfu = BasicSfu(
+        address: InternetAddress.loopbackIPv4,
+        basePort: 0,
+      );
+      addTearDown(sfu.close);
+
+      final alice = await sfu.addParticipant('alice');
+      final aliceConnected = Completer<void>();
+      final bobConnected = Completer<void>();
+      sfu.onParticipantConnected = (p) {
+        if (p.id == 'alice' && !aliceConnected.isCompleted) {
+          aliceConnected.complete();
+        }
+        if (p.id == 'bob' && !bobConnected.isCompleted) {
+          bobConnected.complete();
+        }
+      };
+
+      // Wire alice's DTLS+SRTP first so she's a fully-connected producer
+      // before bob arrives.
+      final aliceClient = DtlsClient(
+        InternetAddress.loopbackIPv4,
+        alice.transport.port,
+      );
+      addTearDown(aliceClient.close);
+      await aliceClient.connect().timeout(const Duration(seconds: 15));
+      await aliceConnected.future.timeout(const Duration(seconds: 5));
+
+      const profile = ProtectionProfile.aes_128_gcm;
+      final ekmLen = 2 * profile.keyLength() + 2 * profile.saltLength();
+      final aliceSrtp = SRTPClient.wrap(
+        socket: aliceClient.socket,
+        remote: InternetAddress.loopbackIPv4,
+        remotePort: alice.transport.port,
+        protectionProfile: profile,
+        subscribeToSocket: false,
+      );
+      aliceClient.onApplicationDatagram = aliceSrtp.handleDatagram;
+      await aliceSrtp.initialize(aliceClient.exportKeyingMaterial(ekmLen));
+
+      const aliceSsrc = 0x12345678;
+      // Register a video producer for alice in the SFU (as the WS server
+      // would after parsing her offer SDP).
+      final aliceOffer = 'v=0\r\n'
+          'o=- 1 2 IN IP4 127.0.0.1\r\n'
+          's=-\r\n'
+          't=0 0\r\n'
+          'm=video 9 UDP/TLS/RTP/SAVPF 96\r\n'
+          'c=IN IP4 0.0.0.0\r\n'
+          'a=mid:0\r\n'
+          'a=sendrecv\r\n'
+          'a=rtpmap:96 VP8/90000\r\n'
+          'a=ssrc:$aliceSsrc cname:alice\r\n';
+      sfu.learnSsrcMappingFromOffer('alice', aliceOffer);
+
+      // Listen for the inbound PLI on alice. We expect either:
+      //   * the auto-PLI fired by learnSsrcMappingFromOffer above, OR
+      //   * the auto-PLI fired when bob's DTLS reaches connected.
+      final pliReceived = Completer<Uint8List>();
+      final sub = aliceSrtp.rtcpPackets.listen((p) {
+        if (pliReceived.isCompleted) return;
+        // PSFB PT=206, FMT=1 (PLI) on the media SSRC.
+        for (var off = 0; off + 4 <= p.rtcp.length;) {
+          final pt = p.rtcp[off + 1];
+          final lenWords =
+              ByteData.sublistView(p.rtcp, off + 2, off + 4).getUint16(0);
+          final subLen = (lenWords + 1) * 4;
+          if (subLen <= 0 || off + subLen > p.rtcp.length) break;
+          final fmt = p.rtcp[off] & 0x1F;
+          if (pt == 206 && fmt == 1) {
+            pliReceived
+                .complete(Uint8List.sublistView(p.rtcp, off, off + subLen));
+            return;
+          }
+          off += subLen;
+        }
+      });
+      addTearDown(sub.cancel);
+
+      // Now bring bob up. His connect handler should fire requestKeyframe
+      // for alice, which the SFU forwards as a PLI on alice's primary SSRC.
+      final bob = await sfu.addParticipant('bob');
+      final bobClient = DtlsClient(
+        InternetAddress.loopbackIPv4,
+        bob.transport.port,
+      );
+      addTearDown(bobClient.close);
+      await bobClient.connect().timeout(const Duration(seconds: 15));
+      await bobConnected.future.timeout(const Duration(seconds: 5));
+
+      final pli = await pliReceived.future.timeout(const Duration(seconds: 5));
+      expect(pli.length, 12);
+      expect(pli[1], 206);
+      expect(pli[0] & 0x1F, 1);
+      // Media SSRC field (bytes 8..12) must point at alice's primary.
+      final mediaSsrc = ByteData.sublistView(pli).getUint32(8, Endian.big);
+      expect(mediaSsrc, aliceSsrc);
+      expect(sfu.stats.pliSent, greaterThanOrEqualTo(1));
+
+      await aliceSrtp.close();
+    },
+    timeout: const Timeout(Duration(seconds: 30)),
+  );
 }

@@ -215,6 +215,22 @@ void main() {
       // re-using the port number is a flaky check, just confirm no crash.
       expect(t.address.address, '127.0.0.1');
     });
+
+    test('createOffer embeds the bound host candidate in the SDP', () async {
+      final pc = RTCPeerConnection(RTCConfiguration(
+        defaultVideoCodecs: [Vp8Codec()],
+      ));
+      addTearDown(pc.close);
+      pc.addTransceiver(trackOrKind: MediaKind.video);
+
+      final transport = await pc.bind(InternetAddress.loopbackIPv4, 0);
+      addTearDown(transport.close);
+
+      final offer = await pc.createOffer();
+      expect(offer.sdp, contains('a=candidate:1 1 udp'));
+      expect(offer.sdp, contains('typ host'));
+      expect(offer.sdp, contains('${transport.port}'));
+    });
   });
 
   group('RTCDataChannel', () {

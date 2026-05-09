@@ -191,4 +191,29 @@ void main() {
       expect(answer, isNot(contains('nonsense')));
     });
   });
+
+  group('SsrcGroup parsing helpers', () {
+    test('parses a=ssrc-group:FID into rtxToPrimarySsrc map', () {
+      const offerSdp = 'v=0\r\n'
+          'o=- 1 2 IN IP4 127.0.0.1\r\n'
+          's=-\r\n'
+          't=0 0\r\n'
+          'm=video 9 UDP/TLS/RTP/SAVPF 96 97\r\n'
+          'c=IN IP4 0.0.0.0\r\n'
+          'a=mid:0\r\n'
+          'a=sendrecv\r\n'
+          'a=rtpmap:96 VP8/90000\r\n'
+          'a=rtpmap:97 rtx/90000\r\n'
+          'a=fmtp:97 apt=96\r\n'
+          'a=ssrc-group:FID 1111 2222\r\n'
+          'a=ssrc:1111 cname:foo\r\n'
+          'a=ssrc:2222 cname:foo\r\n';
+      final m = parseSdp(offerSdp).mediaList.first;
+      expect(m.ssrcGroupList, hasLength(1));
+      expect(m.ssrcGroupList.first['semantics'], 'FID');
+      expect(m.ssrcGroupList.first['ssrcs'], [1111, 2222]);
+      expect(m.rtxToPrimarySsrc, {2222: 1111});
+      expect(m.ssrcSet, {1111, 2222});
+    });
+  });
 }

@@ -347,6 +347,7 @@ class RTCPeerConnection {
     final builder = SdpOfferBuilder(
       identity: _identity,
       streamId: _streamId,
+      candidates: _hostCandidates(),
       extensions: const [
         SdpRtpExtension(id: 1, uri: SdpRtpExtension.midUri),
         SdpRtpExtension(id: 2, uri: SdpRtpExtension.absSendTimeUri),
@@ -386,9 +387,35 @@ class RTCPeerConnection {
       offer: offerMap,
       identity: _identity,
       supportedCodecs: supported,
+      candidates: _hostCandidates(),
       streamId: _streamId,
     ).toSdp();
     return RTCSessionDescription(RTCSdpType.answer, answer);
+  }
+
+  /// One host candidate per bound interface, or `[]` if [bind] hasn't
+  /// been called yet. Browsers can connect immediately to whatever ships
+  /// in the SDP and don't need trickle to make ICE succeed.
+  List<IceCandidate> _hostCandidates() {
+    final t = _transport;
+    if (t == null) return const [];
+    final addr = t.address.address;
+    // RFC 5245 host-candidate priority for a single component.
+    const typePref = 126; // host
+    const localPref = 65535;
+    const componentId = 1;
+    final priority = (typePref << 24) | (localPref << 8) | (256 - componentId);
+    return [
+      IceCandidate(
+        foundation: '1',
+        component: componentId,
+        transport: 'udp',
+        priority: priority,
+        address: addr,
+        port: t.port,
+        type: 'host',
+      ),
+    ];
   }
 
   /// Apply a *local* description, advancing the signaling state machine
