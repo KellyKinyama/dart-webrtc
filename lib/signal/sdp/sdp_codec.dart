@@ -159,3 +159,72 @@ class TelephoneEventCodec extends SdpCodec {
   @override
   String? get fmtpValue => '0-16';
 }
+
+/// RTX retransmission stream (`rtx/90000`) — RFC 4588.
+///
+/// Carries lost packets of a primary codec identified by [apt] (associated
+/// payload type). Browsers won't perform NACK-driven retransmission unless
+/// every primary video codec they offer also has a paired RTX entry.
+class RtxCodec extends SdpCodec {
+  @override
+  final int payloadType;
+
+  /// The primary codec's payload type that this RTX stream retransmits.
+  final int apt;
+
+  @override
+  final int clockRate;
+
+  RtxCodec({
+    required this.payloadType,
+    required this.apt,
+    this.clockRate = 90000,
+  });
+
+  @override
+  String get name => 'rtx';
+
+  @override
+  String? get fmtpValue => 'apt=$apt';
+}
+
+/// Single `a=extmap:<id> <uri>` declaration.
+///
+/// IDs are scoped per session; if you want the same extension in multiple
+/// media sections they MUST share the same id (BUNDLE requirement).
+class SdpRtpExtension {
+  final int id;
+  final String uri;
+  final String? direction; // null, 'sendonly', 'recvonly', 'inactive'
+
+  const SdpRtpExtension({
+    required this.id,
+    required this.uri,
+    this.direction,
+  });
+
+  /// Append `a=extmap:` to a media section map.
+  void applyTo(Map<String, dynamic> media) {
+    final list = (media['ext'] as List?) ?? <Map<String, dynamic>>[];
+    final entry = <String, dynamic>{'value': id, 'uri': uri};
+    if (direction != null) entry['direction'] = direction;
+    list.add(entry);
+    media['ext'] = list;
+  }
+
+  // ---- Well-known URIs ----------------------------------------------
+
+  /// `urn:ietf:params:rtp-hdrext:sdes:mid` — required for BUNDLE.
+  static const String midUri = 'urn:ietf:params:rtp-hdrext:sdes:mid';
+
+  /// `http://www.webrtc.org/experiments/rtp-hdrext/abs-send-time`.
+  static const String absSendTimeUri =
+      'http://www.webrtc.org/experiments/rtp-hdrext/abs-send-time';
+
+  /// transport-wide congestion control sequence number.
+  static const String transportCcUri =
+      'http://www.ietf.org/id/draft-holmer-rmcat-transport-wide-cc-extensions-01';
+
+  /// `urn:ietf:params:rtp-hdrext:toffset` — RTP timestamp offset.
+  static const String toffsetUri = 'urn:ietf:params:rtp-hdrext:toffset';
+}

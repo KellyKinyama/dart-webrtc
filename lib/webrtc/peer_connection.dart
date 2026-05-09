@@ -344,7 +344,15 @@ class RTCPeerConnection {
       throw StateError(
           'createOffer needs at least one transceiver — call addTransceiver() first.');
     }
-    final builder = SdpOfferBuilder(identity: _identity, streamId: _streamId);
+    final builder = SdpOfferBuilder(
+      identity: _identity,
+      streamId: _streamId,
+      extensions: const [
+        SdpRtpExtension(id: 1, uri: SdpRtpExtension.midUri),
+        SdpRtpExtension(id: 2, uri: SdpRtpExtension.absSendTimeUri),
+        SdpRtpExtension(id: 3, uri: SdpRtpExtension.transportCcUri),
+      ],
+    );
     for (var i = 0; i < _transceivers.length; i++) {
       final t = _transceivers[i];
       t.mid ??= '$i';

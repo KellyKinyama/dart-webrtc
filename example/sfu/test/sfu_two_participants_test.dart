@@ -115,8 +115,7 @@ void main() {
 
       await aliceSrtp.sendRtp(aliceRtp);
 
-      final pkt = await received.future
-          .timeout(const Duration(seconds: 5));
+      final pkt = await received.future.timeout(const Duration(seconds: 5));
 
       expect(pkt.packet.payload, payload);
       expect(pkt.packet.header.payloadType, 96);

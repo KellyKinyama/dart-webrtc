@@ -79,7 +79,9 @@ void main() {
   });
 
   group('SdpAnswerBuilder', () {
-    test('answers VP8 offer with VP8 and flips actpass -> active', () {
+    test('answers VP8 offer with VP8 and flips actpass -> passive', () {
+      // We only implement the DTLS server side, so an actpass offer must
+      // be answered with `passive` (the browser becomes the DTLS client).
       final offer = (SdpOfferBuilder(identity: _identity)
             ..addVideo(mid: '0', codecs: [Vp8Codec(), Vp9Codec()]))
           .build();
@@ -93,7 +95,8 @@ void main() {
       expect(text, contains('m=video 9 UDP/TLS/RTP/SAVPF 96'));
       expect(text, isNot(contains('m=video 9 UDP/TLS/RTP/SAVPF 96 98')));
       expect(text, contains('a=rtpmap:96 VP8/90000'));
-      expect(text, contains('a=setup:active'));
+      expect(text, contains('a=setup:passive'));
+      expect(text, contains('a=ice-lite'));
       expect(text, contains('a=mid:0'));
       expect(text, contains('a=group:BUNDLE 0'));
     });
@@ -125,6 +128,67 @@ void main() {
         supportedCodecs: [Vp8Codec()],
       ).toSdp();
       expect(text, contains('a=recvonly'));
+    });
+
+    test('echoes browser-style RTX entry with apt= mapping', () {
+      // Hand-built offer that mirrors what Chrome sends: VP8 (PT 96) plus
+      // its RTX companion (PT 97 with apt=96).
+      const offerSdp = 'v=0\r\n'
+          'o=- 1 2 IN IP4 127.0.0.1\r\n'
+          's=-\r\n'
+          't=0 0\r\n'
+          'm=video 9 UDP/TLS/RTP/SAVPF 96 97\r\n'
+          'c=IN IP4 0.0.0.0\r\n'
+          'a=mid:0\r\n'
+          'a=sendrecv\r\n'
+          'a=setup:actpass\r\n'
+          'a=ice-ufrag:xx\r\n'
+          'a=ice-pwd:0123456789abcdef0123456789ab\r\n'
+          'a=fingerprint:sha-256 12:34\r\n'
+          'a=rtpmap:96 VP8/90000\r\n'
+          'a=rtpmap:97 rtx/90000\r\n'
+          'a=fmtp:97 apt=96\r\n';
+      final answer = SdpAnswerBuilder(
+        offer: parseSdp(offerSdp),
+        identity: _identity,
+        supportedCodecs: [Vp8Codec()],
+      ).toSdp();
+      expect(answer, contains('m=video 9 UDP/TLS/RTP/SAVPF 96 97'));
+      expect(answer, contains('a=rtpmap:97 rtx/90000'));
+      expect(answer, contains('a=fmtp:97 apt=96'));
+    });
+
+    test('echoes header extensions on the allowlist with offer IDs', () {
+      const offerSdp = 'v=0\r\n'
+          'o=- 1 2 IN IP4 127.0.0.1\r\n'
+          's=-\r\n'
+          't=0 0\r\n'
+          'm=video 9 UDP/TLS/RTP/SAVPF 96\r\n'
+          'c=IN IP4 0.0.0.0\r\n'
+          'a=mid:0\r\n'
+          'a=sendrecv\r\n'
+          'a=setup:actpass\r\n'
+          'a=ice-ufrag:xx\r\n'
+          'a=ice-pwd:0123456789abcdef0123456789ab\r\n'
+          'a=fingerprint:sha-256 12:34\r\n'
+          'a=rtpmap:96 VP8/90000\r\n'
+          'a=extmap:5 urn:ietf:params:rtp-hdrext:sdes:mid\r\n'
+          'a=extmap:7 http://www.ietf.org/id/draft-holmer-rmcat-transport-wide-cc-extensions-01\r\n'
+          'a=extmap:9 urn:ietf:params:rtp-hdrext:nonsense\r\n';
+      final answer = SdpAnswerBuilder(
+        offer: parseSdp(offerSdp),
+        identity: _identity,
+        supportedCodecs: [Vp8Codec()],
+      ).toSdp();
+      // Allowlisted extensions echoed with the same IDs.
+      expect(
+          answer, contains('a=extmap:5 urn:ietf:params:rtp-hdrext:sdes:mid'));
+      expect(
+          answer,
+          contains(
+              'a=extmap:7 http://www.ietf.org/id/draft-holmer-rmcat-transport-wide-cc-extensions-01'));
+      // Unknown extension dropped.
+      expect(answer, isNot(contains('nonsense')));
     });
   });
 }

@@ -84,7 +84,7 @@ void main() {
       expect(answer.type, RTCSdpType.answer);
       expect(answer.sdp, contains('m=video'));
       expect(answer.sdp, contains('m=audio'));
-      expect(answer.sdp, contains('a=setup:active'));
+      expect(answer.sdp, contains('a=setup:passive'));
 
       await callee.setLocalDescription(answer);
       expect(callee.signalingState, RTCSignalingState.stable);

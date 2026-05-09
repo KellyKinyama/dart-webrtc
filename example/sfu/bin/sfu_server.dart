@@ -3,17 +3,18 @@
 // Run with:
 //   dart run bin\sfu_server.dart [--ip 0.0.0.0] [--ws-port 8080] [--rtp-base 50000]
 //
-// Browsers connect to:    ws://<host>:<ws-port>/ws
+// Open in a browser:    http://<host>:<ws-port>/
+// Browsers connect to:  ws://<host>:<ws-port>/ws
 //
 // Wire protocol (JSON over WebSocket, one message per frame):
-//   {"type":"join", "id":"alice", "name":"Alice"}            (client → server)
-//   {"type":"offer", "sdp":"..."}                              (server → client)
-//   {"type":"answer", "sdp":"..."}                             (client → server)
+//   {"type":"join", "id":"alice", "name":"Alice"}            (client -> server)
+//   {"type":"offer", "sdp":"..."}                              (client -> server)
+//   {"type":"answer", "sdp":"..."}                             (server -> client)
 //   {"type":"candidate", "candidate":"...", "sdpMid":"0", "sdpMLineIndex":0}
 //                                                              (both directions)
-//   {"type":"leave"}                                           (client → server)
+//   {"type":"leave"}                                           (client -> server)
 //   {"type":"peer-joined" | "peer-left", "id":"...", "name":"..."}
-//                                                              (server → client broadcast)
+//                                                              (server -> client broadcast)
 
 import 'dart:async';
 import 'dart:convert';
@@ -80,24 +81,33 @@ Future<void> main(List<String> arguments) async {
 
   final server = await HttpServer.bind(ip, wsPort);
   print('SFU signaling listening on ws://$ip:$wsPort/ws');
+  print('Browser demo:               http://$ip:$wsPort/');
   print('SFU media base port: $rtpBase (one port per participant)');
 
   await for (final request in server) {
-    if (request.uri.path != '/ws') {
-      request.response.statusCode = HttpStatus.notFound;
+    if (request.uri.path == '/ws') {
+      WebSocket ws;
+      try {
+        ws = await WebSocketTransformer.upgrade(request);
+      } catch (e) {
+        print('[ws] upgrade failed: $e');
+        continue;
+      }
+      _handleClient(ws, sfu, clients, broadcast);
+      continue;
+    }
+
+    if (request.method == 'GET' &&
+        (request.uri.path == '/' || request.uri.path == '/index.html')) {
+      request.response.headers.contentType =
+          ContentType('text', 'html', charset: 'utf-8');
+      request.response.write(_demoHtml);
       await request.response.close();
       continue;
     }
 
-    WebSocket ws;
-    try {
-      ws = await WebSocketTransformer.upgrade(request);
-    } catch (e) {
-      print('[ws] upgrade failed: $e');
-      continue;
-    }
-
-    _handleClient(ws, sfu, clients, broadcast);
+    request.response.statusCode = HttpStatus.notFound;
+    await request.response.close();
   }
 }
 
@@ -109,14 +119,12 @@ void _handleClient(
 ) {
   String? participantId;
 
-  Future<void> sendOffer(SfuParticipant p) async {
-    final offer = await p.pc.createOffer();
-    await p.pc.setLocalDescription(offer);
-    ws.add(jsonEncode({'type': 'offer', 'sdp': offer.sdp}));
-
-    // Forward host candidates as they get fired.
+  void wireIceTrickle(SfuParticipant p) {
     p.pc.onIceCandidate = (cand) {
-      if (cand == null) return;
+      if (cand == null) {
+        ws.add(jsonEncode({'type': 'candidate', 'candidate': null}));
+        return;
+      }
       ws.add(jsonEncode({
         'type': 'candidate',
         'candidate': cand.candidate,
@@ -135,10 +143,24 @@ void _handleClient(
           final name = msg['name'] as String?;
           clients[participantId!] = ws;
           final p = await sfu.addParticipant(participantId!, displayName: name);
-          await sendOffer(p);
+          wireIceTrickle(p);
+          // Tell the client we're ready; it will follow up with an offer.
+          ws.add(jsonEncode({'type': 'joined', 'id': participantId}));
+          break;
+
+        case 'offer':
+          final p = sfu.getParticipant(participantId ?? '');
+          if (p == null) break;
+          await p.pc.setRemoteDescription(
+            RTCSessionDescription(RTCSdpType.offer, msg['sdp'] as String),
+          );
+          final answer = await p.pc.createAnswer();
+          await p.pc.setLocalDescription(answer);
+          ws.add(jsonEncode({'type': 'answer', 'sdp': answer.sdp}));
           break;
 
         case 'answer':
+          // Supported for the legacy "server offers" flow.
           final p = sfu.getParticipant(participantId ?? '');
           if (p == null) break;
           await p.pc.setRemoteDescription(
@@ -176,3 +198,91 @@ void _handleClient(
     }
   }, cancelOnError: true);
 }
+
+/// Tiny self-hosted browser demo. Captures camera+mic, publishes via the
+/// SFU, and renders every other participant's stream.
+const _demoHtml = r'''
+<!doctype html>
+<html><head><meta charset="utf-8"><title>pure_dart_webrtc SFU demo</title>
+<style>
+  body{font:14px sans-serif;margin:1em;background:#111;color:#eee}
+  video{width:320px;background:#000;margin:.25em;border:1px solid #444}
+  #log{font-family:monospace;white-space:pre-wrap;background:#000;padding:.5em;height:10em;overflow:auto}
+  button,input{font:inherit;padding:.3em .6em}
+</style></head><body>
+<h2>pure_dart_webrtc SFU demo</h2>
+<p>id: <input id="id" value="alice"> <button id="go">Join</button></p>
+<div id="videos"></div>
+<div id="log"></div>
+<script>
+const log = (...a) => {
+  document.getElementById('log').textContent += a.join(' ') + '\n';
+  console.log(...a);
+};
+const videos = document.getElementById('videos');
+
+document.getElementById('go').onclick = async () => {
+  const id = document.getElementById('id').value || 'alice';
+  const ws = new WebSocket(`ws://${location.host}/ws`);
+  await new Promise(r => ws.onopen = r);
+
+  const local = await navigator.mediaDevices.getUserMedia({video:true, audio:true});
+  const localV = document.createElement('video');
+  localV.autoplay = true; localV.muted = true; localV.srcObject = local;
+  videos.appendChild(localV);
+
+  const pc = new RTCPeerConnection();
+  for (const t of local.getTracks()) pc.addTrack(t, local);
+
+  pc.onicecandidate = (e) => {
+    if (!e.candidate) {
+      ws.send(JSON.stringify({type:'candidate', candidate:null}));
+      return;
+    }
+    ws.send(JSON.stringify({
+      type:'candidate',
+      candidate: e.candidate.candidate,
+      sdpMid: e.candidate.sdpMid,
+      sdpMLineIndex: e.candidate.sdpMLineIndex,
+    }));
+  };
+  pc.ontrack = (e) => {
+    let v = document.getElementById('v_' + e.streams[0].id);
+    if (!v) {
+      v = document.createElement('video');
+      v.id = 'v_' + e.streams[0].id;
+      v.autoplay = true; v.playsInline = true;
+      videos.appendChild(v);
+    }
+    v.srcObject = e.streams[0];
+  };
+  pc.oniceconnectionstatechange = () => log('ice:', pc.iceConnectionState);
+  pc.onconnectionstatechange = () => log('conn:', pc.connectionState);
+
+  ws.onmessage = async (ev) => {
+    const msg = JSON.parse(ev.data);
+    if (msg.type === 'joined') {
+      const offer = await pc.createOffer();
+      await pc.setLocalDescription(offer);
+      ws.send(JSON.stringify({type:'offer', sdp: offer.sdp}));
+    } else if (msg.type === 'answer') {
+      await pc.setRemoteDescription({type:'answer', sdp: msg.sdp});
+      log('got answer');
+    } else if (msg.type === 'candidate' && msg.candidate) {
+      try {
+        await pc.addIceCandidate({
+          candidate: msg.candidate,
+          sdpMid: msg.sdpMid,
+          sdpMLineIndex: msg.sdpMLineIndex,
+        });
+      } catch (e) { log('addIceCandidate err:', e); }
+    } else if (msg.type === 'peer-joined' || msg.type === 'peer-left') {
+      log(msg.type, msg.id);
+    }
+  };
+
+  ws.send(JSON.stringify({type:'join', id, name:id}));
+  log('joined as', id);
+};
+</script></body></html>
+''';

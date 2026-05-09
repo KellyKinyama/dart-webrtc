@@ -66,6 +66,16 @@ class SdpOfferBuilder {
   final String streamId;
   final String sessionId;
 
+  /// When true, emits `a=ice-lite` at session level. Browsers treat the
+  /// remote agent as ICE-lite and won't expect connectivity checks from
+  /// us. Defaults to true since this codebase only acts as a server.
+  final bool iceLite;
+
+  /// RTP header extensions to advertise on every media section. Use the
+  /// well-known URIs on [SdpRtpExtension] for the WebRTC defaults
+  /// (transport-cc, abs-send-time, sdes:mid).
+  final List<SdpRtpExtension> extensions;
+
   final List<Map<String, dynamic>> _media = [];
 
   SdpOfferBuilder({
@@ -73,6 +83,8 @@ class SdpOfferBuilder {
     this.candidates = const [],
     String? streamId,
     String? sessionId,
+    this.iceLite = true,
+    this.extensions = const [],
   })  : streamId = streamId ?? _newId(),
         sessionId = sessionId ?? _newSessionId();
 
@@ -115,7 +127,7 @@ class SdpOfferBuilder {
   Map<String, dynamic> _newMedia(String type, String mid, SdpDirection dir,
       DtlsSetup setup, String? trackId) {
     final tid = trackId ?? _newId();
-    return <String, dynamic>{
+    final m = <String, dynamic>{
       'type': type,
       'port': 9,
       'protocol': 'UDP/TLS/RTP/SAVPF',
@@ -137,6 +149,10 @@ class SdpOfferBuilder {
       'msid': '$streamId $tid',
       'candidates': candidates.map((c) => c.toMap()).toList(),
     };
+    for (final ext in extensions) {
+      ext.applyTo(m);
+    }
+    return m;
   }
 
   /// Produce the final session map.
@@ -158,6 +174,7 @@ class SdpOfferBuilder {
       },
       'name': '-',
       'timing': {'start': 0, 'stop': 0},
+      if (iceLite) 'icelite': 'ice-lite',
       if (mids.isNotEmpty)
         'groups': [
           {'type': 'BUNDLE', 'mids': mids.join(' ')},
@@ -191,6 +208,25 @@ class SdpAnswerBuilder {
   final String streamId;
   final String sessionId;
 
+  /// Emit `a=ice-lite` at session level. Default true; this codebase only
+  /// acts as the server side of a WebRTC session.
+  final bool iceLite;
+
+  /// DTLS role to advertise. Defaults to [DtlsSetup.passive] because the
+  /// underlying `DtlsSession` only implements the server side of the
+  /// handshake. Override only if the offer pinned `setup:passive`.
+  final DtlsSetup dtlsRole;
+
+  /// Allowlist of RTP header extension URIs that we'll echo back in the
+  /// answer (using the IDs the offer chose). Defaults to the WebRTC set:
+  /// sdes:mid, abs-send-time, transport-cc.
+  final Set<String> supportedExtensions;
+
+  /// When true, RTX entries (`rtx/90000`) in the offer are echoed back
+  /// with their `apt=` mapping intact, provided the primary PT was
+  /// accepted. Browsers need this to perform NACK retransmissions.
+  final bool acceptRtx;
+
   SdpAnswerBuilder({
     required this.offer,
     required this.identity,
@@ -198,8 +234,18 @@ class SdpAnswerBuilder {
     this.candidates = const [],
     String? streamId,
     String? sessionId,
+    this.iceLite = true,
+    this.dtlsRole = DtlsSetup.passive,
+    Set<String>? supportedExtensions,
+    this.acceptRtx = true,
   })  : streamId = streamId ?? _newId(),
-        sessionId = sessionId ?? _newSessionId();
+        sessionId = sessionId ?? _newSessionId(),
+        supportedExtensions = supportedExtensions ??
+            const {
+              SdpRtpExtension.midUri,
+              SdpRtpExtension.absSendTimeUri,
+              SdpRtpExtension.transportCcUri,
+            };
 
   Map<String, dynamic> build() {
     final answeredMids = <String>[];
@@ -242,6 +288,26 @@ class SdpAnswerBuilder {
         'candidates': candidates.map((c) => c.toMap()).toList(),
       };
       picked.applyTo(am);
+
+      // Echo RTX entry for the picked primary, if the offer carried one.
+      if (acceptRtx) {
+        final rtxPt = _findRtxFor(om, picked.payloadType);
+        if (rtxPt != null) {
+          RtxCodec(payloadType: rtxPt, apt: picked.payloadType).applyTo(am);
+        }
+      }
+
+      // Mirror header extensions whose URIs are on our allowlist, keeping
+      // the offerer's IDs (BUNDLE requires identical IDs across sections).
+      final offeredExt = (om['ext'] as List?)?.cast<Map>() ?? const [];
+      for (final e in offeredExt) {
+        final uri = e['uri']?.toString();
+        final id = e['value'];
+        if (uri == null || id is! int) continue;
+        if (!supportedExtensions.contains(uri)) continue;
+        SdpRtpExtension(id: id, uri: uri).applyTo(am);
+      }
+
       answerMedia.add(am);
     }
 
@@ -257,6 +323,7 @@ class SdpAnswerBuilder {
       },
       'name': '-',
       'timing': {'start': 0, 'stop': 0},
+      if (iceLite) 'icelite': 'ice-lite',
       if (answeredMids.isNotEmpty)
         'groups': [
           {'type': 'BUNDLE', 'mids': answeredMids.join(' ')},
@@ -301,11 +368,37 @@ class SdpAnswerBuilder {
     return cand;
   }
 
+  /// Find the RTX payload type whose `apt=<primaryPt>` matches [primaryPt],
+  /// or null if the offer didn't pair one.
+  int? _findRtxFor(Map<String, dynamic> om, int primaryPt) {
+    for (final pt in om.payloadTypeList) {
+      final r = om.rtpmapFor(pt);
+      if (r == null) continue;
+      final codec = (r['codec'] as String? ?? '').toUpperCase();
+      if (codec != 'RTX') continue;
+      final fmtps = (om['fmtp'] as List?)?.cast<Map>() ?? const [];
+      for (final f in fmtps) {
+        if (f['payload'] != pt) continue;
+        final cfg = f['config']?.toString() ?? '';
+        for (final part in cfg.split(';')) {
+          final kv = part.trim().split('=');
+          if (kv.length == 2 && kv[0] == 'apt' && kv[1] == '$primaryPt') {
+            return pt;
+          }
+        }
+      }
+    }
+    return null;
+  }
+
   DtlsSetup _answerSetupFor(Map<String, dynamic> om) {
     final s = om['setup'];
-    if (s == 'actpass' || s == 'passive' || s == null) return DtlsSetup.active;
+    // Honour our hardcoded role: this codebase only implements the DTLS
+    // server side, so pick `passive` whenever the offer leaves it open.
+    if (s == 'actpass' || s == null) return dtlsRole;
     if (s == 'active') return DtlsSetup.passive;
-    return DtlsSetup.active;
+    if (s == 'passive') return DtlsSetup.active; // we'd be the client
+    return dtlsRole;
   }
 
   SdpDirection _mirrorDirection(Map<String, dynamic> om) {
