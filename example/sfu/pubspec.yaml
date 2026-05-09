@@ -1,0 +1,15 @@
+name: pure_dart_webrtc_sfu_example
+description: Minimal multi-party SFU built on the pure_dart_webrtc RTCPeerConnection API.
+publish_to: none
+version: 0.1.0
+
+environment:
+  sdk: ^3.6.2
+
+dependencies:
+  pure_dart_webrtc:
+    path: ../../
+
+dev_dependencies:
+  lints: ^5.0.0
+  test: ^1.24.0
