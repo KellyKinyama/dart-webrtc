@@ -121,6 +121,149 @@ void main() {
     });
   });
 
+  group('BasicSfu inactivity sweep', () {
+    test('fires onParticipantTimedOut for participants idle past the threshold',
+        () async {
+      final sfu = BasicSfu(
+        address: InternetAddress.loopbackIPv4,
+        basePort: 0,
+        inactivityTimeout: const Duration(milliseconds: 100),
+      );
+      addTearDown(sfu.close);
+
+      final timeouts = <String>[];
+      sfu.onParticipantTimedOut = (p, idle) => timeouts.add(p.id);
+
+      final alice = await sfu.addParticipant('alice');
+      final bob = await sfu.addParticipant('bob');
+
+      // No activity yet -> sweep is a no-op (lastActivityAt is null).
+      sfu.runInactivitySweep(requireConnected: false);
+      expect(timeouts, isEmpty);
+
+      // Pretend both have produced media long ago.
+      alice.stats.lastActivityAt =
+          DateTime.now().subtract(const Duration(seconds: 5));
+      // Bob is recently active -> should not fire.
+      bob.stats.lastActivityAt = DateTime.now();
+
+      sfu.runInactivitySweep(requireConnected: false);
+      expect(timeouts, ['alice']);
+    });
+
+    test('does nothing when inactivityTimeout is null', () async {
+      final sfu = BasicSfu(
+        address: InternetAddress.loopbackIPv4,
+        basePort: 0,
+      );
+      addTearDown(sfu.close);
+
+      var fired = false;
+      sfu.onParticipantTimedOut = (_, __) => fired = true;
+      final alice = await sfu.addParticipant('alice');
+      alice.stats.lastActivityAt =
+          DateTime.now().subtract(const Duration(hours: 1));
+      sfu.runInactivitySweep(requireConnected: false);
+      expect(fired, isFalse);
+    });
+  });
+
+  group('SeqGapDetector', () {
+    test('returns empty on the first packet (anchors silently)', () {
+      final d = SeqGapDetector();
+      expect(d.feed(100), isEmpty);
+      expect(d.lastSeq, 100);
+    });
+
+    test('returns empty on the next consecutive packet', () {
+      final d = SeqGapDetector();
+      d.feed(100);
+      expect(d.feed(101), isEmpty);
+    });
+
+    test('reports the missing sequence numbers in a small gap', () {
+      final d = SeqGapDetector();
+      d.feed(100);
+      expect(d.feed(105), [101, 102, 103, 104]);
+    });
+
+    test('handles seq wrap (65535 -> 0)', () {
+      final d = SeqGapDetector();
+      d.feed(65534);
+      expect(d.feed(2), [65535, 0, 1]);
+    });
+
+    test('ignores reordered (older) packets without advancing', () {
+      final d = SeqGapDetector();
+      d.feed(100);
+      expect(d.feed(99), isEmpty);
+      expect(d.lastSeq, 100);
+    });
+
+    test('ignores duplicates', () {
+      final d = SeqGapDetector();
+      d.feed(100);
+      expect(d.feed(100), isEmpty);
+    });
+
+    test('re-anchors silently on a jump larger than maxGap', () {
+      final d = SeqGapDetector(maxGap: 4);
+      d.feed(100);
+      expect(d.feed(200), isEmpty);
+      expect(d.lastSeq, 200);
+    });
+  });
+
+  group('BasicSfu.buildNack', () {
+    test('packs three adjacent losses into one FCI word with BLP bits set', () {
+      // Missing 100, 101, 102 -> PID=100, BLP bits 0 and 1 set => BLP=0x0003.
+      final pkt = BasicSfu.buildNack(1, 0xCAFEBABE, [100, 101, 102]);
+      expect(pkt.length, 16);
+      expect(pkt[0] & 0x1F, 1, reason: 'FMT=1');
+      expect(pkt[1], 205, reason: 'PT=RTPFB');
+      final len = (pkt[2] << 8) | pkt[3];
+      expect(len, 3);
+      expect((pkt[4] << 24) | (pkt[5] << 16) | (pkt[6] << 8) | pkt[7], 1);
+      expect((pkt[8] << 24) | (pkt[9] << 16) | (pkt[10] << 8) | pkt[11],
+          0xCAFEBABE);
+      expect((pkt[12] << 8) | pkt[13], 100);
+      expect((pkt[14] << 8) | pkt[15], 0x0003);
+    });
+
+    test('uses a second FCI when the gap exceeds 16', () {
+      final pkt = BasicSfu.buildNack(1, 0xDEAD0000, [100, 200]);
+      expect(pkt.length, 20);
+      expect((pkt[12] << 8) | pkt[13], 100);
+      expect((pkt[14] << 8) | pkt[15], 0);
+      expect((pkt[16] << 8) | pkt[17], 200);
+      expect((pkt[18] << 8) | pkt[19], 0);
+    });
+  });
+
+  group('RateMeter', () {
+    test('reports 0 bps with no samples', () {
+      final m = RateMeter(window: const Duration(seconds: 1));
+      expect(m.bitsPerSecond(DateTime(2026)), 0);
+    });
+
+    test('returns sum*8/window-seconds inside the window', () {
+      final m = RateMeter(window: const Duration(seconds: 2));
+      final t0 = DateTime(2026);
+      m.record(1000, t0);
+      m.record(1000, t0.add(const Duration(milliseconds: 500)));
+      // 2000 bytes inside a 2s window => 16000 / 2 = 8000 bps.
+      expect(m.bitsPerSecond(t0.add(const Duration(seconds: 1))), 8000);
+    });
+
+    test('drops samples older than window', () {
+      final m = RateMeter(window: const Duration(seconds: 2));
+      final t0 = DateTime(2026);
+      m.record(1000, t0);
+      // 5 seconds later, the only sample is well outside the window.
+      expect(m.bitsPerSecond(t0.add(const Duration(seconds: 5))), 0);
+    });
+  });
+
   group('SsrcAllocator', () {
     test('returns a stable rewritten SSRC per receiver+original pair', () {
       final a = SsrcAllocator();

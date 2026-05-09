@@ -37,13 +37,26 @@ Future<SfuServerHandle> runSfuServer({
   int port = 8080,
   int rtpBase = 50000,
   bool quiet = false,
+  Duration pliMinInterval = const Duration(milliseconds: 500),
+  Duration? inactivityTimeout = const Duration(seconds: 30),
+  String? authToken,
+  Duration wsPingInterval = const Duration(seconds: 20),
+  bool nackEnabled = false,
 }) async {
   final sfu = BasicSfu(
     address: InternetAddress(ip),
     basePort: rtpBase,
+    pliMinInterval: pliMinInterval,
+    inactivityTimeout: inactivityTimeout,
+    nackEnabled: nackEnabled,
   );
 
   final clients = <String, WebSocket>{};
+
+  /// Last `(offer, answer)` pair we exchanged with each participant.
+  /// Surfaced via the `/sdp` endpoint so the live browser interop story
+  /// has actual artifacts to inspect when negotiation fails.
+  final lastSdp = <String, Map<String, String>>{};
 
   Future<void> broadcast(Map<String, Object?> msg, {String? except}) async {
     final encoded = jsonEncode(msg);
@@ -84,12 +97,24 @@ Future<SfuServerHandle> runSfuServer({
         {'type': 'renegotiate', 'reason': 'new-producer:$producerId'},
         except: producerId,
       );
+    }
+    ..onParticipantTimedOut = (p, idle) {
+      log('[sfu] reaping idle participant ${p.id} '
+          '(no media for ${idle.inSeconds}s)');
+      // Remove the participant; closing the WS triggers peer-left
+      // broadcast via onParticipantLeft above.
+      unawaited(sfu.removeParticipant(p.id));
+      final ws = clients.remove(p.id);
+      unawaited(ws?.close());
     };
 
   final server = await HttpServer.bind(ip, port);
 
   // Fire-and-forget the request loop; tests close the server to stop it.
-  unawaited(_serve(server, sfu, clients, broadcast, log));
+  unawaited(
+    _serve(server, sfu, clients, broadcast, log, authToken, wsPingInterval,
+        lastSdp),
+  );
 
   return SfuServerHandle(server, sfu);
 }
@@ -100,17 +125,48 @@ Future<void> _serve(
   Map<String, WebSocket> clients,
   Future<void> Function(Map<String, Object?>, {String? except}) broadcast,
   void Function(String) log,
+  String? authToken,
+  Duration wsPingInterval,
+  Map<String, Map<String, String>> lastSdp,
 ) async {
   await for (final request in server) {
     if (request.uri.path == '/ws') {
+      // Token check happens *before* the WebSocket upgrade so we can
+      // reject with a real HTTP status. Browsers can pass the token
+      // either as a `?token=` query string or via the
+      // `Sec-WebSocket-Protocol` header (the only header WebSocket
+      // clients can set in the browser).
+      if (authToken != null) {
+        final supplied = request.uri.queryParameters['token'] ??
+            request.headers.value('sec-websocket-protocol');
+        if (supplied != authToken) {
+          log('[ws] auth rejected from ${request.connectionInfo?.remoteAddress.address}');
+          request.response.statusCode = HttpStatus.unauthorized;
+          await request.response.close();
+          continue;
+        }
+      }
       WebSocket ws;
       try {
-        ws = await WebSocketTransformer.upgrade(request);
+        ws = await WebSocketTransformer.upgrade(
+          request,
+          // Echo the requested subprotocol back when we used it for auth.
+          protocolSelector: authToken == null
+              ? null
+              : (protocols) => protocols.firstWhere(
+                    (p) => p == authToken,
+                    orElse: () => '',
+                  ),
+        );
       } catch (e) {
         log('[ws] upgrade failed: $e');
         continue;
       }
-      _handleClient(ws, sfu, clients, broadcast, log);
+      // Built-in WS keepalive: server pings every [wsPingInterval]; if no
+      // pong arrives within the same window the underlying socket is
+      // closed and our `onDone` handler reaps the participant.
+      ws.pingInterval = wsPingInterval;
+      _handleClient(ws, sfu, clients, broadcast, log, lastSdp);
       continue;
     }
 
@@ -140,6 +196,26 @@ Future<void> _serve(
       continue;
     }
 
+    if (request.method == 'GET' && request.uri.path == '/sdp') {
+      // Returns the last offer/answer exchanged with each participant
+      // plus the negotiated DTLS role. Useful when debugging browser
+      // interop — paste it into a bug report verbatim.
+      request.response.headers.contentType = ContentType.json;
+      final out = <String, Object?>{};
+      for (final entry in lastSdp.entries) {
+        final p = sfu.getParticipant(entry.key);
+        out[entry.key] = {
+          'offer': entry.value['offer'],
+          'answer': entry.value['answer'],
+          'connectionState': p?.pc.connectionState.name,
+          'iceConnectionState': p?.pc.iceConnectionState.name,
+        };
+      }
+      request.response.write(jsonEncode(out));
+      await request.response.close();
+      continue;
+    }
+
     request.response.statusCode = HttpStatus.notFound;
     await request.response.close();
   }
@@ -155,6 +231,17 @@ Map<String, Object?> buildStatsJson(BasicSfu sfu) => {
             'name': p.displayName,
             'port': p.transport.port,
             'connectionState': p.pc.connectionState.name,
+            'traffic': {
+              'rtpReceived': p.stats.rtpReceived,
+              'rtcpReceived': p.stats.rtcpReceived,
+              'bytesReceived': p.stats.bytesReceived,
+              'rtpSent': p.stats.rtpSent,
+              'rtcpSent': p.stats.rtcpSent,
+              'bytesSent': p.stats.bytesSent,
+              'lastActivityAt': p.stats.lastActivityAt?.toIso8601String(),
+              'recvBps': p.stats.recvRate.bitsPerSecond().round(),
+              'sendBps': p.stats.sendRate.bitsPerSecond().round(),
+            },
             'producers': [
               for (final s in sfu.producersOf(p.id))
                 {
@@ -177,6 +264,9 @@ Map<String, Object?> buildStatsJson(BasicSfu sfu) => {
         'ssrcRewrites': sfu.stats.ssrcRewrites,
         'rtxForwarded': sfu.stats.rtxForwarded,
         'pliSent': sfu.stats.pliSent,
+        'pliSuppressed': sfu.stats.pliSuppressed,
+        'nackSent': sfu.stats.nackSent,
+        'nackSeqRequested': sfu.stats.nackSeqRequested,
       },
     };
 
@@ -186,6 +276,7 @@ void _handleClient(
   Map<String, WebSocket> clients,
   Future<void> Function(Map<String, Object?>, {String? except}) broadcast,
   void Function(String) log,
+  Map<String, Map<String, String>> lastSdp,
 ) {
   String? participantId;
 
@@ -207,7 +298,11 @@ void _handleClient(
   ws.listen((raw) async {
     try {
       final msg = jsonDecode(raw as String) as Map<String, dynamic>;
-      switch (msg['type']) {
+      final mtype = msg['type'];
+      if (mtype != 'candidate') {
+        log('[ws<=${participantId ?? '?'}] $mtype');
+      }
+      switch (mtype) {
         case 'join':
           participantId = msg['id'] as String;
           final name = msg['name'] as String?;
@@ -228,6 +323,9 @@ void _handleClient(
           final answer = await p.pc.createAnswer();
           await p.pc.setLocalDescription(answer);
           final augmented = sfu.augmentAnswerSdp(participantId!, answer.sdp);
+          (lastSdp[participantId!] ??= {})
+            ..['offer'] = sdpText
+            ..['answer'] = augmented;
           ws.add(jsonEncode({'type': 'answer', 'sdp': augmented}));
           break;
 
@@ -255,6 +353,7 @@ void _handleClient(
           if (participantId != null) {
             await sfu.removeParticipant(participantId!);
             clients.remove(participantId);
+            lastSdp.remove(participantId);
           }
           await ws.close();
           break;
@@ -266,6 +365,7 @@ void _handleClient(
     if (participantId != null) {
       await sfu.removeParticipant(participantId!);
       clients.remove(participantId);
+      lastSdp.remove(participantId);
     }
   }, cancelOnError: true);
 }

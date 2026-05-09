@@ -33,6 +33,90 @@ import 'package:pure_dart_webrtc/signal/sdp_v2.dart'
     show PcmuCodec, Vp8Codec, parseSdp, writeSdp, SdpMediaMap, SdpSessionMap;
 import 'package:pure_dart_webrtc/webrtc/webrtc.dart';
 
+/// Sliding-window byte → bps meter. Stores `(timestamp, bytes)` samples
+/// inside the configured [window] and reports the current bitrate as
+/// `(sum-of-bytes-in-window * 8) / window-seconds`.
+///
+/// Cheap to update (one append + one prefix-trim per record) and
+/// deterministic in tests via the optional `now` parameter.
+class RateMeter {
+  /// Sliding window length. Larger = smoother, smaller = more reactive.
+  final Duration window;
+
+  // Parallel arrays to avoid allocating a sample object per packet.
+  final List<DateTime> _times = [];
+  final List<int> _bytes = [];
+  int _sum = 0;
+
+  RateMeter({this.window = const Duration(seconds: 2)});
+
+  /// Append a measurement of [bytesObserved] at [now] (defaults to
+  /// `DateTime.now()`), then drop samples older than [window].
+  void record(int bytesObserved, [DateTime? now]) {
+    final t = now ?? DateTime.now();
+    _times.add(t);
+    _bytes.add(bytesObserved);
+    _sum += bytesObserved;
+    _trim(t);
+  }
+
+  /// Bits-per-second over the trailing [window] ending at [now].
+  /// Returns 0 when no samples remain after trimming.
+  double bitsPerSecond([DateTime? now]) {
+    final t = now ?? DateTime.now();
+    _trim(t);
+    if (_times.isEmpty) return 0;
+    return (_sum * 8.0) / window.inMilliseconds * 1000.0;
+  }
+
+  void _trim(DateTime now) {
+    final cutoff = now.subtract(window);
+    var i = 0;
+    while (i < _times.length && _times[i].isBefore(cutoff)) {
+      _sum -= _bytes[i];
+      i++;
+    }
+    if (i > 0) {
+      _times.removeRange(0, i);
+      _bytes.removeRange(0, i);
+    }
+  }
+}
+
+/// Per-participant traffic counters. Updated by the SFU on every
+/// forwarded packet so callers (e.g. `/stats`) can attribute bandwidth
+/// to each connection.
+class SfuParticipantStats {
+  /// RTP packets received from this participant on the inbound side.
+  int rtpReceived = 0;
+
+  /// RTCP packets received from this participant on the inbound side.
+  int rtcpReceived = 0;
+
+  /// Bytes received from this participant (RTP + RTCP, post-decrypt).
+  int bytesReceived = 0;
+
+  /// RTP packets the SFU sent to this participant on the outbound side.
+  int rtpSent = 0;
+
+  /// RTCP packets the SFU sent to this participant on the outbound side.
+  int rtcpSent = 0;
+
+  /// Bytes the SFU sent to this participant (RTP + RTCP, pre-encrypt).
+  int bytesSent = 0;
+
+  /// Wall-clock timestamp of the last RTP or RTCP packet received from
+  /// this participant. `null` means we haven't seen any media yet.
+  /// Used by [BasicSfu]'s inactivity sweeper.
+  DateTime? lastActivityAt;
+
+  /// Rolling-window inbound bitrate (bps) over the last few seconds.
+  final RateMeter recvRate = RateMeter();
+
+  /// Rolling-window outbound bitrate (bps) over the last few seconds.
+  final RateMeter sendRate = RateMeter();
+}
+
 /// One connected participant.
 class SfuParticipant {
   /// Caller-provided id, unique within the [BasicSfu].
@@ -48,6 +132,9 @@ class SfuParticipant {
 
   /// Display name, set when the participant joins. Optional metadata.
   final String? displayName;
+
+  /// Per-participant traffic counters.
+  final SfuParticipantStats stats = SfuParticipantStats();
 
   SfuParticipant({
     required this.id,
@@ -111,6 +198,75 @@ class SfuForwardStats {
   /// PLI (Picture Loss Indication, PSFB FMT=1) packets the SFU
   /// generated and sent to a producer.
   int pliSent = 0;
+
+  /// PLI requests that were dropped by the rate-limiter because another
+  /// PLI for the same `(producer, primarySsrc)` was sent recently.
+  int pliSuppressed = 0;
+
+  /// Generic NACK (RTPFB FMT=1) packets the SFU generated and sent to a
+  /// producer when an inbound RTP sequence gap was detected.
+  int nackSent = 0;
+
+  /// Number of *individual missing sequence numbers* the SFU has asked
+  /// to be retransmitted (sum of PIDs + BLP bits across all sent NACKs).
+  int nackSeqRequested = 0;
+}
+
+/// Tracks the last RTP sequence number seen on a stream and reports any
+/// gaps so the caller can request retransmission.
+///
+/// RTP sequence numbers are 16-bit and wrap at 65535 → 0. We accept
+/// packets that look "ahead" of the last seen seq within a forward window
+/// of half the seq space; everything else (older / wildly out-of-order)
+/// is treated as a probe and ignored for gap purposes.
+class SeqGapDetector {
+  /// Largest gap (in packets) we will report at once. Bigger inbound jumps
+  /// are treated as a stream restart and the detector simply re-anchors
+  /// without emitting a NACK.
+  final int maxGap;
+
+  int? _lastSeq;
+
+  SeqGapDetector({this.maxGap = 16});
+
+  /// Last in-order sequence number observed (null until the first feed).
+  int? get lastSeq => _lastSeq;
+
+  /// Feed an inbound RTP sequence number for this stream. Returns the
+  /// list of *missing* sequence numbers between the previous and current,
+  /// or an empty list if there's no gap (or the packet is a re-order /
+  /// duplicate / restart).
+  List<int> feed(int seq) {
+    seq &= 0xFFFF;
+    final last = _lastSeq;
+    if (last == null) {
+      _lastSeq = seq;
+      return const [];
+    }
+    final diff = (seq - last) & 0xFFFF;
+    if (diff == 0) {
+      // Duplicate of the last packet — ignore.
+      return const [];
+    }
+    if (diff > 0x8000) {
+      // Re-ordering / late retransmission — accept silently, don't
+      // advance _lastSeq.
+      return const [];
+    }
+    if (diff > maxGap) {
+      // Huge jump (likely a restart or extremely large loss). Re-anchor
+      // without flooding the producer with NACKs.
+      _lastSeq = seq;
+      return const [];
+    }
+    _lastSeq = seq;
+    if (diff == 1) return const [];
+    final missing = <int>[];
+    for (var i = 1; i < diff; i++) {
+      missing.add((last + i) & 0xFFFF);
+    }
+    return missing;
+  }
 }
 
 /// Allocates a stable rewritten SSRC for each `(receiver, original-SSRC)`
@@ -224,6 +380,44 @@ class BasicSfu {
   /// and RTX SSRCs before the first packet arrives.
   final Map<String, List<SfuProducerStream>> _producers = {};
 
+  /// `(producerId, primarySsrc) -> last PLI emit time`. Used to debounce
+  /// keyframe requests so a burst of joins doesn't produce a PLI storm.
+  final Map<String, Map<int, DateTime>> _lastPliAt = {};
+
+  /// `(producerId, primarySsrc) -> SeqGapDetector`. Lazily created the
+  /// first time we see a primary RTP packet from a producer. Used by the
+  /// server-NACK path to spot dropped packets and ask the producer for a
+  /// retransmission via RFC 4585 generic NACK (RTPFB FMT=1).
+  final Map<String, Map<int, SeqGapDetector>> _gapDetectors = {};
+
+  /// Minimum spacing between PLIs for the same `(producer, primarySsrc)`.
+  /// Defaults to 500ms which is well below typical encoder keyframe
+  /// intervals but still bounds inbound PLI rate to <= 2 Hz per stream.
+  final Duration pliMinInterval;
+
+  /// If non-null, a participant that has been [RTCPeerConnectionState.connected]
+  /// but has not delivered any RTP or RTCP for this long is reported via
+  /// [onParticipantTimedOut]. The participant is *not* automatically
+  /// removed — the signaling layer decides what to do (close the
+  /// websocket, log, etc.).
+  final Duration? inactivityTimeout;
+
+  /// How often the inactivity sweeper wakes up. Ignored when
+  /// [inactivityTimeout] is null.
+  final Duration inactivityCheckInterval;
+
+  /// When true, the SFU watches inbound RTP sequence numbers per
+  /// `(producer, primarySsrc)` and fires generic NACKs back to the
+  /// producer for any missing packets. Defaults to false so the legacy
+  /// behaviour (forward only) is preserved.
+  final bool nackEnabled;
+
+  /// Largest in-window gap the gap-detector will request retransmission
+  /// for. Bigger jumps are treated as stream restarts.
+  final int nackMaxGap;
+
+  Timer? _inactivityTimer;
+
   final Map<String, SfuParticipant> _participants = {};
   final SfuForwardStats stats = SfuForwardStats();
 
@@ -243,6 +437,13 @@ class BasicSfu {
   void Function(String producerId, List<SfuProducerStream> newStreams)?
       onProducersChanged;
 
+  /// Fired when a participant has been connected but has not delivered
+  /// any RTP/RTCP for at least [inactivityTimeout]. Only ever fires when
+  /// [inactivityTimeout] is non-null. The SFU does not remove the
+  /// participant — the caller decides.
+  void Function(SfuParticipant participant, Duration idleFor)?
+      onParticipantTimedOut;
+
   int _nextPortOffset = 0;
 
   BasicSfu({
@@ -251,7 +452,43 @@ class BasicSfu {
     this.video = true,
     this.audio = true,
     this.ssrcRewriting = true,
-  });
+    this.pliMinInterval = const Duration(milliseconds: 500),
+    this.inactivityTimeout,
+    this.inactivityCheckInterval = const Duration(seconds: 5),
+    this.nackEnabled = false,
+    this.nackMaxGap = 16,
+  }) {
+    if (inactivityTimeout != null) {
+      _inactivityTimer =
+          Timer.periodic(inactivityCheckInterval, (_) => runInactivitySweep());
+    }
+  }
+
+  /// Notify-only sweep: fires [onParticipantTimedOut] for every connected
+  /// participant whose last inbound RTP/RTCP timestamp is older than
+  /// [inactivityTimeout]. Refires every [inactivityCheckInterval] until
+  /// the participant is removed by the caller.
+  ///
+  /// Set [requireConnected] to false to also sweep participants that
+  /// haven't yet completed DTLS (used by tests that don't run a real
+  /// handshake).
+  void runInactivitySweep({bool requireConnected = true}) {
+    final timeout = inactivityTimeout;
+    if (timeout == null) return;
+    final cb = onParticipantTimedOut;
+    if (cb == null) return;
+    final now = DateTime.now();
+    for (final p in _participants.values.toList()) {
+      if (requireConnected &&
+          p.pc.connectionState != RTCPeerConnectionState.connected) {
+        continue;
+      }
+      final last = p.stats.lastActivityAt;
+      if (last == null) continue;
+      final idle = now.difference(last);
+      if (idle >= timeout) cb(p, idle);
+    }
+  }
 
   /// Snapshot of all current participants.
   List<SfuParticipant> get participants =>
@@ -320,11 +557,15 @@ class BasicSfu {
     _ssrcOwner.removeWhere((_, owner) => owner == id);
     _rtxToPrimary.remove(id);
     _producers.remove(id);
+    _lastPliAt.remove(id);
+    _gapDetectors.remove(id);
     onParticipantLeft?.call(p);
   }
 
   /// Tear everything down.
   Future<void> close() async {
+    _inactivityTimer?.cancel();
+    _inactivityTimer = null;
     for (final p in _participants.values.toList()) {
       p.pc.close();
       onParticipantLeft?.call(p);
@@ -336,9 +577,13 @@ class BasicSfu {
   /// every video stream that [producerId] is producing. The producer's
   /// encoder responds by emitting a keyframe on its next frame.
   ///
+  /// Rate-limited to one PLI per `(producer, primarySsrc)` every
+  /// [pliMinInterval] (default 500ms). Set [force] to bypass the limit.
+  ///
   /// Returns the number of PLI packets actually sent (zero if the
-  /// producer has no DTLS-secure peer yet, or has no video producers).
-  Future<int> requestKeyframe(String producerId) async {
+  /// producer has no DTLS-secure peer yet, has no video producers, or
+  /// every stream was suppressed by the rate-limiter).
+  Future<int> requestKeyframe(String producerId, {bool force = false}) async {
     final p = _participants[producerId];
     if (p == null) return 0;
     final peer = p.pc.activePeer;
@@ -349,13 +594,23 @@ class BasicSfu {
     // Sender SSRC of the PLI is arbitrary (the spec lets it be 0); use
     // 1 to make wireshark happy.
     const senderSsrc = 1;
+    final perProducer = _lastPliAt.putIfAbsent(producerId, () => {});
+    final now = DateTime.now();
     for (final s in streams) {
       if (s.kind != 'video') continue;
+      if (!force) {
+        final last = perProducer[s.primarySsrc];
+        if (last != null && now.difference(last) < pliMinInterval) {
+          stats.pliSuppressed++;
+          continue;
+        }
+      }
       final pli = _buildPli(senderSsrc, s.primarySsrc);
       final ok = await p.transport.sendRtcp(peer, pli);
       if (ok) {
         sent++;
         stats.pliSent++;
+        perProducer[s.primarySsrc] = now;
       } else {
         stats.rtcpDropped++;
       }
@@ -373,6 +628,73 @@ class BasicSfu {
     bd.setUint16(2, 2, Endian.big); // length=2 → 12 bytes total
     bd.setUint32(4, senderSsrc, Endian.big);
     bd.setUint32(8, mediaSsrc, Endian.big);
+    return out;
+  }
+
+  /// Send a generic NACK (RFC 4585 RTPFB FMT=1) to [producerId] for the
+  /// given [missing] sequence numbers on the primary stream [mediaSsrc].
+  /// No-ops if the producer has no DTLS-secure peer.
+  Future<void> _sendNack(
+      String producerId, int mediaSsrc, List<int> missing) async {
+    if (missing.isEmpty) return;
+    final p = _participants[producerId];
+    if (p == null) return;
+    final peer = p.pc.activePeer;
+    if (peer == null || !peer.isSecure) return;
+    final pkt = buildNack(1, mediaSsrc, missing);
+    final ok = await p.transport.sendRtcp(peer, pkt);
+    if (ok) {
+      stats.nackSent++;
+      stats.nackSeqRequested += missing.length;
+      p.stats.rtcpSent++;
+      p.stats.bytesSent += pkt.length;
+      p.stats.sendRate.record(pkt.length);
+    } else {
+      stats.rtcpDropped++;
+    }
+  }
+
+  /// Build one RTCP generic-NACK (RFC 4585) sub-packet:
+  ///   V=2, P=0, FMT=1, PT=205, length=2+N, sender-SSRC, media-SSRC,
+  ///   then N x (PID:16, BLP:16) FCI words.
+  ///
+  /// Each FCI word covers a base sequence number `pid` and the next 16
+  /// sequence numbers via the bitmap `blp`. Adjacent missing seqs are
+  /// folded into one FCI when possible, so a 4-packet burst loss costs
+  /// 4 bytes on the wire instead of 16.
+  ///
+  /// Public for testing; production callers should use [_sendNack].
+  static Uint8List buildNack(int senderSsrc, int mediaSsrc, List<int> missing) {
+    // Group adjacent missing seqs into (PID, BLP) FCIs.
+    final fcis = <int>[]; // packed 32-bit words
+    final sorted = [...missing]..sort();
+    var i = 0;
+    while (i < sorted.length) {
+      final pid = sorted[i] & 0xFFFF;
+      var blp = 0;
+      var j = i + 1;
+      while (j < sorted.length) {
+        final delta = (sorted[j] - pid) & 0xFFFF;
+        if (delta < 1 || delta > 16) break;
+        blp |= 1 << (delta - 1);
+        j++;
+      }
+      fcis.add((pid << 16) | (blp & 0xFFFF));
+      i = j;
+    }
+
+    final length = 12 + fcis.length * 4;
+    final out = Uint8List(length);
+    final bd = ByteData.sublistView(out);
+    out[0] = 0x80 | 1; // V=2, P=0, FMT=1 (generic NACK)
+    out[1] = 205; // RTPFB
+    // length in 32-bit words, minus 1.
+    bd.setUint16(2, (length ~/ 4) - 1, Endian.big);
+    bd.setUint32(4, senderSsrc, Endian.big);
+    bd.setUint32(8, mediaSsrc, Endian.big);
+    for (var k = 0; k < fcis.length; k++) {
+      bd.setUint32(12 + k * 4, fcis[k], Endian.big);
+    }
     return out;
   }
 
@@ -541,6 +863,15 @@ class BasicSfu {
   // ---- Forwarding ----------------------------------------------------
 
   Future<void> _forwardRtp(String fromId, Uint8List rtp) async {
+    // Per-source receive counters (count even unmappable packets so the
+    // operator sees inbound activity).
+    final source = _participants[fromId];
+    if (source != null) {
+      source.stats.rtpReceived++;
+      source.stats.bytesReceived += rtp.length;
+      source.stats.lastActivityAt = DateTime.now();
+      source.stats.recvRate.record(rtp.length);
+    }
     // Learn the (originalSsrc -> participant) ownership the first time we
     // see this SSRC; that lets us reverse-route RTCP feedback later.
     int? originalSsrc;
@@ -553,6 +884,20 @@ class BasicSfu {
     final primarySsrc =
         originalSsrc == null ? null : _rtxToPrimary[fromId]?[originalSsrc];
     final isRtx = primarySsrc != null;
+
+    // Server-originated NACK: only run on primary RTP (skip RTX so the
+    // retransmission itself doesn't trip the detector). Sequence number
+    // is bytes [2..4] big-endian.
+    if (nackEnabled && !isRtx && originalSsrc != null && rtp.length >= 12) {
+      final seq = ByteData.sublistView(rtp).getUint16(2, Endian.big);
+      final detector = _gapDetectors
+          .putIfAbsent(fromId, () => {})
+          .putIfAbsent(originalSsrc, () => SeqGapDetector(maxGap: nackMaxGap));
+      final missing = detector.feed(seq);
+      if (missing.isNotEmpty) {
+        unawaited(_sendNack(fromId, originalSsrc, missing));
+      }
+    }
 
     for (final p in _participants.values) {
       if (p.id == fromId) continue;
@@ -573,6 +918,9 @@ class BasicSfu {
       if (ok) {
         stats.rtpForwarded++;
         if (isRtx) stats.rtxForwarded++;
+        p.stats.rtpSent++;
+        p.stats.bytesSent += outbound.length;
+        p.stats.sendRate.record(outbound.length);
       } else {
         stats.rtpDropped++;
       }
@@ -580,6 +928,13 @@ class BasicSfu {
   }
 
   Future<void> _forwardRtcp(String fromId, Uint8List rtcp) async {
+    final source = _participants[fromId];
+    if (source != null) {
+      source.stats.rtcpReceived++;
+      source.stats.bytesReceived += rtcp.length;
+      source.stats.lastActivityAt = DateTime.now();
+      source.stats.recvRate.record(rtcp.length);
+    }
     if (!ssrcRewriting) {
       // No rewriting at all — broadcast verbatim.
       for (final p in _participants.values) {
@@ -592,6 +947,9 @@ class BasicSfu {
         final ok = await p.transport.sendRtcp(peer, rtcp);
         if (ok) {
           stats.rtcpForwarded++;
+          p.stats.rtcpSent++;
+          p.stats.bytesSent += rtcp.length;
+          p.stats.sendRate.record(rtcp.length);
         } else {
           stats.rtcpDropped++;
         }
@@ -652,6 +1010,9 @@ class BasicSfu {
         final ok = await p.transport.sendRtcp(peer, outbound);
         if (ok) {
           stats.rtcpForwarded++;
+          p.stats.rtcpSent++;
+          p.stats.bytesSent += outbound.length;
+          p.stats.sendRate.record(outbound.length);
         } else {
           stats.rtcpDropped++;
         }
@@ -667,9 +1028,13 @@ class BasicSfu {
         stats.rtcpDropped++;
         continue;
       }
-      final ok = await p.transport.sendRtcp(peer, entry.value.toBytes());
+      final payload = entry.value.toBytes();
+      final ok = await p.transport.sendRtcp(peer, payload);
       if (ok) {
         stats.rtcpForwarded++;
+        p.stats.rtcpSent++;
+        p.stats.bytesSent += payload.length;
+        p.stats.sendRate.record(payload.length);
       } else {
         stats.rtcpDropped++;
       }

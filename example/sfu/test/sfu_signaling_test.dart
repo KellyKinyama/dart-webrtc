@@ -62,8 +62,7 @@ void main() {
     await handle.close();
   });
 
-  Uri httpUri(String path) =>
-      Uri.parse('http://127.0.0.1:${handle.port}$path');
+  Uri httpUri(String path) => Uri.parse('http://127.0.0.1:${handle.port}$path');
 
   Future<Map<String, dynamic>> getJson(String path) async {
     final client = HttpClient();
@@ -90,6 +89,7 @@ void main() {
     expect(fwd, containsPair('rtpForwarded', 0));
     expect(fwd, containsPair('pliSent', 0));
     expect(fwd, containsPair('rtxForwarded', 0));
+    expect(fwd, containsPair('pliSuppressed', 0));
   });
 
   test('GET / returns the demo HTML', () async {
@@ -118,11 +118,82 @@ void main() {
     }
   });
 
+  test('runSfuServer forwards pliMinInterval to the BasicSfu', () async {
+    await handle.close();
+    handle = await runSfuServer(
+      ip: '127.0.0.1',
+      port: 0,
+      rtpBase: 0,
+      quiet: true,
+      pliMinInterval: const Duration(seconds: 7),
+    );
+    expect(handle.sfu.pliMinInterval, const Duration(seconds: 7));
+  });
+
+  group('WS auth', () {
+    test(
+        'rejects WS upgrade with 401 when authToken is set and no token is sent',
+        () async {
+      await handle.close();
+      handle = await runSfuServer(
+        ip: '127.0.0.1',
+        port: 0,
+        rtpBase: 0,
+        quiet: true,
+        authToken: 's3cret',
+      );
+      expect(
+        WebSocket.connect('ws://127.0.0.1:${handle.port}/ws'),
+        throwsA(isA<WebSocketException>()),
+      );
+    });
+
+    test('accepts WS with the right ?token= query parameter', () async {
+      await handle.close();
+      handle = await runSfuServer(
+        ip: '127.0.0.1',
+        port: 0,
+        rtpBase: 0,
+        quiet: true,
+        authToken: 's3cret',
+      );
+      final ws = await WebSocket.connect(
+        'ws://127.0.0.1:${handle.port}/ws?token=s3cret',
+      );
+      addTearDown(() => ws.close());
+      ws.add(jsonEncode({'type': 'join', 'id': 'alice'}));
+      final r = WsReader(ws);
+      addTearDown(r.close);
+      final joined = await r.nextWhere((m) => m['type'] == 'joined');
+      expect(joined['id'], 'alice');
+    });
+
+    test('accepts WS with the auth token as Sec-WebSocket-Protocol', () async {
+      await handle.close();
+      handle = await runSfuServer(
+        ip: '127.0.0.1',
+        port: 0,
+        rtpBase: 0,
+        quiet: true,
+        authToken: 's3cret',
+      );
+      final ws = await WebSocket.connect(
+        'ws://127.0.0.1:${handle.port}/ws',
+        protocols: ['s3cret'],
+      );
+      addTearDown(() => ws.close());
+      ws.add(jsonEncode({'type': 'join', 'id': 'bob'}));
+      final r = WsReader(ws);
+      addTearDown(r.close);
+      final joined = await r.nextWhere((m) => m['type'] == 'joined');
+      expect(joined['id'], 'bob');
+    });
+  });
+
   test(
       'WebSocket join flow: server replies with joined and broadcasts '
       'peer-joined to other clients', () async {
-    final aliceWs =
-        await WebSocket.connect('ws://127.0.0.1:${handle.port}/ws');
+    final aliceWs = await WebSocket.connect('ws://127.0.0.1:${handle.port}/ws');
     addTearDown(() => aliceWs.close());
     final aliceR = WsReader(aliceWs);
     addTearDown(aliceR.close);
@@ -155,8 +226,7 @@ void main() {
 
   test('WebSocket close removes the participant and broadcasts peer-left',
       () async {
-    final aliceWs =
-        await WebSocket.connect('ws://127.0.0.1:${handle.port}/ws');
+    final aliceWs = await WebSocket.connect('ws://127.0.0.1:${handle.port}/ws');
     final aliceR = WsReader(aliceWs);
 
     final bobWs = await WebSocket.connect('ws://127.0.0.1:${handle.port}/ws');

@@ -127,6 +127,14 @@ void main() {
       expect(sfu.stats.rtpForwarded, greaterThanOrEqualTo(1));
       expect(sfu.stats.ssrcRewrites, greaterThanOrEqualTo(1));
 
+      // Per-participant traffic counters: alice should have at least
+      // one RTP packet attributed inbound, bob should have at least one
+      // RTP packet attributed outbound.
+      expect(alice.stats.rtpReceived, greaterThanOrEqualTo(1));
+      expect(alice.stats.bytesReceived, greaterThan(0));
+      expect(bob.stats.rtpSent, greaterThanOrEqualTo(1));
+      expect(bob.stats.bytesSent, greaterThan(0));
+
       await aliceSrtp.close();
       await bobSrtp.close();
     },
@@ -234,6 +242,21 @@ void main() {
       final mediaSsrc = ByteData.sublistView(pli).getUint32(8, Endian.big);
       expect(mediaSsrc, aliceSsrc);
       expect(sfu.stats.pliSent, greaterThanOrEqualTo(1));
+
+      // Rate limiter: a second PLI request right now must be suppressed
+      // (default debounce is 500ms; we're well inside that window).
+      final pliBefore = sfu.stats.pliSent;
+      final suppressedBefore = sfu.stats.pliSuppressed;
+      final additional = await sfu.requestKeyframe('alice');
+      expect(additional, 0);
+      expect(sfu.stats.pliSent, pliBefore,
+          reason: 'second PLI within debounce must not be sent');
+      expect(sfu.stats.pliSuppressed, suppressedBefore + 1);
+
+      // Forcing past the limit goes through.
+      final forced = await sfu.requestKeyframe('alice', force: true);
+      expect(forced, 1);
+      expect(sfu.stats.pliSent, pliBefore + 1);
 
       await aliceSrtp.close();
     },
