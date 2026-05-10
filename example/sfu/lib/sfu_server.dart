@@ -345,10 +345,20 @@ void _handleClient(
         case 'join':
           participantId = msg['id'] as String;
           final name = msg['name'] as String?;
+          // Snapshot the existing peers BEFORE adding the new one so we
+          // can tell the newcomer how many recvonly transceivers to add.
+          final existingPeers = [
+            for (final p in sfu.participants)
+              {'id': p.id, 'name': p.displayName},
+          ];
           clients[participantId!] = ws;
           final p = await sfu.addParticipant(participantId!, displayName: name);
           wireIceTrickle(p);
-          ws.add(jsonEncode({'type': 'joined', 'id': participantId}));
+          ws.add(jsonEncode({
+            'type': 'joined',
+            'id': participantId,
+            'peers': existingPeers,
+          }));
           break;
 
         case 'offer':
@@ -445,6 +455,19 @@ document.getElementById('go').onclick = async () => {
   const pc = new RTCPeerConnection();
   for (const t of local.getTracks()) pc.addTrack(t, local);
 
+  // Track which remote peers we've already provisioned a recvonly
+  // transceiver pair for, so each remote producer ends up on its own
+  // m= section (single-section multiplexing only fires ontrack once).
+  const remotePeers = new Set();
+  function ensureRecvSlots(peerId) {
+    if (!peerId || peerId === document.getElementById('id').value) return false;
+    if (remotePeers.has(peerId)) return false;
+    remotePeers.add(peerId);
+    pc.addTransceiver('video', {direction:'recvonly'});
+    pc.addTransceiver('audio', {direction:'recvonly'});
+    return true;
+  }
+
   pc.onicecandidate = (e) => {
     if (!e.candidate) {
       ws.send(JSON.stringify({type:'candidate', candidate:null}));
@@ -473,6 +496,9 @@ document.getElementById('go').onclick = async () => {
   ws.onmessage = async (ev) => {
     const msg = JSON.parse(ev.data);
     if (msg.type === 'joined') {
+      // Pre-create one recvonly transceiver pair per peer that was
+      // already in the room when we joined.
+      for (const peer of (msg.peers || [])) ensureRecvSlots(peer.id);
       const offer = await pc.createOffer();
       await pc.setLocalDescription(offer);
       ws.send(JSON.stringify({type:'offer', sdp: offer.sdp}));
@@ -494,8 +520,14 @@ document.getElementById('go').onclick = async () => {
         await pc.setLocalDescription(offer);
         ws.send(JSON.stringify({type:'offer', sdp: offer.sdp}));
       } catch (e) { log('renegotiate err:', e); }
-    } else if (msg.type === 'peer-joined' || msg.type === 'peer-left') {
-      log(msg.type, msg.id);
+    } else if (msg.type === 'peer-joined') {
+      log('peer-joined', msg.id);
+      // Make sure we have a recvonly slot for the new peer; the
+      // server will follow up with a `renegotiate` message that
+      // triggers the actual offer.
+      ensureRecvSlots(msg.id);
+    } else if (msg.type === 'peer-left') {
+      log('peer-left', msg.id);
     }
   };
 

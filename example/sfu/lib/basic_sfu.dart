@@ -806,6 +806,21 @@ class BasicSfu {
     final media = session.mediaList;
     if (media.isEmpty) return answerSdp;
 
+    // Collect other participants' producer streams in deterministic
+    // (sorted) order so the same producer always lands on the same m=
+    // section across renegotiations.
+    final otherIds = _producers.keys.where((id) => id != receiverId).toList()
+      ..sort();
+    final pendingByKind = <String, List<SfuProducerStream>>{
+      'video': [],
+      'audio': [],
+    };
+    for (final id in otherIds) {
+      for (final s in _producers[id]!) {
+        pendingByKind[s.kind]?.add(s);
+      }
+    }
+
     var changed = false;
     for (final m in media) {
       final kind = (m['type'] as String?) ?? '';
@@ -813,52 +828,57 @@ class BasicSfu {
       // PT=0 means we rejected this section; skip.
       if (m['port'] == 0) continue;
 
+      // Only m= sections that the *server* will send on can carry
+      // forwarded SSRCs. In an answer that's `sendrecv` (legacy 2-peer
+      // mode where the receiver's own media slot doubles as the
+      // forwarding slot) and `sendonly` (mirrored from the browser's
+      // `recvonly` recv-only transceivers added per remote peer).
+      final dir = (m['direction'] as String?) ?? 'sendrecv';
+      if (dir != 'sendrecv' && dir != 'sendonly') continue;
+
+      final pending = pendingByKind[kind]!;
+      if (pending.isEmpty) continue;
+      final stream = pending.removeAt(0);
+
       final ssrcs = (m['ssrcs'] as List?) ?? <Map<String, dynamic>>[];
       final groups = (m['ssrcGroups'] as List?) ?? <Map<String, dynamic>>[];
 
-      for (final entry in _producers.entries) {
-        if (entry.key == receiverId) continue;
-        for (final stream in entry.value) {
-          if (stream.kind != kind) continue;
-          final rwPrimary =
-              _ssrcAllocator.rewrite(receiverId, stream.primarySsrc);
-          int? rwRtx;
-          if (stream.rtxSsrc != null) {
-            rwRtx = _ssrcAllocator.rewriteRtx(
-              receiverId,
-              stream.primarySsrc,
-              stream.rtxSsrc!,
-            );
-          }
-          ssrcs.add({
-            'id': rwPrimary,
-            'attribute': 'cname',
-            'value': stream.cname,
-          });
-          ssrcs.add({
-            'id': rwPrimary,
-            'attribute': 'msid',
-            'value': '${stream.msidStream} ${stream.msidTrack}',
-          });
-          if (rwRtx != null) {
-            ssrcs.add({
-              'id': rwRtx,
-              'attribute': 'cname',
-              'value': stream.cname,
-            });
-            ssrcs.add({
-              'id': rwRtx,
-              'attribute': 'msid',
-              'value': '${stream.msidStream} ${stream.msidTrack}',
-            });
-            groups.add({
-              'semantics': 'FID',
-              'ssrcs': '$rwPrimary $rwRtx',
-            });
-          }
-          changed = true;
-        }
+      final rwPrimary = _ssrcAllocator.rewrite(receiverId, stream.primarySsrc);
+      int? rwRtx;
+      if (stream.rtxSsrc != null) {
+        rwRtx = _ssrcAllocator.rewriteRtx(
+          receiverId,
+          stream.primarySsrc,
+          stream.rtxSsrc!,
+        );
       }
+      ssrcs.add({
+        'id': rwPrimary,
+        'attribute': 'cname',
+        'value': stream.cname,
+      });
+      ssrcs.add({
+        'id': rwPrimary,
+        'attribute': 'msid',
+        'value': '${stream.msidStream} ${stream.msidTrack}',
+      });
+      if (rwRtx != null) {
+        ssrcs.add({
+          'id': rwRtx,
+          'attribute': 'cname',
+          'value': stream.cname,
+        });
+        ssrcs.add({
+          'id': rwRtx,
+          'attribute': 'msid',
+          'value': '${stream.msidStream} ${stream.msidTrack}',
+        });
+        groups.add({
+          'semantics': 'FID',
+          'ssrcs': '$rwPrimary $rwRtx',
+        });
+      }
+      changed = true;
 
       if (ssrcs.isNotEmpty) m['ssrcs'] = ssrcs;
       if (groups.isNotEmpty) m['ssrcGroups'] = groups;
