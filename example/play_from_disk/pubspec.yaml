@@ -1,0 +1,15 @@
+name: pure_dart_webrtc_play_from_disk_example
+description: Pump a VP8 IVF file into a browser via WebRTC (pion play-from-disk style).
+publish_to: none
+version: 0.1.0
+
+environment:
+  sdk: ^3.6.2
+
+dependencies:
+  pure_dart_webrtc:
+    path: ../../
+  args: ^2.7.0
+
+dev_dependencies:
+  lints: ^5.0.0

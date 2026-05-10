@@ -11,6 +11,7 @@ import 'dart:io';
 import 'package:pure_dart_webrtc/webrtc/webrtc.dart';
 
 import 'basic_sfu.dart';
+import 'snapshot_recorder.dart';
 
 /// Result of [runSfuServer] — keeps the bound HTTP server and the SFU
 /// alive so callers can shut both down cleanly.
@@ -71,6 +72,10 @@ Future<SfuServerHandle> runSfuServer({
 
   final clients = <String, WebSocket>{};
 
+  // Decoded video snapshots (JPEG) per producer, served via
+  // GET /snapshot/<participantId>.jpg.
+  final snapshots = SnapshotRecorder();
+
   /// Last `(offer, answer)` pair we exchanged with each participant.
   /// Surfaced via the `/sdp` endpoint so the live browser interop story
   /// has actual artifacts to inspect when negotiation fails.
@@ -86,11 +91,50 @@ Future<SfuServerHandle> runSfuServer({
     }
   }
 
+  // -- Renegotiation coalescer --------------------------------------
+  // A burst of joins (e.g. 10 peers entering a room within a few hundred
+  // ms) would otherwise produce O(N^2) renegotiate offers. We collect
+  // the reasons per receiver for `renegotiateDebounce`, then send one
+  // renegotiate message naming all reasons.
+  const renegotiateDebounce = Duration(milliseconds: 200);
+  final pendingRenegotiate = <String, Set<String>>{};
+  final pendingRenegotiateTimers = <String, Timer>{};
+
+  void scheduleRenegotiate(String receiverId, String reason) {
+    final ws = clients[receiverId];
+    if (ws == null) return;
+    pendingRenegotiate.putIfAbsent(receiverId, () => <String>{}).add(reason);
+    pendingRenegotiateTimers[receiverId]?.cancel();
+    pendingRenegotiateTimers[receiverId] = Timer(renegotiateDebounce, () {
+      pendingRenegotiateTimers.remove(receiverId);
+      final reasons = pendingRenegotiate.remove(receiverId);
+      if (reasons == null || reasons.isEmpty) return;
+      final ws = clients[receiverId];
+      if (ws == null) return;
+      try {
+        ws.add(jsonEncode({
+          'type': 'renegotiate',
+          'reason': reasons.join(','),
+        }));
+      } catch (_) {}
+    });
+  }
+
+  void scheduleRenegotiateAll(String reason, {String? except}) {
+    for (final id in clients.keys) {
+      if (id == except) continue;
+      scheduleRenegotiate(id, reason);
+    }
+  }
+
   void log(String msg) {
     if (!quiet) print(msg);
   }
 
   sfu
+    ..onVideoRtp = (producerId, ssrc, rtp) {
+      snapshots.acceptRtp(producerId, ssrc, rtp);
+    }
     ..onParticipantJoined = (p) {
       log('[sfu] joined ${p.id} (${p.displayName ?? '-'}) on '
           '${p.transport.address.address}:${p.transport.port}');
@@ -105,16 +149,16 @@ Future<SfuServerHandle> runSfuServer({
     }
     ..onParticipantLeft = (p) {
       log('[sfu] left ${p.id}');
+      snapshots.forget(p.id);
       broadcast({'type': 'peer-left', 'id': p.id});
-      broadcast({'type': 'renegotiate', 'reason': 'peer-left:${p.id}'});
+      pendingRenegotiate.remove(p.id);
+      pendingRenegotiateTimers.remove(p.id)?.cancel();
+      scheduleRenegotiateAll('peer-left:${p.id}');
     }
     ..onProducersChanged = (producerId, newStreams) {
       log('[sfu] producer $producerId added ${newStreams.length} stream(s); '
           'asking other peers to renegotiate');
-      broadcast(
-        {'type': 'renegotiate', 'reason': 'new-producer:$producerId'},
-        except: producerId,
-      );
+      scheduleRenegotiateAll('new-producer:$producerId', except: producerId);
     }
     ..onParticipantTimedOut = (p, idle) {
       log('[sfu] reaping idle participant ${p.id} '
@@ -131,7 +175,7 @@ Future<SfuServerHandle> runSfuServer({
   // Fire-and-forget the request loop; tests close the server to stop it.
   unawaited(
     _serve(server, sfu, clients, broadcast, log, authToken, wsPingInterval,
-        lastSdp),
+        lastSdp, snapshots),
   );
 
   return SfuServerHandle(server, sfu);
@@ -146,6 +190,7 @@ Future<void> _serve(
   String? authToken,
   Duration wsPingInterval,
   Map<String, Map<String, String>> lastSdp,
+  SnapshotRecorder snapshots,
 ) async {
   await for (final request in server) {
     if (request.uri.path == '/ws') {
@@ -230,6 +275,24 @@ Future<void> _serve(
         };
       }
       request.response.write(jsonEncode(out));
+      await request.response.close();
+      continue;
+    }
+
+    if (request.method == 'GET' && request.uri.path.startsWith('/snapshot/')) {
+      // /snapshot/<participantId>.jpg — latest decoded keyframe as JPEG.
+      var id = request.uri.path.substring('/snapshot/'.length);
+      if (id.endsWith('.jpg')) id = id.substring(0, id.length - 4);
+      final jpg = snapshots.snapshotJpeg(id);
+      if (jpg == null) {
+        request.response.statusCode = HttpStatus.notFound;
+        request.response.write('no keyframe yet for "$id"\n');
+        await request.response.close();
+        continue;
+      }
+      request.response.headers.contentType = ContentType('image', 'jpeg');
+      request.response.headers.add('Cache-Control', 'no-store');
+      request.response.add(jpg);
       await request.response.close();
       continue;
     }

@@ -422,6 +422,18 @@ class BasicSfu {
   /// for. Bigger jumps are treated as stream restarts.
   final int nackMaxGap;
 
+  /// Maximum number of audio producers whose RTP is forwarded to each
+  /// receiver. Selection uses the RFC 6464 `audio-level` RTP header
+  /// extension: the K loudest active speakers are forwarded, the rest
+  /// are silently dropped on egress. Set to a value >= number of
+  /// participants to disable selective forwarding.
+  final int maxAudioForwarded;
+
+  /// Audio packets older than this are treated as silence when ranking
+  /// active speakers. Prevents a producer that briefly spoke from
+  /// monopolising a top-K slot forever.
+  final Duration audioActivityWindow;
+
   Timer? _inactivityTimer;
 
   final Map<String, SfuParticipant> _participants = {};
@@ -450,6 +462,14 @@ class BasicSfu {
   void Function(SfuParticipant participant, Duration idleFor)?
       onParticipantTimedOut;
 
+  /// Fired for every inbound *primary* (non-RTX) video RTP packet, after
+  /// the SFU has identified its producer. Hook this to drive auxiliary
+  /// pipelines like the snapshot recorder. The packet bytes are the
+  /// already-decrypted RTP wire format (header + payload). Throwing or
+  /// blocking inside the hook directly stalls forwarding — keep it
+  /// fast and `unawaited(...)` any async work.
+  void Function(String producerId, int primarySsrc, Uint8List rtp)? onVideoRtp;
+
   int _nextPortOffset = 0;
 
   BasicSfu({
@@ -464,12 +484,24 @@ class BasicSfu {
     this.inactivityCheckInterval = const Duration(seconds: 5),
     this.nackEnabled = false,
     this.nackMaxGap = 16,
+    this.maxAudioForwarded = 3,
+    this.audioActivityWindow = const Duration(seconds: 1),
   }) {
     if (inactivityTimeout != null) {
       _inactivityTimer =
           Timer.periodic(inactivityCheckInterval, (_) => runInactivitySweep());
     }
   }
+
+  /// `participantId -> RFC 5285 extmap id of the audio-level extension`,
+  /// learned from the producer's offer SDP. Absent if the producer did
+  /// not negotiate the extension (in which case its audio is treated as
+  /// always-active level 0).
+  final Map<String, int> _audioLevelExtId = {};
+
+  /// `primarySsrc -> latest (level, timestampMicros)` audio-level sample.
+  /// Lower level = louder; 127 is silence per RFC 6464.
+  final Map<int, (int level, int atMicros)> _audioLevelByPrimarySsrc = {};
 
   /// Notify-only sweep: fires [onParticipantTimedOut] for every connected
   /// participant whose last inbound RTP/RTCP timestamp is older than
@@ -726,6 +758,19 @@ class BasicSfu {
       perPart.addAll(m.rtxToPrimarySsrc);
       final kind = (m['type'] as String?) ?? '';
       if (kind != 'video' && kind != 'audio') continue;
+      // Learn the RFC 6464 audio-level extmap id (per producer; per spec
+      // BUNDLE forces the same id across sections, so first one wins).
+      if (kind == 'audio' && !_audioLevelExtId.containsKey(participantId)) {
+        for (final ext in (m['ext'] as List?)?.cast<Map>() ?? const []) {
+          final uri = ext['uri']?.toString();
+          if (uri == 'urn:ietf:params:rtp-hdrext:ssrc-audio-level') {
+            final v = ext['value'];
+            final id = v is int ? v : int.tryParse(v?.toString() ?? '');
+            if (id != null) _audioLevelExtId[participantId] = id;
+            break;
+          }
+        }
+      }
       final mid = m['mid']?.toString() ?? '';
       final rtxToPrimary = m.rtxToPrimarySsrc;
       final primaryToRtx = <int, int>{
@@ -913,6 +958,46 @@ class BasicSfu {
         originalSsrc == null ? null : _rtxToPrimary[fromId]?[originalSsrc];
     final isRtx = primarySsrc != null;
 
+    // Determine the kind (audio/video) of this packet from the producer's
+    // declared streams. Used both for the active-speaker logic and as a
+    // cheap filter so we never apply audio policy to video packets.
+    final effectiveSsrc = isRtx ? primarySsrc : originalSsrc;
+    String? kind;
+    if (effectiveSsrc != null) {
+      for (final s in _producers[fromId] ?? const <SfuProducerStream>[]) {
+        if (s.primarySsrc == effectiveSsrc) {
+          kind = s.kind;
+          break;
+        }
+      }
+    }
+
+    // RFC 6464 audio-level extension parsing. Drop a sample for the
+    // primary SSRC so the active-speaker ranker can pick the loudest K.
+    if (kind == 'audio' && !isRtx && originalSsrc != null) {
+      final extId = _audioLevelExtId[fromId];
+      if (extId != null) {
+        final level = _readAudioLevelExtension(rtp, extId);
+        if (level != null) {
+          _audioLevelByPrimarySsrc[originalSsrc] =
+              (level, DateTime.now().microsecondsSinceEpoch);
+        }
+      } else {
+        // Producer didn't negotiate the extension — treat as always-on
+        // so its audio is still eligible for forwarding.
+        _audioLevelByPrimarySsrc[originalSsrc] =
+            (0, DateTime.now().microsecondsSinceEpoch);
+      }
+    }
+
+    // If audio is being selectively forwarded and this producer isn't
+    // among the current top-K active speakers, drop on egress (still
+    // counted as received for stats).
+    final shouldDropAudio = kind == 'audio' &&
+        !isRtx &&
+        originalSsrc != null &&
+        !_isTopKAudio(originalSsrc);
+
     // Server-originated NACK: only run on primary RTP (skip RTX so the
     // retransmission itself doesn't trip the detector). Sequence number
     // is bytes [2..4] big-endian.
@@ -925,6 +1010,19 @@ class BasicSfu {
       if (missing.isNotEmpty) {
         unawaited(_sendNack(fromId, originalSsrc, missing));
       }
+    }
+
+    if (shouldDropAudio) {
+      stats.rtpDropped++;
+      return;
+    }
+
+    // Notify any video observer (e.g. the snapshot recorder) before we
+    // start the SSRC-rewriting fan-out so they see the original packet.
+    if (kind == 'video' && !isRtx && originalSsrc != null) {
+      try {
+        onVideoRtp?.call(fromId, originalSsrc, rtp);
+      } catch (_) {}
     }
 
     for (final p in _participants.values) {
@@ -1081,6 +1179,78 @@ class BasicSfu {
       pos += p.length;
     }
     return out;
+  }
+
+  // ---- Active speaker selection -------------------------------------
+
+  /// True if [primarySsrc] is among the [maxAudioForwarded] currently
+  /// loudest audio producers (lowest RFC 6464 level value within the
+  /// [audioActivityWindow]). When fewer producers are active than the
+  /// limit, every producer is considered active.
+  bool _isTopKAudio(int primarySsrc) {
+    if (maxAudioForwarded <= 0) return true;
+    final cutoffMicros = DateTime.now().microsecondsSinceEpoch -
+        audioActivityWindow.inMicroseconds;
+    final active = <List<int>>[];
+    _audioLevelByPrimarySsrc.forEach((ssrc, sample) {
+      final level = sample.$1;
+      final atMicros = sample.$2;
+      if (atMicros < cutoffMicros) return;
+      active.add([ssrc, level]);
+    });
+    if (active.length <= maxAudioForwarded) return true;
+    // Lower level value = louder.
+    active.sort((a, b) => a[1].compareTo(b[1]));
+    for (var i = 0; i < maxAudioForwarded; i++) {
+      if (active[i][0] == primarySsrc) return true;
+    }
+    return false;
+  }
+
+  /// Parse RFC 5285 RTP header extensions and return the RFC 6464
+  /// audio-level value (0..127) for [extId], or null if the packet has no
+  /// extension block, the extension id isn't present, or the format is
+  /// malformed. Supports both the one-byte (profile=0xBEDE) and two-byte
+  /// (profile top 12 bits = 0x100) header forms.
+  static int? _readAudioLevelExtension(Uint8List rtp, int extId) {
+    if (rtp.length < 12) return null;
+    final hasExt = (rtp[0] & 0x10) != 0;
+    if (!hasExt) return null;
+    final cc = rtp[0] & 0x0F;
+    var off = 12 + cc * 4;
+    if (off + 4 > rtp.length) return null;
+    final bd = ByteData.sublistView(rtp);
+    final profile = bd.getUint16(off, Endian.big);
+    final lengthWords = bd.getUint16(off + 2, Endian.big);
+    off += 4;
+    final extEnd = off + lengthWords * 4;
+    if (extEnd > rtp.length) return null;
+    if (profile == 0xBEDE) {
+      while (off < extEnd) {
+        final b = rtp[off++];
+        if (b == 0) continue; // padding
+        final id = (b >> 4) & 0x0F;
+        final len = (b & 0x0F) + 1;
+        if (id == 15) break; // reserved terminator
+        if (off + len > extEnd) return null;
+        if (id == extId && len >= 1) {
+          return rtp[off] & 0x7F;
+        }
+        off += len;
+      }
+    } else if ((profile & 0xFFF0) == 0x1000) {
+      while (off + 1 < extEnd) {
+        final id = rtp[off++];
+        final len = rtp[off++];
+        if (id == 0) continue; // padding
+        if (off + len > extEnd) return null;
+        if (id == extId && len >= 1) {
+          return rtp[off] & 0x7F;
+        }
+        off += len;
+      }
+    }
+    return null;
   }
 
   // ---- SSRC rewriting ------------------------------------------------

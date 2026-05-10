@@ -1,0 +1,15 @@
+name: pure_dart_webrtc_rtp_to_webrtc_example
+description: Bridge plain RTP (e.g. from ffmpeg / GStreamer / another SFU) into a WebRTC browser session. rtpengine-style.
+publish_to: none
+version: 0.1.0
+
+environment:
+  sdk: ^3.6.2
+
+dependencies:
+  pure_dart_webrtc:
+    path: ../../
+  args: ^2.7.0
+
+dev_dependencies:
+  lints: ^5.0.0
