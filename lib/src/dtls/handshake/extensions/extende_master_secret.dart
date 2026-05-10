@@ -47,6 +47,6 @@ void main() async {
   var unmarshalledExtension =
       await ExtensionUseExtendedMasterSecret.unmarshal(writer);
 
-  print(
-      'Unmarshalled Extension Use Extended Master Secret: ${unmarshalledExtension.supported}');
+  // print(
+  //     'Unmarshalled Extension Use Extended Master Secret: ${unmarshalledExtension.supported}');
 }

@@ -156,7 +156,7 @@ class DtlsClient {
     // Wait for HelloVerifyRequest, parse it and send ClientHello with cookie.
     final hvrBody = await _expectHandshake(_hsTypeHelloVerifyRequest);
     _cookie = _parseHelloVerifyRequest(hvrBody);
-    print('[client] got HelloVerifyRequest, cookie=${_hex(_cookie)}');
+    // print('[client] got HelloVerifyRequest, cookie=${_hex(_cookie)}');
 
     // Reset handshake sequence: per the server's HandshakeManager the cookie
     // round-trip uses messageSequence=1 on the second ClientHello. We've
@@ -173,7 +173,7 @@ class DtlsClient {
     _parseServerHello(shBody);
 
     final certBody = await _expectHandshake(_hsTypeCertificate);
-    print('[client] got Certificate (${certBody.length} bytes)');
+    // print('[client] got Certificate (${certBody.length} bytes)');
 
     final skeBody = await _expectHandshake(_hsTypeServerKeyExchange);
     _parseServerKeyExchange(skeBody);

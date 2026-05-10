@@ -60,7 +60,7 @@ class DecodeDtlsMessageResult {
 
     if (header.epoch < context.clientEpoch) {
       // Ignore incoming message
-      print("Header epock: ${header.epoch}");
+      // print("Header epock: ${header.epoch}");
       offset += header.contentLen;
       return DecodeDtlsMessageResult(null, null, null, offset);
     }
@@ -73,7 +73,7 @@ class DecodeDtlsMessageResult {
     // Uint8List? encryptedBytes;
 
     if (header.epoch > 0) {
-      print("Data arrived encrypted!!!");
+      // print("Data arrived encrypted!!!");
       // throw UnimplementedError("Encryption is not yet implemented");
 
       // Data arrives encrypted, we should decrypt it before.
@@ -113,7 +113,7 @@ class DecodeDtlsMessageResult {
     context.clientEpoch = header.epoch;
 
     // if (header.contentType != ContentType.content_handshake) {
-    print("Content type: ${header.contentType}");
+    // print("Content type: ${header.contentType}");
     // }
     switch (header.contentType) {
       case ContentType.content_handshake:
@@ -126,11 +126,67 @@ class DecodeDtlsMessageResult {
 
           offset = decodedOffset;
 
-          if (handshakeHeader.length.value !=
-              handshakeHeader.fragmentLength.value) {
-            // Ignore fragmented packets
-            print('Ignore fragmented packets: ${header.contentType}');
-            return DecodeDtlsMessageResult(null, null, null, offset);
+          final totalLen = handshakeHeader.length.value;
+          final fragLen = handshakeHeader.fragmentLength.value;
+          final fragOff = handshakeHeader.fragmentOffset.value;
+
+          if (fragLen != totalLen || fragOff != 0) {
+            // Fragmented handshake message (RFC 6347 §4.2.3). Buffer this
+            // fragment under its `message_sequence` and wait until the
+            // entire body has been delivered before parsing.
+            final seq = handshakeHeader.messageSequence;
+            final reasm = context.handshakeFragments.putIfAbsent(
+                seq,
+                () => HandshakeReassembly(
+                    handshakeHeader.handshakeType.value, totalLen));
+
+            // Defensive: if a peer ever changed total length / type for the
+            // same sequence, restart reassembly from scratch.
+            if (reasm.totalLength != totalLen ||
+                reasm.handshakeTypeValue !=
+                    handshakeHeader.handshakeType.value) {
+              context.handshakeFragments[seq] = HandshakeReassembly(
+                  handshakeHeader.handshakeType.value, totalLen);
+            }
+            final entry = context.handshakeFragments[seq]!;
+
+            final fragmentBytes =
+                Uint8List.sublistView(buf, offset, offset + fragLen);
+            final complete = entry.addFragment(fragOff, fragmentBytes);
+            offset += fragLen;
+
+            if (!complete) {
+              // Need more fragments; nothing to deliver yet.
+              return DecodeDtlsMessageResult(null, null, null, offset);
+            }
+
+            // All bytes received: build a synthetic non-fragmented header
+            // that the rest of the stack expects, then dispatch.
+            context.handshakeFragments.remove(seq);
+
+            final reassembledHeader = HandshakeHeader(
+              handshakeType: handshakeHeader.handshakeType,
+              length: handshakeHeader.length,
+              messageSequence: handshakeHeader.messageSequence,
+              fragmentOffset: Uint24.fromUInt32(0),
+              fragmentLength: handshakeHeader.length,
+            );
+
+            final (result, _, _) = decodeHandshake(
+                header, reassembledHeader, entry.body, 0, entry.body.length);
+
+            // Store the canonical (defragmented) handshake message in the
+            // transcript exactly as if it had arrived in a single record.
+            final headerBytes = reassembledHeader.marshal();
+            final transcript = Uint8List(headerBytes.length + entry.body.length)
+              ..setRange(0, headerBytes.length, headerBytes)
+              ..setRange(headerBytes.length,
+                  headerBytes.length + entry.body.length, entry.body);
+            context.HandshakeMessagesReceived[handshakeHeader.handshakeType] =
+                transcript;
+
+            return DecodeDtlsMessageResult(
+                header, reassembledHeader, result, offset);
           }
 
           final (result, decodedHandshakeOffset, _) =
@@ -158,7 +214,7 @@ class DecodeDtlsMessageResult {
           final (result, decoded, er) = decodeHandshake(decryptedHeader,
               handshakeHeader, decryptedBytes, offset, decryptedBytes.length);
 
-          print("Decrypted handshake type: ${handshakeHeader.handshakeType}");
+          // print("Decrypted handshake type: ${handshakeHeader.handshakeType}");
 
           context.HandshakeMessagesReceived[handshakeHeader.handshakeType] =
               // decryptedBytes;
@@ -170,7 +226,7 @@ class DecodeDtlsMessageResult {
 
       case ContentType.content_change_cipher_spec:
         {
-          print(" Content type: ${header.contentType}");
+          // print(" Content type: ${header.contentType}");
 
           // throw UnimplementedError(
           //     "Content type: ${header.contentType} is not implemented");
@@ -178,7 +234,7 @@ class DecodeDtlsMessageResult {
           var (changeCipherSpec, decodedOffset, err) =
               ChangeCipherSpec.unmarshal(buf, offset, arrayLen);
 
-          print("Change cipher spec: $changeCipherSpec");
+          // print("Change cipher spec: $changeCipherSpec");
 
           return DecodeDtlsMessageResult(
               header, null, changeCipherSpec, decodedOffset);
@@ -198,8 +254,8 @@ class DecodeDtlsMessageResult {
                   offset: offset, arrayLen: arrayLen);
 
           offset = decryptedOffset;
-          print(
-              "Application data: ${utf8.decode(decryptedBytes.sublist(decryptedOffset))}");
+          // print(
+          //     "Application data: ${utf8.decode(decryptedBytes.sublist(decryptedOffset))}");
 
           final (appData, decodedApplicationData, _) =
               ApplicationData.unmarshal(
@@ -218,7 +274,7 @@ class DecodeDtlsMessageResult {
         }
     }
 
-    print("Message: $header");
+    // print("Message: $header");
 
     return DecodeDtlsMessageResult(null, null, null, offset);
   }

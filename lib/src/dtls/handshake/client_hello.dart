@@ -39,7 +39,7 @@ class ClientHello {
 
   static (ClientHello, int, bool?) unmarshal(
       Uint8List data, int offset, int arrayLen) {
-    print("Client hello data: ${data.sublist(offset, arrayLen)}");
+    // print("Client hello data: ${data.sublist(offset, arrayLen)}");
     var reader = ByteData.sublistView(data);
 
     final client_version =
@@ -87,7 +87,7 @@ class ClientHello {
         decodeExtensionMap(data, offset, data.length);
 
     offset = decodedExtensions;
-    print("extensions: $extensions");
+    // print("extensions: $extensions");
 
     return (
       ClientHello(

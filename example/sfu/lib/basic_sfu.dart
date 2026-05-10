@@ -347,6 +347,12 @@ class BasicSfu {
   /// Address every participant transport binds to.
   final InternetAddress address;
 
+  /// Address advertised in host ICE candidates. When [address] is a
+  /// wildcard (e.g. `0.0.0.0`), the bound address is not routable; set
+  /// this to the host's reachable IP (LAN, public, or `127.0.0.1` for
+  /// local-only testing) so browsers can connect.
+  final InternetAddress? announceAddress;
+
   /// Base port. Participant N is bound at `basePort + N`.
   final int basePort;
 
@@ -449,6 +455,7 @@ class BasicSfu {
   BasicSfu({
     required this.address,
     required this.basePort,
+    this.announceAddress,
     this.video = true,
     this.audio = true,
     this.ssrcRewriting = true,
@@ -518,7 +525,8 @@ class BasicSfu {
     if (audio) pc.addTransceiver(trackOrKind: MediaKind.audio);
 
     final usePort = port ?? (basePort + _nextPortOffset++);
-    final transport = await pc.bind(address, usePort);
+    final transport =
+        await pc.bind(address, usePort, announceAddress: announceAddress);
 
     final participant = SfuParticipant(
       id: id,

@@ -19,7 +19,7 @@ class HandshakeContext {
 
   late Uint8List serverKeySignature;
 
-  late DTLSState dTLSState;
+  DTLSState dTLSState = DTLSState.DTLSStateNew;
 
   late ProtocolVersion protocolVersion;
 
@@ -46,6 +46,11 @@ class HandshakeContext {
   bool isCipherSuiteInitialized = false;
 
   Map<HandshakeType, Uint8List> HandshakeMessagesReceived = {};
+
+  /// Reassembly buffers for fragmented handshake messages, keyed by the
+  /// handshake `message_sequence` field. Each entry holds the full message
+  /// body being reconstructed plus a covered-range bitmap.
+  final Map<int, HandshakeReassembly> handshakeFragments = {};
 
   Map<HandshakeType, Uint8List> HandshakeMessagesSent = {};
 
@@ -110,4 +115,57 @@ class HandshakeContext {
     // }
     return keyingMaterialCache!;
   }
+}
+
+/// State for reassembling a single fragmented DTLS handshake message.
+///
+/// DTLS allows a handshake message to be split across multiple records
+/// (RFC 6347 §4.2.3). Each fragment carries the same `message_sequence`
+/// and the total `length`, plus its own `fragment_offset` /
+/// `fragment_length` window into the full body. We accept fragments in
+/// any order, deduplicate overlap, and surface the message only once
+/// every byte of the body has been delivered at least once.
+class HandshakeReassembly {
+  final int handshakeTypeValue;
+  final int totalLength;
+  final Uint8List body;
+  // Inclusive-exclusive `[start, end)` ranges that have been received.
+  final List<List<int>> coveredRanges = [];
+
+  HandshakeReassembly(this.handshakeTypeValue, this.totalLength)
+      : body = Uint8List(totalLength);
+
+  /// Copies [fragmentBytes] into [body] at [fragmentOffset] and returns
+  /// true once the entire body has been covered. Out-of-range fragments
+  /// are silently clipped.
+  bool addFragment(int fragmentOffset, Uint8List fragmentBytes) {
+    if (fragmentOffset >= totalLength) return _isComplete();
+    final end = fragmentOffset + fragmentBytes.length > totalLength
+        ? totalLength
+        : fragmentOffset + fragmentBytes.length;
+    final copyLen = end - fragmentOffset;
+    body.setRange(fragmentOffset, end, fragmentBytes);
+
+    // Merge into coveredRanges.
+    coveredRanges.add([fragmentOffset, fragmentOffset + copyLen]);
+    coveredRanges.sort((a, b) => a[0].compareTo(b[0]));
+    final merged = <List<int>>[];
+    for (final r in coveredRanges) {
+      if (merged.isEmpty || r[0] > merged.last[1]) {
+        merged.add([r[0], r[1]]);
+      } else if (r[1] > merged.last[1]) {
+        merged.last[1] = r[1];
+      }
+    }
+    coveredRanges
+      ..clear()
+      ..addAll(merged);
+
+    return _isComplete();
+  }
+
+  bool _isComplete() =>
+      coveredRanges.length == 1 &&
+      coveredRanges[0][0] == 0 &&
+      coveredRanges[0][1] == totalLength;
 }

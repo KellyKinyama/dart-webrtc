@@ -42,9 +42,27 @@ Future<SfuServerHandle> runSfuServer({
   String? authToken,
   Duration wsPingInterval = const Duration(seconds: 20),
   bool nackEnabled = false,
+  String? announceIp,
 }) async {
+  // When binding to a wildcard address, the bound address (`0.0.0.0` /
+  // `::`) is not routable, so browsers can't connect to the host ICE
+  // candidate the peer connection emits. Browsers also refuse to pair
+  // their local non-loopback candidates with a remote `127.0.0.1`
+  // candidate, so loopback won't work either when the browser runs on
+  // the same machine. Auto-pick the host's first non-loopback IPv4 so
+  // the demo just works on a LAN; override via [announceIp].
+  final isWildcard = ip == '0.0.0.0' || ip == '::' || ip.isEmpty;
+  String advertisedIp;
+  if (announceIp != null) {
+    advertisedIp = announceIp;
+  } else if (isWildcard) {
+    advertisedIp = await _firstNonLoopbackIPv4() ?? '127.0.0.1';
+  } else {
+    advertisedIp = ip;
+  }
   final sfu = BasicSfu(
     address: InternetAddress(ip),
+    announceAddress: InternetAddress(advertisedIp),
     basePort: rtpBase,
     pliMinInterval: pliMinInterval,
     inactivityTimeout: inactivityTimeout,
@@ -269,6 +287,27 @@ Map<String, Object?> buildStatsJson(BasicSfu sfu) => {
         'nackSeqRequested': sfu.stats.nackSeqRequested,
       },
     };
+
+/// Picks the first non-loopback, non-link-local IPv4 address bound to a
+/// network interface on this host. Used to auto-fill the host ICE
+/// candidate when the SFU is bound to a wildcard address.
+Future<String?> _firstNonLoopbackIPv4() async {
+  try {
+    final ifaces = await NetworkInterface.list(
+      type: InternetAddressType.IPv4,
+      includeLoopback: false,
+      includeLinkLocal: false,
+    );
+    for (final i in ifaces) {
+      for (final a in i.addresses) {
+        if (a.type == InternetAddressType.IPv4 && !a.isLoopback) {
+          return a.address;
+        }
+      }
+    }
+  } catch (_) {}
+  return null;
+}
 
 void _handleClient(
   WebSocket ws,

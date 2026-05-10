@@ -88,11 +88,11 @@ void genKeyAndX25519() {
   var aliceKeyPair = generateKeyPair();
   var bobKeyPair = generateKeyPair();
 
-  print("Alice public key: ${HEX.encode(aliceKeyPair.publicKey)}");
-  print("Alice private key: ${HEX.encode(aliceKeyPair.privateKey)}");
+  // print("Alice public key: ${HEX.encode(aliceKeyPair.publicKey)}");
+  // print("Alice private key: ${HEX.encode(aliceKeyPair.privateKey)}");
 
-  print("Bob public key: ${HEX.encode(bobKeyPair.publicKey)}");
-  print("object Bob private key: ${HEX.encode(bobKeyPair.privateKey)}");
+  // print("Bob public key: ${HEX.encode(bobKeyPair.publicKey)}");
+  // print("object Bob private key: ${HEX.encode(bobKeyPair.privateKey)}");
 
   var aliceSharedKey = X25519(aliceKeyPair.privateKey, bobKeyPair.publicKey);
   var bobSharedKey = X25519(bobKeyPair.privateKey, aliceKeyPair.publicKey);
@@ -174,8 +174,8 @@ Uint8List generateKeyValueMessages(Uint8List clientRandom,
 ({Uint8List privateKey, Uint8List publicKey}) generateX25519Keys() {
   var aliceKeyPair = generateKeyPair();
 
-  print("Alice public key: ${aliceKeyPair.publicKey.length}");
-  print("Alice private key: ${aliceKeyPair.privateKey.length}");
+  // print("Alice public key: ${aliceKeyPair.publicKey.length}");
+  // print("Alice private key: ${aliceKeyPair.privateKey.length}");
 
   return (
     privateKey: Uint8List.fromList(aliceKeyPair.privateKey),
@@ -297,8 +297,8 @@ Uint8List generateMasterSecret(
       [...utf8.encode("master secret"), ...clientRandom, ...serverRandom]);
 
   final result = pHash(preMasterSecret, seed, 48);
-  print(
-      "Generated MasterSecret (not Extended) using Pre-Master Secret, Client Random and Server Random via <u>%s</u>: <u>0x%x</u> (<u>%d bytes</u>) SHA256");
+  // print(
+  //     "Generated MasterSecret (not Extended) using Pre-Master Secret, Client Random and Server Random via <u>%s</u>: <u>0x%x</u> (<u>%d bytes</u>) SHA256");
   return result;
 }
 
@@ -307,8 +307,8 @@ Uint8List generateExtendedMasterSecret(
   final seed = Uint8List.fromList(
       [...utf8.encode("extended master secret"), ...handshakeHash]);
   final result = pHash(preMasterSecret, seed, 48);
-  print(
-      "Generated extended MasterSecret using Pre-Master Secret, Client Random and Server Random via <u>%s</u>: <u>0x%x</u> (<u>%d bytes</u>) SHA256");
+  // print(
+  //     "Generated extended MasterSecret using Pre-Master Secret, Client Random and Server Random via <u>%s</u>: <u>0x%x</u> (<u>%d bytes</u>) SHA256");
   return result;
 }
 

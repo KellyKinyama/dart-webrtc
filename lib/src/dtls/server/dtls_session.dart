@@ -10,6 +10,7 @@ import '../crypto.dart';
 import '../dtls_message.dart';
 import '../dtls_state.dart';
 import '../enums.dart';
+import '../handshake/alert.dart';
 import '../handshake/application.dart';
 import '../handshake/change_cipher_spec.dart';
 import '../handshake/client_hello.dart';
@@ -70,8 +71,12 @@ class DtlsSession {
   /// Feeds an inbound UDP datagram (which may contain one or more DTLS
   /// records) into the state machine.
   Future<void> handleDatagram(Uint8List datagram) async {
+    // ignore: avoid_print
+    print('[dtls] handleDatagram ENTER len=${datagram.length} '
+        'flight=${_ctx.flight} state=${_ctx.dTLSState}');
     try {
       var offset = 0;
+      var recordIdx = 0;
       while (offset < datagram.length) {
         final (rh, _, _) = RecordLayerHeader.unmarshal(
           datagram,
@@ -83,6 +88,10 @@ class DtlsSession {
         final recordBytes = datagram.sublist(offset, end);
         offset = end;
 
+        // ignore: avoid_print
+        print('[dtls] decoding record#$recordIdx ct=${rh.contentType} '
+            'epoch=${rh.epoch} len=${rh.contentLen}');
+
         final decoded = await DecodeDtlsMessageResult.decode(
           _ctx,
           recordBytes,
@@ -91,9 +100,18 @@ class DtlsSession {
           CipherSuiteId.Tls_Ecdhe_Ecdsa_With_Aes_128_Gcm_Sha256,
         );
 
+        // ignore: avoid_print
+        print('[dtls] decoded record#$recordIdx -> '
+            '${decoded.message?.runtimeType ?? 'null'}');
+        recordIdx++;
+
         await _dispatch(decoded);
       }
+      // ignore: avoid_print
+      print('[dtls] handleDatagram DONE flight=${_ctx.flight}');
     } catch (e, st) {
+      // ignore: avoid_print
+      print('[dtls] handleDatagram error: $e\n$st');
       onError?.call(e, st);
       rethrow;
     }
@@ -114,6 +132,10 @@ class DtlsSession {
       // already handled inside DecodeDtlsMessageResult / the GCM layer.
     } else if (message is ApplicationData) {
       _onApplicationData(message);
+    } else if (message is Alert) {
+      // ignore: avoid_print
+      print('[dtls] <- Alert level=${message.alertLevel} '
+          'description=${message.alertDescription}');
     }
     // Other types (Certificate, CertificateVerify, Alert) are ignored in
     // this server profile — we don't request client auth and we don't

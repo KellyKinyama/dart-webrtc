@@ -19,6 +19,7 @@ Future<void> main(List<String> arguments) async {
   int inactivityTimeoutS = 30;
   String? authToken = Platform.environment['SFU_AUTH_TOKEN'];
   bool nackEnabled = false;
+  String? announceIp = Platform.environment['SFU_ANNOUNCE_IP'];
 
   for (var i = 0; i < arguments.length; i++) {
     switch (arguments[i]) {
@@ -43,16 +44,23 @@ Future<void> main(List<String> arguments) async {
       case '--enable-server-nack':
         nackEnabled = true;
         break;
+      case '--announce-ip':
+        announceIp = arguments[++i];
+        break;
       case '-h':
       case '--help':
         stdout.writeln(
             'Usage: dart run bin/sfu_server.dart [--ip 0.0.0.0] [--ws-port 8080] '
             '[--rtp-base 50000] [--pli-min-interval-ms 500] '
             '[--inactivity-timeout-s 30] [--auth-token TOKEN] '
-            '[--enable-server-nack]\n'
+            '[--enable-server-nack] [--announce-ip 1.2.3.4]\n'
             '\n'
             'The auth token may also be supplied via the SFU_AUTH_TOKEN '
-            'environment variable. If unset, /ws is unauthenticated.');
+            'environment variable. If unset, /ws is unauthenticated.\n'
+            '\n'
+            'When --ip is a wildcard (0.0.0.0 / ::) the SFU advertises '
+            '127.0.0.1 in host ICE candidates by default; override with '
+            '--announce-ip or SFU_ANNOUNCE_IP for cross-machine testing.');
         return;
     }
   }
@@ -66,11 +74,21 @@ Future<void> main(List<String> arguments) async {
         inactivityTimeoutS <= 0 ? null : Duration(seconds: inactivityTimeoutS),
     authToken: authToken,
     nackEnabled: nackEnabled,
+    announceIp: announceIp,
   );
-  print('SFU signaling listening on ws://$ip:${handle.port}/ws');
-  print('Browser demo:               http://$ip:${handle.port}/');
-  print('Health probe:               http://$ip:${handle.port}/health');
-  print('Live stats:                 http://$ip:${handle.port}/stats');
+  // When binding to a wildcard address (0.0.0.0 / ::), display a more
+  // useful host so the printed URLs are clickable in a terminal.
+  final displayHost = (ip == '0.0.0.0' || ip == '::' || ip == '0' || ip.isEmpty)
+      ? 'localhost'
+      : (ip.contains(':') ? '[$ip]' : ip);
+  if (ip != displayHost) {
+    print('SFU bound to $ip (all interfaces); URLs below use $displayHost.');
+  }
+  print('SFU signaling listening on ws://$displayHost:${handle.port}/ws');
+  print('Browser demo:               http://$displayHost:${handle.port}/');
+  print(
+      'Health probe:               http://$displayHost:${handle.port}/health');
+  print('Live stats:                 http://$displayHost:${handle.port}/stats');
   print('SFU media base port: $rtpBase (one port per participant)');
   print('PLI min interval:    ${pliMinIntervalMs}ms');
   print('Inactivity timeout:  '
@@ -78,6 +96,10 @@ Future<void> main(List<String> arguments) async {
   print('WS auth:             '
       '${authToken == null ? 'disabled (open)' : 'enabled (token required)'}');
   print('Server-NACK:         ${nackEnabled ? 'enabled' : 'disabled'}');
+  final isWildcard = ip == '0.0.0.0' || ip == '::' || ip.isEmpty;
+  final advertised = announceIp ?? (isWildcard ? '127.0.0.1' : ip);
+  print('Announce IP (host candidate): $advertised'
+      '${announceIp == null && isWildcard ? '  [auto: --announce-ip to override]' : ''}');
 
   // Graceful shutdown — close every UDP transport, the SFU, and the
   // HTTP listener before exiting.
@@ -90,11 +112,12 @@ Future<void> main(List<String> arguments) async {
 
   ProcessSignal.sigint.watch().listen(onSignal);
   // SIGTERM isn't supported on Windows; guard the subscription.
-  if (!Platform.isWindows) {
-    ProcessSignal.sigterm.watch().listen(onSignal);
-  }
+  // if (!Platform.isWindows) {
+  //   ProcessSignal.sigterm.watch().listen(onSignal);
+  // }
 
   await shutdown.future;
   await handle.close();
   print('[sfu] bye.');
+  exit;
 }

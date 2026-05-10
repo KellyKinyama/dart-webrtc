@@ -165,6 +165,9 @@ class RtcUdpTransport {
     final peer = _peers.putIfAbsent(key, () => _newPeer(dg.address, dg.port));
 
     if (stun.StunMessage.isStunMessage(data)) {
+      // ignore: avoid_print
+      print('[udp ${_socket.address.address}:${_socket.port}] STUN '
+          '${data.length}B from ${dg.address.address}:${dg.port}');
       stun.StunServer.handleDatagram(
         Datagram(data, dg.address, dg.port),
         socket: _socket,
@@ -174,9 +177,16 @@ class RtcUdpTransport {
     }
 
     if (dtls.isDtlsPacket(data, 0, data.length)) {
+      // ignore: avoid_print
+      print('[udp ${_socket.address.address}:${_socket.port}] DTLS '
+          '${data.length}B from ${dg.address.address}:${dg.port} '
+          '(ct=${data[0]})');
       // Feed DTLS into the per-peer session. After the handshake completes
       // the session callback wires up SRTP for this peer.
-      unawaited(peer.dtlsSession.handleDatagram(data));
+      unawaited(peer.dtlsSession.handleDatagram(data).catchError((e, st) {
+        // ignore: avoid_print
+        print('[dtls] handleDatagram threw: $e\n$st');
+      }));
       return;
     }
 
@@ -218,7 +228,13 @@ class RtcUdpTransport {
   RtcPeerTransport _newPeer(InternetAddress addr, int port) {
     final session = DtlsSession(
       serverCert: _certificate,
-      sendRaw: (bytes) => _socket.send(bytes, addr, port),
+      sendRaw: (bytes) {
+        // ignore: avoid_print
+        print('[udp ${_socket.address.address}:${_socket.port}] DTLS-> '
+            '${bytes.length}B to ${addr.address}:$port '
+            '(ct=${bytes.isNotEmpty ? bytes[0] : -1})');
+        _socket.send(bytes, addr, port);
+      },
     );
     final peer = RtcPeerTransport(
       remoteAddress: addr,

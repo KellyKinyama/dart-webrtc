@@ -153,7 +153,7 @@ class HandshakeManager {
     int decodedLength = 0;
 
     while (decodedLength < data.length) {
-      print("Decoding Dtls message start lenth: $decodedLength");
+      // print("Decoding Dtls message start lenth: $decodedLength");
 
       var (rh, offset, _) = RecordLayerHeader.unmarshal(data,
           offset: decodedLength, arrayLen: data.length - decodedLength);
@@ -168,8 +168,8 @@ class HandshakeManager {
           dataToDecode.length,
           CipherSuiteId.Tls_Ecdhe_Ecdsa_With_Aes_128_Gcm_Sha256);
 
-      print(
-          "Dtls message lenth: ${data.length}, decoded length: ${dtlsMsg.finalOffset}");
+      // print(
+      //     "Dtls message lenth: ${data.length}, decoded length: ${dtlsMsg.finalOffset}");
       decodedLength = decodedLength + recordLayerHeaderSize + rh.contentLen;
 
       // print("dtls message: $dtlsMsg");
@@ -195,7 +195,7 @@ class HandshakeManager {
     //   }
     // }
 
-    print("Message runtime type: ${message.runtimeType}");
+    // print("Message runtime type: ${message.runtimeType}");
     switch (message.runtimeType) {
       case ClientHello:
         message as ClientHello;
@@ -234,7 +234,7 @@ class HandshakeManager {
               await sendMessage(context, helloVerifyRequestResponse);
               return null;
             } else {
-              print("Received cookie: ${message.cookie}");
+              // print("Received cookie: ${message.cookie}");
             }
             // if (!bytes.Equal(context.cookie, message.cookie)) {
             // 	throw ("client hello cookie is invalid");
@@ -283,7 +283,7 @@ class HandshakeManager {
 
             final clientRandomBytes = context.clientRandom.raw();
             final serverRandomBytes = context.serverRandom.marshal();
-            print("Server random length: ${serverRandomBytes.length}");
+            // print("Server random length: ${serverRandomBytes.length}");
 
             // var keys2 = generateKeys();
             // var keys = generateP256Keys();
@@ -395,7 +395,7 @@ class HandshakeManager {
       // context.increaseServerEpoch();
 
       case Finished:
-        print("client finished: $message");
+        // print("client finished: $message");
         //logging.Descf(//logging.ProtoDTLS, "Received first encrypted message and decrypted successfully: Finished (epoch was increased to <u>%d</u>)", context.ClientEpoch)
         //logging.LineSpacer(2)
 
@@ -415,7 +415,7 @@ class HandshakeManager {
         final calculatedVerifyData =
             // prfVerifyDataClient(handshakeMessages, context.serverMasterSecret);
             prfVerifyDataServer(context.serverMasterSecret, handshakeMessages);
-        print("Finished calculated data: $calculatedVerifyData");
+        // print("Finished calculated data: $calculatedVerifyData");
         // if err != nil {
         // 	return m.setStateFailed(context, err)
         // }
@@ -446,7 +446,7 @@ class HandshakeManager {
       default:
         {
           context.flight = Flight.Flight0;
-          print("Un handled message: $message");
+          // print("Un handled message: $message");
         }
     }
   }
@@ -614,7 +614,7 @@ class HandshakeManager {
     if (context.serverEpoch > 0) {
       // Epoch is greater than zero, we should encrypt it.
       if (context.isCipherSuiteInitialized) {
-        print("Message to encrypt: ${messageToSend.sublist(13)}");
+        // print("Message to encrypt: ${messageToSend.sublist(13)}");
         final encryptedMessage = await context.gcm
             .encrypt(header, Uint8List.fromList(messageToSend));
         // if err != nil {
@@ -623,7 +623,7 @@ class HandshakeManager {
         messageToSend = encryptedMessage;
       }
     }
-    print("Sending message: ${message.runtimeType}");
+    // print("Sending message: ${message.runtimeType}");
     socket.send(messageToSend, socket.address, port);
     context.increaseServerSequence();
   }
@@ -678,7 +678,7 @@ class HandshakeManager {
     if (context.serverEpoch > 0) {
       // Epoch is greater than zero, we should encrypt it.
       if (context.isCipherSuiteInitialized) {
-        print("Message to encrypt: ${messageToSend.sublist(13)}");
+        // print("Message to encrypt: ${messageToSend.sublist(13)}");
         final encryptedMessage = await context.gcm
             .encrypt(header, Uint8List.fromList(messageToSend));
         // if err != nil {
@@ -722,7 +722,7 @@ class HandshakeManager {
     // if err != nil {
     // 	return err
     // }
-    print("pre Master secret: ${HEX.encode(preMasterSecret)}");
+    // print("pre Master secret: ${HEX.encode(preMasterSecret)}");
     // fb34ef080bf9f808b94665cd41ad16761b98653d1b7208ec44fc88b997819f48
 
     // pre Master secret: fb34ef080bf9f808b94665cd41ad16761b98653d1b7208ec44fc88b997819f48
@@ -748,16 +748,16 @@ class HandshakeManager {
       context.serverMasterSecret =
           generateExtendedMasterSecret(preMasterSecret, handshakeHash);
       // 	logging.Descf(logging.ProtoDTLS, "Generated ServerMasterSecret (Extended): <u>0x%x</u> (<u>%d bytes</u>), using Pre-Master Secret and Hanshake Hash. Client Random and Server Random was not used.", context.ServerMasterSecret, len(context.ServerMasterSecret))
-      print(
-          "Extended master secret: ${HEX.encode(context.serverMasterSecret)}");
+      // print(
+      //     "Extended master secret: ${HEX.encode(context.serverMasterSecret)}");
     } else {
       // throw "Use extended master scret";
       context.serverMasterSecret = generateMasterSecret(
           preMasterSecret, clientRandomBytes, serverRandomBytes);
     }
 
-    print("Server random: ${HEX.encode(serverRandomBytes)}");
-    print("Client random: ${HEX.encode(clientRandomBytes)}");
+    // print("Server random: ${HEX.encode(serverRandomBytes)}");
+    // print("Client random: ${HEX.encode(clientRandomBytes)}");
 
     //dart Master secret: 6b0d05a652c61f336a86a66c0bc33fe59d8b740ec85159eed8bf391810dc4dcca9132bacd9f287f12d3d128f08e950c9
     //  ts Master secret: e8d0d762817ed783c9707ab40444e70e0ecb2207ccfd6ef46ae5d2c7c8d1c9b6175bbc1b3bdf0339fe05ff27c5438736

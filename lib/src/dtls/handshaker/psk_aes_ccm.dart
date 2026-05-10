@@ -148,7 +148,7 @@ class HandshakeManager {
     int decodedLength = 0;
 
     while (decodedLength < data.length) {
-      print("Decoding Dtls message start lenth: $decodedLength");
+      // print("Decoding Dtls message start lenth: $decodedLength");
 
       var (rh, offset, _) = RecordLayerHeader.unmarshal(data,
           offset: decodedLength, arrayLen: data.length - decodedLength);
@@ -163,8 +163,8 @@ class HandshakeManager {
           dataToDecode.length,
           CipherSuiteId.Tls_Psk_With_Aes_128_Ccm);
 
-      print(
-          "Dtls message lenth: ${data.length}, decoded length: ${dtlsMsg.finalOffset}");
+      // print(
+      //     "Dtls message lenth: ${data.length}, decoded length: ${dtlsMsg.finalOffset}");
       decodedLength = decodedLength + recordLayerHeaderSize + rh.contentLen;
 
       // print("dtls message: $dtlsMsg");
@@ -186,7 +186,7 @@ class HandshakeManager {
     //   }
     // }
 
-    print("Message runtime type: ${message.runtimeType}");
+    // print("Message runtime type: ${message.runtimeType}");
     switch (message.runtimeType) {
       case ClientHello:
         message as ClientHello;
@@ -231,7 +231,7 @@ class HandshakeManager {
             // Convert map entries to a list
             final extensionList = message.extensions;
 
-            for (var extensionItem in extensionList) {
+            for (var extensionItem in extensionList.entries) {
               // print("Extension runtime type: ${extensionItem.runtimeType}");
               // switch (extensionItem) {
               //   case ExtensionType.ExtensionTypeSupportedEllipticCurves:
@@ -265,7 +265,7 @@ class HandshakeManager {
 
             final clientRandomBytes = context.clientRandom.raw();
             final serverRandomBytes = context.serverRandom.marshal();
-            print("Server random length: ${serverRandomBytes.length}");
+            // print("Server random length: ${serverRandomBytes.length}");
 
             // var keys2 = generateKeys();
             var keys = generateP256Keys();
@@ -419,7 +419,7 @@ class HandshakeManager {
 
       default:
         {
-          print("Un handled message: $message");
+          // print("Un handled message: $message");
         }
     }
   }
@@ -599,7 +599,7 @@ class HandshakeManager {
     if (context.serverEpoch > 0) {
       // Epoch is greater than zero, we should encrypt it.
       if (context.isCipherSuiteInitialized) {
-        print("Message to encrypt: ${messageToSend.sublist(13)}");
+        // print("Message to encrypt: ${messageToSend.sublist(13)}");
         final encryptedMessage =
             context.ccm.encrypt(header, Uint8List.fromList(messageToSend));
         // if err != nil {
@@ -663,7 +663,7 @@ class HandshakeManager {
     if (context.serverEpoch > 0) {
       // Epoch is greater than zero, we should encrypt it.
       if (context.isCipherSuiteInitialized) {
-        print("Message to encrypt: ${messageToSend.sublist(13)}");
+        // print("Message to encrypt: ${messageToSend.sublist(13)}");
         final encryptedMessage = await context.gcm
             .encrypt(header, Uint8List.fromList(messageToSend));
         // if err != nil {
@@ -736,8 +736,8 @@ class HandshakeManager {
       context.serverMasterSecret =
           generateExtendedMasterSecret(preMasterSecret, handshakeHash);
       // 	logging.Descf(logging.ProtoDTLS, "Generated ServerMasterSecret (Extended): <u>0x%x</u> (<u>%d bytes</u>), using Pre-Master Secret and Hanshake Hash. Client Random and Server Random was not used.", context.ServerMasterSecret, len(context.ServerMasterSecret))
-      print(
-          "Extended master secret: ${HEX.encode(context.serverMasterSecret)}");
+      // print(
+      //     "Extended master secret: ${HEX.encode(context.serverMasterSecret)}");
     } else {
       // throw "Use extended master scret";
       context.serverMasterSecret = generateMasterSecret(

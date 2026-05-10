@@ -85,7 +85,6 @@ class GCM {
     srtpGCM.init(false, params); // false for decryption
 
     final Uint8List payloadAndTag = Uint8List.fromList(encryptedPayloadWithTag);
-    print("Header bytes in decryption: $headerBytes");
 
     try {
       final decryptedBytes = srtpGCM.process(payloadAndTag);

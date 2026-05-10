@@ -4,10 +4,10 @@ import 'dart:typed_data';
 
 String fingerprint(Uint8List certDer) {
 // Create SHA-256 fingerprint
-  Digest fingerprint = sha256.convert(certDer);
+  Digest fingerPrint = sha256.convert(certDer);
 
 // Convert to uppercase hexadecimal representation
-  String fingerprintHex = fingerprint.toString().toUpperCase();
+  String fingerprintHex = fingerPrint.toString().toUpperCase();
   print("Fingerprint: $fingerprintHex");
   // Format the digest as a colon-separated string
   String fingerprintOut = fingerprintHex;

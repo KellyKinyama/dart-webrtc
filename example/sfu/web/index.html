@@ -1,0 +1,130 @@
+<!doctype html>
+<html>
+    <head>
+        <meta charset="utf-8">
+        <title>pure_dart_webrtc SFU demo</title>
+        <style>
+  body{font:14px sans-serif;margin:1em;background:#111;color:#eee}
+  video{width:320px;background:#000;margin:.25em;border:1px solid #444}
+  #log{font-family:monospace;white-space:pre-wrap;background:#000;padding:.5em;height:10em;overflow:auto}
+  button,input{font:inherit;padding:.3em .6em}
+        </style>
+    </head>
+    <body>
+        <h2>pure_dart_webrtc SFU demo</h2>
+        <p>
+            id:
+            <input id="id" value="alice">
+            <button id="go">Join</button>
+        </p>
+        <div id="videos"></div>
+        <pre id="stats" style="background:#000;padding:.5em;font-size:12px;max-height:14em;overflow:auto"></pre>
+        <div id="log"></div>
+        <script>
+            
+document.addEventListener('DOMContentLoaded', () => {
+    console.log("document loaded ...");
+const log = (...a) => {
+  document.getElementById('log').textContent += a.join(' ') + '\n';
+  console.log(...a);
+};
+const videos = document.getElementById('videos');
+
+document.getElementById('go').onclick = async () => {
+  const id = document.getElementById('id').value || 'alice';
+  const ws = new WebSocket(`ws://192.168.56.1:8080/ws`);
+  await new Promise(r => ws.onopen = r);
+
+  const local = await navigator.mediaDevices.getUserMedia({video:true, audio:true});
+  const localV = document.createElement('video');
+  localV.autoplay = true; localV.muted = true; localV.srcObject = local;
+  videos.appendChild(localV);
+
+  const pc = new RTCPeerConnection();
+  const pendingCandidates = [];
+  for (const t of local.getTracks()) pc.addTrack(t, local);
+
+  pc.onicecandidate = (e) => {
+   
+    if (!e.candidate) {
+    //   ws.send(JSON.stringify({type:'candidate', candidate:null}));
+      return;
+    }
+    log('ice candidate:', e.candidate.candidate);
+    ws.send(JSON.stringify({
+      type:'candidate',
+      candidate: e.candidate.candidate,
+      sdpMid: e.candidate.sdpMid,
+      sdpMLineIndex: e.candidate.sdpMLineIndex,
+    }));
+  };
+  pc.ontrack = (e) => {
+    let v = document.getElementById('v_' + e.streams[0].id);
+    if (!v) {
+      v = document.createElement('video');
+      v.id = 'v_' + e.streams[0].id;
+      v.autoplay = true; v.playsInline = true;
+      videos.appendChild(v);
+    }
+    v.srcObject = e.streams[0];
+  };
+  pc.oniceconnectionstatechange = () => log('ice:', pc.iceConnectionState);
+  pc.onconnectionstatechange = () => log('conn:', pc.connectionState);
+
+  ws.onmessage = async (ev) => {
+    const msg = JSON.parse(ev.data);
+    if (msg.type !== 'candidate') log('ws<=', msg.type);
+    if (msg.type === 'joined') {
+      const offer = await pc.createOffer();
+      await pc.setLocalDescription(offer);
+      ws.send(JSON.stringify({type:'offer', sdp: offer.sdp}));
+    } else if (msg.type === 'answer') {
+      await pc.setRemoteDescription({type:'answer', sdp: msg.sdp});
+      log('got answer');
+      // Flush any candidates that arrived before the answer.
+      while (pendingCandidates.length) {
+        const c = pendingCandidates.shift();
+        try { await pc.addIceCandidate(c); }
+        catch (e) { log('addIceCandidate (flush) err:', e); }
+      }
+    } else if (msg.type === 'candidate' && msg.candidate) {
+      log('remote ice candidate:', msg.candidate);
+      const cand = {
+        candidate: msg.candidate,
+        sdpMid: msg.sdpMid,
+        sdpMLineIndex: msg.sdpMLineIndex,
+      };
+      if (!pc.remoteDescription || !pc.remoteDescription.type) {
+        pendingCandidates.push(cand);
+      } else {
+        try { await pc.addIceCandidate(cand); }
+        catch (e) { log('addIceCandidate err:', e); }
+      }
+    } else if (msg.type === 'renegotiate') {
+      log('renegotiate:', msg.reason || '(no reason)');
+      try {
+        const offer = await pc.createOffer();
+        await pc.setLocalDescription(offer);
+        ws.send(JSON.stringify({type:'offer', sdp: offer.sdp}));
+      } catch (e) { log('renegotiate err:', e); }
+    } else if (msg.type === 'peer-joined' || msg.type === 'peer-left') {
+      log(msg.type, msg.id);
+    }
+  };
+
+  ws.send(JSON.stringify({type:'join', id, name:id}));
+  log('joined as', id);
+  const statsEl = document.getElementById('stats');
+  setInterval(async () => {
+    try {
+      const r = await fetch('/stats');
+      const j = await r.json();
+      statsEl.textContent = JSON.stringify(j, null, 2);
+    } catch (e) {}
+  }, 2000);
+};
+
+});
+        </script>
+    </body>
+</html>

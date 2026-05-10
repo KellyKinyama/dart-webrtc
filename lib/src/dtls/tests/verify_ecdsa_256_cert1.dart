@@ -62,11 +62,11 @@ EcdsaCert generateSelfSignedCertificate() {
 
   // Encode private key to PEM
   String privateKeyPem = CryptoUtils.encodeEcPrivateKeyToPem(privKey);
-  print("Private Key PEM:\n$privateKeyPem\n");
+  // print("Private Key PEM:\n$privateKeyPem\n");
 
   // Encode public key to PEM
   String publicKeyPem = CryptoUtils.encodeEcPublicKeyToPem(pubKey);
-  print("Public Key PEM:\n$publicKeyPem\n");
+  // print("Public Key PEM:\n$publicKeyPem\n");
 
   var x509PEM = X509Utils.generateSelfSignedCertificate(
     privKey,
@@ -81,9 +81,9 @@ EcdsaCert generateSelfSignedCertificate() {
   // print("Raw Public Key length: ${rawPublicKey.length}");
   final certDer = decodePemToDer(x509PEM);
 
-  print("Certificate finger print: ${fingerprint(certDer)}");
+  // print("Certificate finger print: ${fingerprint(certDer)}");
 
-  print("Certificate PEM:\n$x509PEM\n");
+  // print("Certificate PEM:\n$x509PEM\n");
   return EcdsaCert(
       privateKey: rawPrivateKey, publickKey: rawPublicKey, cert: certDer);
 }
@@ -148,8 +148,8 @@ Uint8List _encodeECPublicKeyToRaw(ECPublicKey publicKey) {
       publicKey.Q!.x!.toBigInteger()!); //.toBytesPadded(expectedByteLength);
   final paddedY = bigIntToUint8List(
       publicKey.Q!.y!.toBigInteger()!); //.toBytesPadded(expectedByteLength);
-  print("Padded X length: ${paddedX.length}");
-  print("Padded Y length: ${paddedY.length}");
+  // print("Padded X length: ${paddedX.length}");
+  // print("Padded Y length: ${paddedY.length}");
   // Ensure x and y are 32 bytes long, padded with leading zeros if necessary
 
   return Uint8List.fromList([0x04, ...paddedX, ...paddedY]);

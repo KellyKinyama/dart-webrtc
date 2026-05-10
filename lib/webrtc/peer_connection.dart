@@ -181,6 +181,13 @@ class RTCPeerConnection {
 
   /// Bound UDP transport. Created by [bind].
   RtcUdpTransport? _transport;
+
+  /// Optional override for the address advertised in host ICE candidates.
+  /// When the transport is bound to a wildcard address (`0.0.0.0` / `::`)
+  /// the bound address is not routable, so callers can pass an explicit
+  /// announce address (e.g. the host's LAN IP, or `127.0.0.1` for local
+  /// testing) via [bind].
+  InternetAddress? _announceAddress;
   RtcPeerTransport? _activePeer;
   final List<RTCDataChannel> _dataChannels = [];
 
@@ -399,7 +406,7 @@ class RTCPeerConnection {
   List<IceCandidate> _hostCandidates() {
     final t = _transport;
     if (t == null) return const [];
-    final addr = t.address.address;
+    final addr = (_announceAddress ?? t.address).address;
     // RFC 5245 host-candidate priority for a single component.
     const typePref = 126; // host
     const localPref = 65535;
@@ -530,6 +537,7 @@ class RTCPeerConnection {
     InternetAddress address,
     int port, {
     String? stunPassword,
+    InternetAddress? announceAddress,
   }) async {
     _checkNotClosed();
     if (_transport != null) {
@@ -542,6 +550,7 @@ class RTCPeerConnection {
       stunPassword: stunPassword ?? _pwd,
     );
     _transport = transport;
+    _announceAddress = announceAddress;
 
     transport
       ..onPeer = _onTransportPeer
@@ -551,8 +560,9 @@ class RTCPeerConnection {
 
     // Emit one host candidate for the bound socket. Real ICE would gather
     // every interface; here we surface only what we actually bound to.
+    final advertisedAddr = (_announceAddress ?? transport.address).address;
     final cand = RTCIceCandidate(
-      candidate: 'candidate:1 1 udp 2113937151 ${transport.address.address} '
+      candidate: 'candidate:1 1 udp 2113937151 $advertisedAddr '
           '${transport.port} typ host',
       sdpMid: _transceivers.isNotEmpty ? (_transceivers.first.mid ?? '0') : '0',
       sdpMLineIndex: 0,

@@ -481,6 +481,58 @@ class StunMessage {
     return true;
   }
 
+  /// Re-verifies MESSAGE-INTEGRITY and FINGERPRINT on a freshly decoded
+  /// response, without enforcing USERNAME ufrag matching. Used by the
+  /// server-side self-check after encoding an outbound response.
+  bool validateAsResponse({required String passwordForIntegrity}) {
+    final integrityAttr = attributes[StunAttributeType.messageIntegrity];
+    if (integrityAttr == null || rawMessage == null) {
+      print('[stun] self-check: MESSAGE-INTEGRITY missing');
+      return false;
+    }
+    final lengthBeforeIntegrity = integrityAttr.offsetInMessage;
+    final tempMessageToHash =
+        Uint8List.fromList(rawMessage!.sublist(0, lengthBeforeIntegrity));
+    ByteData.sublistView(tempMessageToHash).setUint16(
+      2,
+      (lengthBeforeIntegrity - stunMessageHeaderSize) +
+          stunAttributeHeaderSize +
+          stunHmacSignatureSize,
+      Endian.big,
+    );
+    final calc = calculateHmacSha1(tempMessageToHash, passwordForIntegrity);
+    if (!_compareBytes(calc, integrityAttr.value)) {
+      print('[stun] self-check: MESSAGE-INTEGRITY mismatch');
+      print('  expected=${hex.encode(calc)}');
+      print('  in-msg  =${hex.encode(integrityAttr.value)}');
+      return false;
+    }
+
+    final fpAttr = attributes[StunAttributeType.fingerprint];
+    if (fpAttr == null) {
+      print('[stun] self-check: FINGERPRINT missing');
+      return false;
+    }
+    final lengthBeforeFp = fpAttr.offsetInMessage;
+    final tempForCrc =
+        Uint8List.fromList(rawMessage!.sublist(0, lengthBeforeFp));
+    ByteData.sublistView(tempForCrc).setUint16(
+      2,
+      (lengthBeforeFp - stunMessageHeaderSize) +
+          stunAttributeHeaderSize +
+          stunFingerprintSize,
+      Endian.big,
+    );
+    final calcCrc = calculateFingerprint(tempForCrc);
+    if (!_compareBytes(calcCrc, fpAttr.value)) {
+      print('[stun] self-check: FINGERPRINT mismatch');
+      print('  expected=${hex.encode(calcCrc)}');
+      print('  in-msg  =${hex.encode(fpAttr.value)}');
+      return false;
+    }
+    return true;
+  }
+
   @override
   String toString() {
     var sb = StringBuffer();
@@ -718,7 +770,15 @@ class StunServer {
 
       if (request.messageType.method == StunMessageMethod.binding &&
           request.messageType.messageClass == StunMessageClass.request) {
-        // print('Handling STUN Binding Request...');
+        // Diagnostic: verify the browser's MESSAGE-INTEGRITY using our
+        // serverPassword. If this fails, the SDP ice-pwd we surfaced
+        // doesn't match the one the SFU is using to sign responses.
+        final ok =
+            request.validateAsResponse(passwordForIntegrity: serverPassword);
+        if (!ok) {
+          print('[stun] INCOMING request integrity FAILED with serverPassword '
+              '"$serverPassword" - ufrag/password mismatch with SDP.');
+        }
         handleBindingRequest(request, datagram.address, datagram.port,
             serverPassword: serverPassword, socket: socket);
       } else {
@@ -753,13 +813,24 @@ class StunServer {
     // MESSAGE-INTEGRITY and FINGERPRINT are added during encode, using serverPassword
     Uint8List encodedResponse = response.encode(password: serverPassword);
 
-    // print(
-    //     'Sending STUN Binding Success Response to ${clientAddress.host}:$clientPort');
+    // Self-validation diagnostic: decode our own response and verify the
+    // MESSAGE-INTEGRITY HMAC and FINGERPRINT CRC are well-formed. If this
+    // fails, the encoder is producing a packet the browser will reject.
     try {
-      StunMessage decodedSentResponse = StunMessage.decode(encodedResponse);
-      // print(decodedSentResponse);
+      final decoded = StunMessage.decode(encodedResponse);
+      final ok =
+          decoded.validateAsResponse(passwordForIntegrity: serverPassword);
+      if (!ok) {
+        print('[stun] SELF-CHECK FAILED for outgoing response. '
+            'len=${encodedResponse.length} bytes=${hex.encode(encodedResponse)}');
+      } else {
+        // ignore: avoid_print
+        print('[stun] -> ${clientAddress.address}:$clientPort '
+            '${encodedResponse.length}B (self-check OK)');
+      }
     } catch (e) {
-      print("Could not decode the sent response for logging: $e");
+      print('[stun] SELF-DECODE THREW for outgoing response: $e\n'
+          'bytes=${hex.encode(encodedResponse)}');
     }
 
     socket.send(encodedResponse, clientAddress, clientPort);

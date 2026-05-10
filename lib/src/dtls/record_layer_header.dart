@@ -106,7 +106,7 @@ class RecordLayerHeader {
     ContentType contentType = ContentType.fromInt(reader.getUint8(offset++));
 
     if (contentType != ContentType.content_handshake) {
-      print("Content type: $contentType");
+      // print("Content type: $contentType");
     }
     int major = reader.getUint8(offset++);
     int minor = reader.getUint8(offset++);

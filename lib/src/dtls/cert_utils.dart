@@ -205,8 +205,8 @@ Uint8List generateKeysAndCertificate() {
   Uint8List uncompressedPublicKey =
       Uint8List.fromList([0x04, ...xBytes, ...yBytes]);
 
-  print("Private Key: ${HEX.encode(priv.bytes)}");
-  print("Public Key: ${HEX.encode(uncompressedPublicKey)}");
+  // print("Private Key: ${HEX.encode(priv.bytes)}");
+  // print("Public Key: ${HEX.encode(uncompressedPublicKey)}");
 
   return (
     privateKey: Uint8List.fromList(priv.bytes),
@@ -222,7 +222,7 @@ Uint8List _bigIntToBytes(BigInt value, int length) {
 
 void main() {
   var keys = generateP256Keys();
-  print("Generated keys successfully!");
+  // print("Generated keys successfully!");
 }
 
 ({Uint8List privateKey, Uint8List publicKey}) generateECKeys() {
@@ -357,10 +357,10 @@ void extractPublicKey(String publicKeyPem) {
 
     // Print details
     //print('Elliptic Curve: $curveName');
-    print('X Coordinate: $xCoordinate');
-    print('Y Coordinate: $yCoordinate');
+    // print('X Coordinate: $xCoordinate');
+    // print('Y Coordinate: $yCoordinate');
   } else {
-    print('Invalid public key format.');
+    // print('Invalid public key format.');
   }
 }
 
@@ -370,10 +370,10 @@ void extractPrivateKey(String privateKeyPem) {
 
   // Print details of the private key
   if (privateKey is ECPrivateKey) {
-    print('Private Key D (Hex): ${privateKey.d}');
+    // print('Private Key D (Hex): ${privateKey.d}');
     //print('Associated Curve: ${CryptoUtils.getEcCurveNameFromPrivateKey(privateKey)}');
   } else {
-    print('Invalid private key format.');
+    // print('Invalid private key format.');
   }
 }
 

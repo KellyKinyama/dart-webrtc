@@ -2,6 +2,8 @@
 
 import 'dart:typed_data';
 
+import '../../dtls3/extensions.dart';
+import '../../dtls3/simple_extensions.dart';
 import '../crypto.dart';
 import '../handshake/certificate.dart';
 import '../handshake/change_cipher_spec.dart';
@@ -28,9 +30,49 @@ class HandshakeBuilders {
   }
 
   static ServerHello serverHello(HandshakeContext context) {
-    // Mark Extended Master Secret as in-use; the existing HandshakeContext
-    // is also flagged for downstream key derivation.
-    context.UseExtendedMasterSecret = true;
+    // Build a *server-side* extensions map. We MUST NOT echo back the
+    // client's extension map verbatim — many extensions (e.g.
+    // supported_groups, signature_algorithms) are illegal in a ServerHello
+    // and modern stacks (Chrome / Firefox) reject the handshake with a
+    // fatal `decode_error` alert if they appear.
+    final clientExt = context.extensions;
+    final serverExt = <ExtensionTypeValue, Extension>{};
+
+    // extended_master_secret (RFC 7627) — empty body. Echo only if the
+    // client offered it; required in WebRTC.
+    if (clientExt.containsKey(ExtensionTypeValue.UseExtendedMasterSecret)) {
+      context.UseExtendedMasterSecret = true;
+      serverExt[ExtensionTypeValue.UseExtendedMasterSecret] =
+          ExtUseExtendedMasterSecret();
+    }
+
+    // renegotiation_info (RFC 5746) — empty `renegotiated_connection` for
+    // the initial handshake.
+    serverExt[ExtensionTypeValue.RenegotiationInfo] = ExtRenegotiationInfo();
+
+    // ec_point_formats — uncompressed (0) only.
+    serverExt[ExtensionTypeValue.SupportedPointFormats] =
+        ExtSupportedPointFormats([0]);
+
+    // use_srtp (RFC 5764) — pick one profile from the client's list.
+    // WebRTC requires this; without it the browser cannot derive SRTP keys.
+    final clientUseSrtp = clientExt[ExtensionTypeValue.UseSrtp] as ExtUseSRTP?;
+    if (clientUseSrtp != null && clientUseSrtp.protectionProfiles.isNotEmpty) {
+      // Prefer SRTP_AEAD_AES_128_GCM (0x0007), then AES128_CM_HMAC_SHA1_80
+      // (0x0001). Fall back to whatever the client put first.
+      const preferred = [0x0007, 0x0001];
+      int chosen = clientUseSrtp.protectionProfiles.first;
+      for (final p in preferred) {
+        if (clientUseSrtp.protectionProfiles.contains(p)) {
+          chosen = p;
+          break;
+        }
+      }
+      context.srtpProtectionProfile = chosen;
+      serverExt[ExtensionTypeValue.UseSrtp] =
+          ExtUseSRTP([chosen], Uint8List(0));
+    }
+
     return ServerHello(
       ProtocolVersion(254, 253),
       context.serverRandom,
@@ -38,8 +80,7 @@ class HandshakeBuilders {
       context.session_id,
       CipherSuiteId.Tls_Ecdhe_Ecdsa_With_Aes_128_Gcm_Sha256.value,
       context.compression_methods[0],
-      context.extensions,
-      extensionsData: context.extensionsData,
+      serverExt,
     );
   }
 

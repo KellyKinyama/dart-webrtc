@@ -157,7 +157,7 @@ class ServerHello {
 
     final (extensions, decodedExtensions) =
         decodeExtensionMap(data, offset, data.length);
-    print("extensions: $extensions");
+    // print("extensions: $extensions");
 
     return (
       ServerHello(clientVersion, random, session_id_length, sessionId,
