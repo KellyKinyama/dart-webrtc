@@ -96,6 +96,49 @@ class Vp8Codec extends SdpCodec {
       ];
 }
 
+/// H.264 (`H264/90000`). PT 102 is a common WebRTC default.
+///
+/// Browsers strictly validate the `profile-level-id` in `a=fmtp`. The
+/// default `42e01f` (Constrained Baseline 3.1, packetization-mode=1) is
+/// the safest interop choice — Chrome, Edge, Firefox and Safari all
+/// negotiate it. Cameras almost always emit a Baseline / Main bitstream
+/// that decodes inside this profile envelope.
+class H264Codec extends SdpCodec {
+  @override
+  final int payloadType;
+
+  /// `profile-level-id` hex string (3 bytes — profile_idc, profile_iop,
+  /// level_idc).
+  final String profileLevelId;
+
+  /// RFC 6184 §5.4: 0 = single-NAL only, 1 = non-interleaved (FU-A +
+  /// STAP-A). Browsers require mode 1 in practice.
+  final int packetizationMode;
+
+  H264Codec({
+    this.payloadType = 102,
+    this.profileLevelId = '42e01f',
+    this.packetizationMode = 1,
+  });
+
+  @override
+  String get name => 'H264';
+  @override
+  int get clockRate => 90000;
+  @override
+  String? get fmtpValue =>
+      'level-asymmetry-allowed=1;packetization-mode=$packetizationMode;'
+      'profile-level-id=$profileLevelId';
+  @override
+  List<String> get rtcpFeedback => const [
+        'goog-remb',
+        'transport-cc',
+        'ccm fir',
+        'nack',
+        'nack pli',
+      ];
+}
+
 /// VP9 (`VP9/90000`). PT 98 is a common default.
 class Vp9Codec extends SdpCodec {
   @override

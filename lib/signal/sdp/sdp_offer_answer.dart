@@ -357,6 +357,13 @@ class SdpAnswerBuilder {
 
   SdpCodec _withPayloadType(SdpCodec cand, int pt) {
     if (cand is Vp8Codec) return Vp8Codec(payloadType: pt);
+    if (cand is H264Codec) {
+      return H264Codec(
+        payloadType: pt,
+        profileLevelId: cand.profileLevelId,
+        packetizationMode: cand.packetizationMode,
+      );
+    }
     if (cand is Vp9Codec) {
       return Vp9Codec(payloadType: pt, profileId: cand.profileId);
     }

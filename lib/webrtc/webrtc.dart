@@ -22,6 +22,7 @@ export 'package:pure_dart_webrtc/signal/sdp_v2.dart'
         SdpCodec,
         Vp8Codec,
         Vp9Codec,
+        H264Codec,
         PcmaCodec,
         PcmuCodec,
         TelephoneEventCodec;
