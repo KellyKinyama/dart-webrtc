@@ -4,14 +4,6 @@
 // fires the `onConnected` / `onApplicationData` callbacks once the
 // handshake is complete.
 
-import 'dart:typed_data';
-import 'dart:io' show Platform;
-
-final bool _verbose = (() {
-  final v = Platform.environment['WEBRTC_DEBUG'];
-  return v != null && v.isNotEmpty && v != '0' && v.toLowerCase() != 'false';
-})();
-
 import '../crypto.dart';
 import '../dtls_message.dart';
 import '../dtls_state.dart';
@@ -33,6 +25,14 @@ import 'cookie.dart';
 import 'handshake_builders.dart';
 import 'record_io.dart';
 import 'transcript.dart';
+
+import 'dart:typed_data';
+import 'dart:io' show Platform;
+
+final bool _verbose = (() {
+  final v = Platform.environment['WEBRTC_DEBUG'];
+  return v != null && v.isNotEmpty && v != '0' && v.toLowerCase() != 'false';
+})();
 
 /// Callback invoked when an `application_data` record is decrypted from
 /// this peer.
