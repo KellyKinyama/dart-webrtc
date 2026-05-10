@@ -20,6 +20,14 @@ import 'package:pure_dart_webrtc/src/srtp/srtp_context.dart';
 import 'package:pure_dart_webrtc/src/srtp/srtp_manager.dart';
 import 'package:pure_dart_webrtc/src/stun/stun_server.dart' as stun;
 
+/// When true, prints a line for every STUN / DTLS / SRTP packet that
+/// crosses the socket. Off by default (very noisy under media). Enable by
+/// running the SFU with the env var `WEBRTC_DEBUG=1`.
+final bool _verbose = (() {
+  final v = Platform.environment['WEBRTC_DEBUG'];
+  return v != null && v.isNotEmpty && v != '0' && v.toLowerCase() != 'false';
+})();
+
 /// Returns true if [buf] looks like an RTP packet (PT in 0..35 or 96..127).
 bool isRtpPacket(Uint8List buf) {
   if (buf.length < 2) return false;
@@ -165,9 +173,11 @@ class RtcUdpTransport {
     final peer = _peers.putIfAbsent(key, () => _newPeer(dg.address, dg.port));
 
     if (stun.StunMessage.isStunMessage(data)) {
-      // ignore: avoid_print
-      print('[udp ${_socket.address.address}:${_socket.port}] STUN '
-          '${data.length}B from ${dg.address.address}:${dg.port}');
+      if (_verbose) {
+        // ignore: avoid_print
+        print('[udp ${_socket.address.address}:${_socket.port}] STUN '
+            '${data.length}B from ${dg.address.address}:${dg.port}');
+      }
       stun.StunServer.handleDatagram(
         Datagram(data, dg.address, dg.port),
         socket: _socket,
@@ -177,10 +187,12 @@ class RtcUdpTransport {
     }
 
     if (dtls.isDtlsPacket(data, 0, data.length)) {
-      // ignore: avoid_print
-      print('[udp ${_socket.address.address}:${_socket.port}] DTLS '
-          '${data.length}B from ${dg.address.address}:${dg.port} '
-          '(ct=${data[0]})');
+      if (_verbose) {
+        // ignore: avoid_print
+        print('[udp ${_socket.address.address}:${_socket.port}] DTLS '
+            '${data.length}B from ${dg.address.address}:${dg.port} '
+            '(ct=${data[0]})');
+      }
       // Feed DTLS into the per-peer session. After the handshake completes
       // the session callback wires up SRTP for this peer.
       unawaited(peer.dtlsSession.handleDatagram(data).catchError((e, st) {
@@ -229,10 +241,12 @@ class RtcUdpTransport {
     final session = DtlsSession(
       serverCert: _certificate,
       sendRaw: (bytes) {
-        // ignore: avoid_print
-        print('[udp ${_socket.address.address}:${_socket.port}] DTLS-> '
-            '${bytes.length}B to ${addr.address}:$port '
-            '(ct=${bytes.isNotEmpty ? bytes[0] : -1})');
+        if (_verbose) {
+          // ignore: avoid_print
+          print('[udp ${_socket.address.address}:${_socket.port}] DTLS-> '
+              '${bytes.length}B to ${addr.address}:$port '
+              '(ct=${bytes.isNotEmpty ? bytes[0] : -1})');
+        }
         _socket.send(bytes, addr, port);
       },
     );

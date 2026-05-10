@@ -5,6 +5,12 @@
 // handshake is complete.
 
 import 'dart:typed_data';
+import 'dart:io' show Platform;
+
+final bool _verbose = (() {
+  final v = Platform.environment['WEBRTC_DEBUG'];
+  return v != null && v.isNotEmpty && v != '0' && v.toLowerCase() != 'false';
+})();
 
 import '../crypto.dart';
 import '../dtls_message.dart';
@@ -71,9 +77,11 @@ class DtlsSession {
   /// Feeds an inbound UDP datagram (which may contain one or more DTLS
   /// records) into the state machine.
   Future<void> handleDatagram(Uint8List datagram) async {
-    // ignore: avoid_print
-    print('[dtls] handleDatagram ENTER len=${datagram.length} '
-        'flight=${_ctx.flight} state=${_ctx.dTLSState}');
+    if (_verbose) {
+      // ignore: avoid_print
+      print('[dtls] handleDatagram ENTER len=${datagram.length} '
+          'flight=${_ctx.flight} state=${_ctx.dTLSState}');
+    }
     try {
       var offset = 0;
       var recordIdx = 0;
@@ -88,9 +96,11 @@ class DtlsSession {
         final recordBytes = datagram.sublist(offset, end);
         offset = end;
 
-        // ignore: avoid_print
-        print('[dtls] decoding record#$recordIdx ct=${rh.contentType} '
-            'epoch=${rh.epoch} len=${rh.contentLen}');
+        if (_verbose) {
+          // ignore: avoid_print
+          print('[dtls] decoding record#$recordIdx ct=${rh.contentType} '
+              'epoch=${rh.epoch} len=${rh.contentLen}');
+        }
 
         final decoded = await DecodeDtlsMessageResult.decode(
           _ctx,
@@ -100,15 +110,19 @@ class DtlsSession {
           CipherSuiteId.Tls_Ecdhe_Ecdsa_With_Aes_128_Gcm_Sha256,
         );
 
-        // ignore: avoid_print
-        print('[dtls] decoded record#$recordIdx -> '
-            '${decoded.message?.runtimeType ?? 'null'}');
+        if (_verbose) {
+          // ignore: avoid_print
+          print('[dtls] decoded record#$recordIdx -> '
+              '${decoded.message?.runtimeType ?? 'null'}');
+        }
         recordIdx++;
 
         await _dispatch(decoded);
       }
-      // ignore: avoid_print
-      print('[dtls] handleDatagram DONE flight=${_ctx.flight}');
+      if (_verbose) {
+        // ignore: avoid_print
+        print('[dtls] handleDatagram DONE flight=${_ctx.flight}');
+      }
     } catch (e, st) {
       // ignore: avoid_print
       print('[dtls] handleDatagram error: $e\n$st');

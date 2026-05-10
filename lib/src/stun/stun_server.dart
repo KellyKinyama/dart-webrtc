@@ -5,6 +5,11 @@ import 'package:crypto/crypto.dart';
 import 'package:convert/convert.dart'; // For hex encoding if needed for debugging
 import 'dart:math';
 
+final bool _verbose = (() {
+  final v = Platform.environment['WEBRTC_DEBUG'];
+  return v != null && v.isNotEmpty && v != '0' && v.toLowerCase() != 'false';
+})();
+
 // Constants from the Go code
 const int stunMagicCookie = 0x2112A442;
 const int stunMessageHeaderSize = 20;
@@ -823,7 +828,7 @@ class StunServer {
       if (!ok) {
         print('[stun] SELF-CHECK FAILED for outgoing response. '
             'len=${encodedResponse.length} bytes=${hex.encode(encodedResponse)}');
-      } else {
+      } else if (_verbose) {
         // ignore: avoid_print
         print('[stun] -> ${clientAddress.address}:$clientPort '
             '${encodedResponse.length}B (self-check OK)');
