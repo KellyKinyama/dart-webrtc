@@ -1,0 +1,13 @@
+name: pure_dart_webrtc_onvif_autodiscovery_example
+description: WS-Discovery probe for ONVIF cameras + GetProfiles → RTSP URL extraction.
+publish_to: none
+version: 0.1.0
+
+environment:
+  sdk: ^3.6.2
+
+dependencies:
+  args: ^2.7.0
+
+dev_dependencies:
+  lints: ^5.0.0

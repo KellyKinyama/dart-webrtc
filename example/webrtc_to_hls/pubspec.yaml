@@ -1,0 +1,17 @@
+name: pure_dart_webrtc_to_hls_example
+description: >
+  Pull a WHEP H.264 stream and serve HLS (.m3u8 + .ts segments) over HTTP.
+  Bridges WebRTC ingest to unlimited-viewer HTTP playback.
+publish_to: none
+version: 0.1.0
+
+environment:
+  sdk: ^3.6.2
+
+dependencies:
+  pure_dart_webrtc:
+    path: ../../
+  args: ^2.7.0
+
+dev_dependencies:
+  lints: ^5.0.0

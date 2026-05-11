@@ -1,0 +1,19 @@
+name: pure_dart_webrtc_nvr_lite_example
+description: >
+  Mini Network Video Recorder. Multicam RTSP ingest, per-camera rolling
+  Annex-B file recording, plus a WebRTC live-view of every camera.
+publish_to: none
+version: 0.1.0
+
+environment:
+  sdk: ^3.6.2
+
+dependencies:
+  pure_dart_webrtc:
+    path: ../../
+  pure_dart_webrtc_rtsp_camera_to_webrtc_example:
+    path: ../rtsp_camera_to_webrtc
+  args: ^2.7.0
+
+dev_dependencies:
+  lints: ^5.0.0

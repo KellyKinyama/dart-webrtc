@@ -1,0 +1,17 @@
+name: pure_dart_webrtc_whip_server_example
+description: >
+  Minimal pure-Dart WHIP ingest + WHEP playback server. One publisher
+  pushes VP8 via WHIP; any number of viewers pull it via WHEP.
+publish_to: none
+version: 0.1.0
+
+environment:
+  sdk: ^3.6.2
+
+dependencies:
+  pure_dart_webrtc:
+    path: ../../
+  args: ^2.7.0
+
+dev_dependencies:
+  lints: ^5.0.0
