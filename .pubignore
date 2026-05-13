@@ -1,0 +1,34 @@
+# Exclude large binary test/sample assets from the published package.
+*.yuv
+*.ivf
+*.rgb24
+*.mp4
+*.wav
+*.png
+*.gif
+*.jpg
+*.jpeg
+*.ico
+*.dll
+*.so
+*.dylib
+
+# Private keys / certs (do not publish secrets).
+*.key
+*.crt
+*.pem
+
+# Repo-only directories that are not needed by package consumers.
+tmp/
+docs/
+WebRTC-Simple-SDP-Handshake-Demo/
+assets/
+example/flutter_camera/
+example/sfu/web/
+generated_bindings.dart
+
+# VP8 test vectors (large, not required at runtime).
+lib/src/codecs/vpx/vp8-test-vectors/
+
+# Misc top-level dev files.
+example_pcma_webrtc.dart

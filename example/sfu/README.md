@@ -56,6 +56,21 @@ await alice.pc.setRemoteDescription(remoteAnswer);
 It exists to demonstrate how the `RTCPeerConnection` + `RtcUdpTransport`
 APIs compose into a real conferencing topology.
 
+## Scaling one big room
+
+See [SCALING.md](SCALING.md) for the architecture notes covering the
+hot-path optimizations the SFU uses to push more participants through a
+single isolate:
+
+- Parallel SRTP fan-out via `Future.wait` over a snapshot of receivers.
+- Cached top-K active-speaker set (recomputed on a timer rather than
+  per-packet sort).
+- Optional top-K *video* forwarding via `maxVideoForwarded`, mirroring
+  `maxAudioForwarded`. Only the loudest speakers' video is forwarded;
+  newly-active speakers automatically receive a PLI on switch.
+- Coalesced join-time PLI bursts: a flock of joiners costs one PLI per
+  producer instead of one per (producer × newcomer).
+
 ## Tests
 
 ```powershell

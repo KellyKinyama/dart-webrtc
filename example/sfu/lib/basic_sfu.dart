@@ -136,6 +136,12 @@ class SfuParticipant {
   /// Per-participant traffic counters.
   final SfuParticipantStats stats = SfuParticipantStats();
 
+  /// Bytes currently in-flight on this receiver's outbound queue
+  /// (i.e. handed to `transport.sendRtp` but whose Future hasn't yet
+  /// completed). Tracked so the SFU can shed load on slow consumers
+  /// instead of buffering unboundedly. Reset on every Future resolution.
+  int inFlightBytes = 0;
+
   SfuParticipant({
     required this.id,
     required this.pc,
@@ -429,12 +435,61 @@ class BasicSfu {
   /// participants to disable selective forwarding.
   final int maxAudioForwarded;
 
+  /// Maximum number of video producers whose RTP is forwarded to each
+  /// receiver. Negative (default) preserves the legacy "forward every
+  /// publisher's video to every receiver" behaviour. When set to a
+  /// non-negative value the SFU keeps only the K loudest active
+  /// speakers' video and drops the rest on egress, mirroring the
+  /// audio-level-based active-speaker policy.
+  final int maxVideoForwarded;
+
   /// Audio packets older than this are treated as silence when ranking
   /// active speakers. Prevents a producer that briefly spoke from
   /// monopolising a top-K slot forever.
   final Duration audioActivityWindow;
 
+  /// How often the active-speaker recomputation timer wakes up. The
+  /// hot RTP path consults a precomputed `Set<int>` instead of sorting
+  /// the audio-level map per packet.
+  final Duration activeSpeakerRefreshInterval;
+
+  /// Debounce window for join-time keyframe coalescing. Multiple
+  /// participants connecting within this window only cost one PLI per
+  /// existing producer, regardless of how many newcomers there are.
+  final Duration keyframeCoalesceInterval;
+
+  /// Hard cap on simultaneously-joined participants. [addParticipant]
+  /// throws [StateError] when the cap is hit. Defaults to 0 (unbounded).
+  /// Production deployments should set this to whatever the host can
+  /// realistically sustain (see SCALING.md for capacity rules of thumb)
+  /// so a single misbehaving signaler can't OOM the room.
+  final int maxParticipants;
+
+  /// Per-receiver outbound queue cap (bytes). When a receiver already
+  /// has more than this many bytes in flight, additional RTP packets
+  /// are dropped on egress instead of queued. 0 (default) disables the
+  /// limiter; pick a value that's a few RTTs of the receiver's link
+  /// budget (e.g. 256 * 1024 for ~2 Mbps clients on a 1s window).
+  final int maxInFlightBytesPerReceiver;
+
   Timer? _inactivityTimer;
+  Timer? _activeSpeakerTimer;
+  Timer? _pendingKeyframeTimer;
+
+  /// Producers that should currently have their audio forwarded.
+  /// Recomputed periodically by [_recomputeActiveSpeakers]; consulted on
+  /// the hot RTP path via [_isAudioActive]. Empty means "forward every
+  /// audio producer" (i.e. selective forwarding disabled).
+  Set<int> _activeAudioSet = const <int>{};
+
+  /// Producers that should currently have their video forwarded. Same
+  /// semantics as [_activeAudioSet] but for the video kind. Empty means
+  /// "forward every video producer".
+  Set<int> _activeVideoSet = const <int>{};
+
+  /// Newly-connected participants that have not yet been credited with a
+  /// keyframe-request burst. Drained by the coalesced PLI timer.
+  final Set<String> _pendingKeyframeRequesters = <String>{};
 
   final Map<String, SfuParticipant> _participants = {};
   final SfuForwardStats stats = SfuForwardStats();
@@ -485,12 +540,22 @@ class BasicSfu {
     this.nackEnabled = false,
     this.nackMaxGap = 16,
     this.maxAudioForwarded = 3,
+    this.maxVideoForwarded = -1,
     this.audioActivityWindow = const Duration(seconds: 1),
-  }) {
+    Duration? activeSpeakerRefreshInterval,
+    this.keyframeCoalesceInterval = const Duration(milliseconds: 50),
+    this.maxParticipants = 0,
+    this.maxInFlightBytesPerReceiver = 0,
+  }) : activeSpeakerRefreshInterval = activeSpeakerRefreshInterval ??
+            Duration(
+                microseconds: (audioActivityWindow.inMicroseconds ~/ 4)
+                    .clamp(50000, 1000000)) {
     if (inactivityTimeout != null) {
       _inactivityTimer =
           Timer.periodic(inactivityCheckInterval, (_) => runInactivitySweep());
     }
+    _activeSpeakerTimer = Timer.periodic(
+        this.activeSpeakerRefreshInterval, (_) => _recomputeActiveSpeakers());
   }
 
   /// `participantId -> RFC 5285 extmap id of the audio-level extension`,
@@ -536,6 +601,21 @@ class BasicSfu {
   /// Look up a participant by id.
   SfuParticipant? getParticipant(String id) => _participants[id];
 
+  /// Set of producer primary audio SSRCs the SFU is currently forwarding
+  /// (the cached top-K active speakers). Empty when there are not yet
+  /// enough samples or [maxAudioForwarded] is non-positive (forward
+  /// every audio producer).
+  Set<int> get activeAudioSet => Set.unmodifiable(_activeAudioSet);
+
+  /// Set of producer primary video SSRCs the SFU is currently
+  /// forwarding. Always empty when [maxVideoForwarded] is negative
+  /// (forward every video producer).
+  Set<int> get activeVideoSet => Set.unmodifiable(_activeVideoSet);
+
+  /// Force an immediate recomputation of the active-speaker sets,
+  /// bypassing the periodic refresh timer. Exposed for tests.
+  void recomputeActiveSpeakersNow() => _recomputeActiveSpeakers();
+
   /// Add a new participant. Allocates a port, creates an
   /// [RTCPeerConnection], binds the transport, and wires the forwarding
   /// callbacks. Caller is responsible for the SDP exchange.
@@ -546,6 +626,10 @@ class BasicSfu {
   }) async {
     if (_participants.containsKey(id)) {
       throw StateError('Participant "$id" already exists.');
+    }
+    if (maxParticipants > 0 && _participants.length >= maxParticipants) {
+      throw StateError(
+          'BasicSfu participant cap ($maxParticipants) reached; rejecting "$id".');
     }
 
     final pc = RTCPeerConnection(RTCConfiguration(
@@ -574,13 +658,9 @@ class BasicSfu {
     pc.onConnectionStateChange = (state) {
       if (state == RTCPeerConnectionState.connected) {
         onParticipantConnected?.call(participant);
-        // Ask every other producer for an immediate keyframe so this
-        // newly-connected participant starts decoding without waiting
-        // for the next natural keyframe interval.
-        for (final otherId in _producers.keys) {
-          if (otherId == id) continue;
-          requestKeyframe(otherId);
-        }
+        // Schedule a single coalesced PLI burst so a flock of joining
+        // peers only costs one keyframe request per existing producer.
+        _scheduleCoalescedKeyframeBurst(id);
       }
     };
 
@@ -594,11 +674,25 @@ class BasicSfu {
     if (p == null) return;
     p.pc.close();
     _ssrcAllocator.forgetReceiver(id);
+    // Drop every audio-level sample for SSRCs this participant produced
+    // before we forget the ownership map, otherwise the activity-window
+    // sweep can't tell whose samples to evict.
+    final leaverSsrcs = <int>[
+      for (final entry in _ssrcOwner.entries)
+        if (entry.value == id) entry.key,
+    ];
+    for (final s in leaverSsrcs) {
+      _audioLevelByPrimarySsrc.remove(s);
+      _activeAudioSet = _activeAudioSet.where((x) => x != s).toSet();
+      _activeVideoSet = _activeVideoSet.where((x) => x != s).toSet();
+    }
     _ssrcOwner.removeWhere((_, owner) => owner == id);
+    _audioLevelExtId.remove(id);
     _rtxToPrimary.remove(id);
     _producers.remove(id);
     _lastPliAt.remove(id);
     _gapDetectors.remove(id);
+    _pendingKeyframeRequesters.remove(id);
     onParticipantLeft?.call(p);
   }
 
@@ -606,6 +700,11 @@ class BasicSfu {
   Future<void> close() async {
     _inactivityTimer?.cancel();
     _inactivityTimer = null;
+    _activeSpeakerTimer?.cancel();
+    _activeSpeakerTimer = null;
+    _pendingKeyframeTimer?.cancel();
+    _pendingKeyframeTimer = null;
+    _pendingKeyframeRequesters.clear();
     for (final p in _participants.values.toList()) {
       p.pc.close();
       onParticipantLeft?.call(p);
@@ -936,14 +1035,18 @@ class BasicSfu {
   // ---- Forwarding ----------------------------------------------------
 
   Future<void> _forwardRtp(String fromId, Uint8List rtp) async {
+    // One clock read per inbound packet: shared between source-stats,
+    // audio-level timestamping, and any downstream consumer.
+    final now = DateTime.now();
+    final nowMicros = now.microsecondsSinceEpoch;
     // Per-source receive counters (count even unmappable packets so the
     // operator sees inbound activity).
     final source = _participants[fromId];
     if (source != null) {
       source.stats.rtpReceived++;
       source.stats.bytesReceived += rtp.length;
-      source.stats.lastActivityAt = DateTime.now();
-      source.stats.recvRate.record(rtp.length);
+      source.stats.lastActivityAt = now;
+      source.stats.recvRate.record(rtp.length, now);
     }
     // Learn the (originalSsrc -> participant) ownership the first time we
     // see this SSRC; that lets us reverse-route RTCP feedback later.
@@ -979,14 +1082,12 @@ class BasicSfu {
       if (extId != null) {
         final level = _readAudioLevelExtension(rtp, extId);
         if (level != null) {
-          _audioLevelByPrimarySsrc[originalSsrc] =
-              (level, DateTime.now().microsecondsSinceEpoch);
+          _audioLevelByPrimarySsrc[originalSsrc] = (level, nowMicros);
         }
       } else {
         // Producer didn't negotiate the extension — treat as always-on
         // so its audio is still eligible for forwarding.
-        _audioLevelByPrimarySsrc[originalSsrc] =
-            (0, DateTime.now().microsecondsSinceEpoch);
+        _audioLevelByPrimarySsrc[originalSsrc] = (0, nowMicros);
       }
     }
 
@@ -996,7 +1097,16 @@ class BasicSfu {
     final shouldDropAudio = kind == 'audio' &&
         !isRtx &&
         originalSsrc != null &&
-        !_isTopKAudio(originalSsrc);
+        !_isAudioActive(originalSsrc);
+
+    // Same idea for video when [maxVideoForwarded] is non-negative:
+    // forward video only for producers in the active set. RTX packets
+    // for an inactive primary are likewise dropped — they would arrive
+    // on a stream the receiver isn't getting in the first place.
+    final videoSsrcForPolicy = isRtx ? primarySsrc : originalSsrc;
+    final shouldDropVideo = kind == 'video' &&
+        videoSsrcForPolicy != null &&
+        !_isVideoActive(videoSsrcForPolicy);
 
     // Server-originated NACK: only run on primary RTP (skip RTX so the
     // retransmission itself doesn't trip the detector). Sequence number
@@ -1012,7 +1122,7 @@ class BasicSfu {
       }
     }
 
-    if (shouldDropAudio) {
+    if (shouldDropAudio || shouldDropVideo) {
       stats.rtpDropped++;
       return;
     }
@@ -1025,8 +1135,14 @@ class BasicSfu {
       } catch (_) {}
     }
 
-    for (final p in _participants.values) {
-      if (p.id == fromId) continue;
+    // Snapshot the receiver list once so concurrent join/leave can't
+    // perturb the iteration, then issue all sends in parallel. SRTP
+    // encrypt is async; awaiting serially would serialise N receivers'
+    // CPU + UDP work behind each other.
+    final receivers = _receiversSnapshotExcluding(fromId);
+    if (receivers.isEmpty) return;
+    final futures = <Future<void>>[];
+    for (final p in receivers) {
       final peer = p.pc.activePeer;
       if (peer == null || !peer.isSecure) {
         stats.rtpDropped++;
@@ -1040,46 +1156,79 @@ class BasicSfu {
       } else {
         outbound = _rewriteRtp(p.id, rtp);
       }
+      futures.add(_sendRtpAndAccount(p, peer, outbound, isRtx: isRtx));
+    }
+    if (futures.isNotEmpty) await Future.wait(futures);
+  }
+
+  Future<void> _sendRtpAndAccount(
+    SfuParticipant p,
+    RtcPeerTransport peer,
+    Uint8List outbound, {
+    required bool isRtx,
+  }) async {
+    // Egress backpressure: a stalled receiver must not pile up unbounded
+    // pending Futures. Drop newest packets when the in-flight byte
+    // counter exceeds the configured cap. Receiver-side NACK / PLI will
+    // recover anything important.
+    if (maxInFlightBytesPerReceiver > 0 &&
+        p.inFlightBytes > maxInFlightBytesPerReceiver) {
+      stats.rtpDropped++;
+      return;
+    }
+    final size = outbound.length;
+    p.inFlightBytes += size;
+    try {
       final ok = await p.transport.sendRtp(peer, outbound);
       if (ok) {
         stats.rtpForwarded++;
         if (isRtx) stats.rtxForwarded++;
         p.stats.rtpSent++;
-        p.stats.bytesSent += outbound.length;
-        p.stats.sendRate.record(outbound.length);
+        p.stats.bytesSent += size;
+        p.stats.sendRate.record(size);
       } else {
         stats.rtpDropped++;
       }
+    } finally {
+      p.inFlightBytes -= size;
     }
   }
 
+  /// Returns a freshly-allocated list of every participant except
+  /// [excludeId]. Used by the fan-out paths so the iteration is stable
+  /// across concurrent joins/leaves and so the awaited send futures
+  /// don't observe a partially-mutated map.
+  List<SfuParticipant> _receiversSnapshotExcluding(String excludeId) {
+    final out = <SfuParticipant>[];
+    for (final p in _participants.values) {
+      if (p.id == excludeId) continue;
+      out.add(p);
+    }
+    return out;
+  }
+
   Future<void> _forwardRtcp(String fromId, Uint8List rtcp) async {
+    final now = DateTime.now();
     final source = _participants[fromId];
     if (source != null) {
       source.stats.rtcpReceived++;
       source.stats.bytesReceived += rtcp.length;
-      source.stats.lastActivityAt = DateTime.now();
-      source.stats.recvRate.record(rtcp.length);
+      source.stats.lastActivityAt = now;
+      source.stats.recvRate.record(rtcp.length, now);
     }
     if (!ssrcRewriting) {
-      // No rewriting at all — broadcast verbatim.
-      for (final p in _participants.values) {
-        if (p.id == fromId) continue;
+      // No rewriting at all — broadcast verbatim, in parallel.
+      final receivers = _receiversSnapshotExcluding(fromId);
+      final futures = <Future<void>>[];
+      for (final p in receivers) {
         final peer = p.pc.activePeer;
         if (peer == null || !peer.isSecure) {
           stats.rtcpDropped++;
           continue;
         }
-        final ok = await p.transport.sendRtcp(peer, rtcp);
-        if (ok) {
-          stats.rtcpForwarded++;
-          p.stats.rtcpSent++;
-          p.stats.bytesSent += rtcp.length;
-          p.stats.sendRate.record(rtcp.length);
-        } else {
-          stats.rtcpDropped++;
-        }
+        futures.add(_sendRtcpAndAccount(p, peer, rtcp));
       }
+      if (futures.isNotEmpty) await Future.wait(futures);
       return;
     }
 
@@ -1123,25 +1272,18 @@ class BasicSfu {
     }
 
     // Broadcast the non-feedback parts (with sender-SSRC rewriting).
+    final allFutures = <Future<void>>[];
     if (broadcastParts.isNotEmpty) {
       final compound = _concat(broadcastParts);
-      for (final p in _participants.values) {
-        if (p.id == fromId) continue;
+      final receivers = _receiversSnapshotExcluding(fromId);
+      for (final p in receivers) {
         final peer = p.pc.activePeer;
         if (peer == null || !peer.isSecure) {
           stats.rtcpDropped++;
           continue;
         }
         final outbound = _rewriteRtcp(p.id, compound);
-        final ok = await p.transport.sendRtcp(peer, outbound);
-        if (ok) {
-          stats.rtcpForwarded++;
-          p.stats.rtcpSent++;
-          p.stats.bytesSent += outbound.length;
-          p.stats.sendRate.record(outbound.length);
-        } else {
-          stats.rtcpDropped++;
-        }
+        allFutures.add(_sendRtcpAndAccount(p, peer, outbound));
       }
     }
 
@@ -1155,15 +1297,21 @@ class BasicSfu {
         continue;
       }
       final payload = entry.value.toBytes();
-      final ok = await p.transport.sendRtcp(peer, payload);
-      if (ok) {
-        stats.rtcpForwarded++;
-        p.stats.rtcpSent++;
-        p.stats.bytesSent += payload.length;
-        p.stats.sendRate.record(payload.length);
-      } else {
-        stats.rtcpDropped++;
-      }
+      allFutures.add(_sendRtcpAndAccount(p, peer, payload));
+    }
+    if (allFutures.isNotEmpty) await Future.wait(allFutures);
+  }
+
+  Future<void> _sendRtcpAndAccount(
+      SfuParticipant p, RtcPeerTransport peer, Uint8List payload) async {
+    final ok = await p.transport.sendRtcp(peer, payload);
+    if (ok) {
+      stats.rtcpForwarded++;
+      p.stats.rtcpSent++;
+      p.stats.bytesSent += payload.length;
+      p.stats.sendRate.record(payload.length);
+    } else {
+      stats.rtcpDropped++;
     }
   }
 
@@ -1183,28 +1331,121 @@ class BasicSfu {
 
   // ---- Active speaker selection -------------------------------------
 
-  /// True if [primarySsrc] is among the [maxAudioForwarded] currently
-  /// loudest audio producers (lowest RFC 6464 level value within the
-  /// [audioActivityWindow]). When fewer producers are active than the
-  /// limit, every producer is considered active.
-  bool _isTopKAudio(int primarySsrc) {
+  /// True if [primarySsrc] should currently have its audio forwarded.
+  /// Backed by the cached active-speaker set, populated by
+  /// [_recomputeActiveSpeakers].
+  bool _isAudioActive(int primarySsrc) {
     if (maxAudioForwarded <= 0) return true;
+    final set = _activeAudioSet;
+    if (set.isEmpty) return true; // Not enough samples yet -> forward.
+    return set.contains(primarySsrc);
+  }
+
+  /// True if [primarySsrc] should currently have its video forwarded.
+  /// Negative [maxVideoForwarded] disables the policy entirely.
+  bool _isVideoActive(int primarySsrc) {
+    if (maxVideoForwarded < 0) return true;
+    if (maxVideoForwarded == 0) return false;
+    final set = _activeVideoSet;
+    if (set.isEmpty) return true;
+    return set.contains(primarySsrc);
+  }
+
+  /// Recompute [_activeAudioSet] and [_activeVideoSet] from the latest
+  /// audio-level samples. Runs on a timer so the hot RTP path doesn't
+  /// pay sort cost per packet. Also drives selective video forwarding:
+  /// the K loudest *audio* producers are also the K whose *video* is
+  /// forwarded, so the visible feed always tracks the audible feed.
+  ///
+  /// When the active-video set changes, every producer that newly
+  /// entered the set is asked for an immediate keyframe so receivers
+  /// don't have to wait for the next natural keyframe interval.
+  void _recomputeActiveSpeakers() {
     final cutoffMicros = DateTime.now().microsecondsSinceEpoch -
         audioActivityWindow.inMicroseconds;
+    // Gather active samples: (ssrc, level). Lower level = louder.
     final active = <List<int>>[];
     _audioLevelByPrimarySsrc.forEach((ssrc, sample) {
-      final level = sample.$1;
       final atMicros = sample.$2;
       if (atMicros < cutoffMicros) return;
-      active.add([ssrc, level]);
+      active.add([ssrc, sample.$1]);
     });
-    if (active.length <= maxAudioForwarded) return true;
-    // Lower level value = louder.
     active.sort((a, b) => a[1].compareTo(b[1]));
-    for (var i = 0; i < maxAudioForwarded; i++) {
-      if (active[i][0] == primarySsrc) return true;
+
+    Set<int> nextAudio;
+    if (maxAudioForwarded <= 0 || active.length <= maxAudioForwarded) {
+      nextAudio = {for (final s in active) s[0]};
+    } else {
+      nextAudio = <int>{
+        for (var i = 0; i < maxAudioForwarded; i++) active[i][0],
+      };
     }
-    return false;
+
+    Set<int> nextVideo;
+    if (maxVideoForwarded < 0) {
+      nextVideo = const <int>{};
+    } else if (maxVideoForwarded == 0) {
+      nextVideo = const <int>{};
+    } else {
+      // Map the audio-active producers (by primary audio SSRC) back to
+      // their participant ids, then forward the *video* SSRCs of the
+      // same participants.
+      final activeIds = <String>{};
+      final limit =
+          maxVideoForwarded < active.length ? maxVideoForwarded : active.length;
+      for (var i = 0; i < limit; i++) {
+        final ownerId = _ssrcOwner[active[i][0]];
+        if (ownerId != null) activeIds.add(ownerId);
+      }
+      nextVideo = <int>{};
+      for (final id in activeIds) {
+        for (final s in _producers[id] ?? const <SfuProducerStream>[]) {
+          if (s.kind == 'video') nextVideo.add(s.primarySsrc);
+        }
+      }
+    }
+
+    final added = nextVideo.difference(_activeVideoSet);
+    _activeAudioSet = nextAudio;
+    _activeVideoSet = nextVideo;
+
+    // Newly-active video producers: request a keyframe so receivers
+    // start decoding immediately on switch.
+    if (added.isNotEmpty) {
+      final byOwner = <String>{};
+      for (final ssrc in added) {
+        final owner = _ssrcOwner[ssrc];
+        if (owner != null) byOwner.add(owner);
+      }
+      for (final id in byOwner) {
+        // ignore: discarded_futures
+        requestKeyframe(id);
+      }
+    }
+  }
+
+  /// Schedule a coalesced PLI burst: when [newcomerId] joins, ensure
+  /// every existing producer is asked for *one* keyframe within the
+  /// next [keyframeCoalesceInterval]. Subsequent newcomers within the
+  /// same window piggy-back on the same burst.
+  void _scheduleCoalescedKeyframeBurst(String newcomerId) {
+    _pendingKeyframeRequesters.add(newcomerId);
+    _pendingKeyframeTimer ??=
+        Timer(keyframeCoalesceInterval, _flushCoalescedKeyframes);
+  }
+
+  void _flushCoalescedKeyframes() {
+    _pendingKeyframeTimer = null;
+    if (_pendingKeyframeRequesters.isEmpty) return;
+    // Snapshot then clear so producers added during the await don't get
+    // skipped on the next burst.
+    final newcomers = Set<String>.from(_pendingKeyframeRequesters);
+    _pendingKeyframeRequesters.clear();
+    for (final producerId in _producers.keys) {
+      if (newcomers.contains(producerId)) continue;
+      // ignore: discarded_futures
+      requestKeyframe(producerId);
+    }
   }
 
   /// Parse RFC 5285 RTP header extensions and return the RFC 6464

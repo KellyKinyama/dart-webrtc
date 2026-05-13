@@ -1,6 +1,5 @@
 import 'dart:convert';
 import 'dart:typed_data';
-import 'package:typed_data/typed_data.dart';
 
 const int EXTENSION_SERVER_NAME_TYPE_DNSHOST_NAME = 0;
 

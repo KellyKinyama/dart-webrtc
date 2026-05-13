@@ -1,8 +1,13 @@
 name: pure_dart_webrtc
 description: A pure Dart implementation of WebRTC, including support for ICE, STUN, TURN, DTLS, TLS, SRTP, RTP, RTCP, and SDP.
-version: 1.0.0
+version: 1.0.1
 repository: https://github.com/KellyKinyama/dart-webrtc
 homepage: https://github.com/KellyKinyama/dart-webrtc
+issue_tracker: https://github.com/KellyKinyama/dart-webrtc/issues
+
+false_secrets:
+  - /lib/src/dtls/tests/verify_ecdsa_256_cert1.dart
+  - /lib/src/dtls/tests/kea_test.dart
 
 environment:
   sdk: ^3.6.2
