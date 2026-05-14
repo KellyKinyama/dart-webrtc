@@ -480,6 +480,17 @@ class RelayPeer {
     } catch (_) {
       // ignore — transport may already be down
     }
+    // Phase 16 — explicitly tear each relayed receiver out via the
+    // router so every subscriber in the session removes its
+    // [DownTrack] and gets a renegotiation offer. router.close()
+    // alone would just close the receivers without notifying
+    // subscribers, leaving stale tracks and no SDP update.
+    for (final receiver in _byMid.values.toList()) {
+      try {
+        router.removeReceiver(receiver);
+      } catch (_) {}
+    }
+    _byMid.clear();
     router.close();
     await transport.close();
     try {
