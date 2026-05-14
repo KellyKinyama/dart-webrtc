@@ -180,8 +180,8 @@ class Receiver {
       dt.writeRtp(layer, isRtx, rtp);
     }
     if (_rtpTaps.isNotEmpty) {
-      final tapSnap = List<void Function(Uint8List)>.from(
-          _rtpTaps, growable: false);
+      final tapSnap =
+          List<void Function(Uint8List)>.from(_rtpTaps, growable: false);
       for (final t in tapSnap) {
         t(rtp);
       }
@@ -195,8 +195,8 @@ class Receiver {
       dt.writeRtcp(rtcp);
     }
     if (_rtcpTaps.isNotEmpty) {
-      final tapSnap = List<void Function(Uint8List)>.from(
-          _rtcpTaps, growable: false);
+      final tapSnap =
+          List<void Function(Uint8List)>.from(_rtcpTaps, growable: false);
       for (final t in tapSnap) {
         t(rtcp);
       }

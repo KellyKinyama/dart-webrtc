@@ -18,6 +18,7 @@ import 'rtcp.dart';
 import 'sdp_helpers.dart';
 import 'session.dart';
 import 'ssrc_allocator.dart';
+import 'twcc/twcc_stamper.dart';
 
 class Subscriber {
   final String peerId;
@@ -32,6 +33,12 @@ class Subscriber {
   /// Phase 5 — downlink bandwidth estimator. Fed by REMB / TWCC from
   /// the subscriber side. Drives [layerSelector].
   final BandwidthEstimator bwe = BandwidthEstimator();
+
+  /// Phase 7 — transport-wide congestion-control sequence stamper.
+  /// One per subscriber PC; every outbound primary RTP packet whose
+  /// receiver negotiated `twccExtId` is stamped with a monotonic
+  /// 16-bit seq before being shipped to the browser.
+  final TwccStamper twccStamper = TwccStamper();
 
   /// Phase 5 — chooses the simulcast layer for each receiver. Fires
   /// [Subscriber.setPreferredLayer] on every layer change.
@@ -161,6 +168,7 @@ class Subscriber {
       subscriberPc: pc,
       rewrittenPrimarySsrc: rwPrimary,
       rewrittenRtxSsrc: rwRtx,
+      twccStamper: twccStamper,
     );
     _downTracks[receiver.id] = dt;
     _byRewrittenSsrc[rwPrimary] = dt;

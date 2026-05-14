@@ -17,6 +17,10 @@ const String _repairedRidExtUri =
 /// URI of `urn:ietf:params:rtp-hdrext:ssrc-audio-level` (RFC 6464).
 const String _audioLevelExtUri = 'urn:ietf:params:rtp-hdrext:ssrc-audio-level';
 
+/// URI of `transport-wide-cc` (TWCC).
+const String _twccExtUri =
+    'http://www.ietf.org/id/draft-holmer-rmcat-transport-wide-cc-extensions-01';
+
 /// Resolve the extmap id for [uri] in a parsed m= section, or null when
 /// not negotiated.
 int? _extIdFor(Map m, String uri) {
@@ -141,6 +145,7 @@ List<ProducerStream> parsePublisherOffer({
     final ridExtId = _extIdFor(m, _ridExtUri);
     final repairedRidExtId = _extIdFor(m, _repairedRidExtUri);
     final audioLevelExtId = _extIdFor(m, _audioLevelExtUri);
+    final twccExtId = _extIdFor(m, _twccExtUri);
     final simulcastRids = _parseSimulcastSendRids(m);
     final hasModernSimulcast =
         simGroups.isEmpty && simulcastRids.length >= 2 && ridExtId != null;
@@ -190,6 +195,7 @@ List<ProducerStream> parsePublisherOffer({
         ridExtId: ridExtId,
         repairedRidExtId: repairedRidExtId,
         audioLevelExtId: audioLevelExtId,
+        twccExtId: twccExtId,
       ));
       continue; // skip the SSRC-walk loop for this m= section
     }
@@ -234,6 +240,7 @@ List<ProducerStream> parsePublisherOffer({
           msidStream: streamId,
           msidTrack: trackId,
           audioLevelExtId: audioLevelExtId,
+          twccExtId: twccExtId,
         ));
       } else {
         out.add(ProducerStream(
@@ -245,6 +252,7 @@ List<ProducerStream> parsePublisherOffer({
           msidStream: streamId,
           msidTrack: trackId,
           audioLevelExtId: audioLevelExtId,
+          twccExtId: twccExtId,
         ));
       }
     }

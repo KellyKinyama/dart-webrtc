@@ -20,6 +20,7 @@ import 'buffer/nack.dart';
 import 'producer_layer.dart';
 import 'receiver.dart';
 import 'simulcast_rewriter.dart';
+import 'twcc/twcc_stamper.dart';
 
 enum DownTrackType { simple, simulcast }
 
@@ -54,6 +55,14 @@ class DownTrack {
   int bytesForwarded = 0;
   int packetsDroppedWrongLayer = 0;
 
+  /// Phase 7 — number of outbound primary packets that were
+  /// successfully stamped with a TWCC sequence number.
+  int packetsTwccStamped = 0;
+
+  /// Phase 7 — subscriber-wide transport-cc seq stamper. Null when
+  /// the subscriber did not negotiate the transport-cc extension.
+  final TwccStamper? twccStamper;
+
   /// Jitter buffer of forwarded primary RTP packets, keyed by the
   /// *rewritten* sequence number. Used by [NackResponder] to satisfy
   /// subscriber retransmit requests without involving the publisher.
@@ -70,6 +79,7 @@ class DownTrack {
     required this.rewrittenPrimarySsrc,
     required this.rewrittenRtxSsrc,
     int jitterCapacity = 512,
+    this.twccStamper,
   })  : _jitter = JitterBuffer(capacity: jitterCapacity),
         trackType = receiver.isSimulcast
             ? DownTrackType.simulcast
@@ -123,6 +133,15 @@ class DownTrack {
     final out = r.out!;
     if (!isRtx && r.outSeq != null) {
       _jitter.record(r.outSeq!, out);
+    }
+    // Phase 7 — stamp the transport-cc seq number on outbound primary
+    // packets when the receiver negotiated transport-cc. RTX packets
+    // are skipped (the original primary was already stamped, and the
+    // browser correlates by the OSN in the RTX payload).
+    final twccId = receiver.stream.twccExtId;
+    if (!isRtx && twccId != null && twccStamper != null) {
+      final seq = twccStamper!.stamp(out, twccId);
+      if (seq != null) packetsTwccStamped++;
     }
     transport.sendRtp(peer, out);
     packetsForwarded++;

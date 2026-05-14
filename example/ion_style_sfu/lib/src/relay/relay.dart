@@ -58,6 +58,7 @@ class RelayStreamDescriptor {
   final int? ridExtId;
   final int? repairedRidExtId;
   final int? audioLevelExtId;
+  final int? twccExtId;
 
   const RelayStreamDescriptor({
     required this.mid,
@@ -69,6 +70,7 @@ class RelayStreamDescriptor {
     this.ridExtId,
     this.repairedRidExtId,
     this.audioLevelExtId,
+    this.twccExtId,
   });
 
   bool get isSimulcast => layers.length > 1;
@@ -83,6 +85,7 @@ class RelayStreamDescriptor {
         if (ridExtId != null) 'ridExtId': ridExtId,
         if (repairedRidExtId != null) 'repairedRidExtId': repairedRidExtId,
         if (audioLevelExtId != null) 'audioLevelExtId': audioLevelExtId,
+        if (twccExtId != null) 'twccExtId': twccExtId,
       };
 
   factory RelayStreamDescriptor.fromJson(Map<String, Object?> j) =>
@@ -99,6 +102,7 @@ class RelayStreamDescriptor {
         ridExtId: (j['ridExtId'] as num?)?.toInt(),
         repairedRidExtId: (j['repairedRidExtId'] as num?)?.toInt(),
         audioLevelExtId: (j['audioLevelExtId'] as num?)?.toInt(),
+        twccExtId: (j['twccExtId'] as num?)?.toInt(),
       );
 
   /// Convert to a local [ProducerStream]. Equivalent to what
@@ -122,6 +126,7 @@ class RelayStreamDescriptor {
         msidStream: msidStream,
         msidTrack: msidTrack,
         audioLevelExtId: audioLevelExtId,
+        twccExtId: twccExtId,
       );
     }
     return ProducerStream.simulcast(
@@ -134,6 +139,7 @@ class RelayStreamDescriptor {
       ridExtId: ridExtId,
       repairedRidExtId: repairedRidExtId,
       audioLevelExtId: audioLevelExtId,
+      twccExtId: twccExtId,
     );
   }
 }
@@ -367,6 +373,7 @@ class RelayPeer {
       ridExtId: receiver.stream.ridExtId,
       repairedRidExtId: receiver.stream.repairedRidExtId,
       audioLevelExtId: receiver.stream.audioLevelExtId,
+      twccExtId: receiver.stream.twccExtId,
     );
     announce(desc);
     final removeRtp = receiver.addRtpTap(forwardRtp);

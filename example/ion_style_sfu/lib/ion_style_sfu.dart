@@ -22,6 +22,7 @@ export 'src/simulcast_rewriter.dart';
 export 'src/rtp_header.dart';
 export 'src/twcc/twcc.dart';
 export 'src/twcc/remb.dart';
+export 'src/twcc/twcc_stamper.dart';
 export 'src/bwe.dart';
 export 'src/relay/relay.dart';
 export 'src/stats/stats.dart';

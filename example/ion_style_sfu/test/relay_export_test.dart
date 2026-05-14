@@ -103,12 +103,17 @@ void main() {
       );
 
       final stream = ProducerStream(
-        kind: 'video', mid: 'v1',
-        primarySsrc: 5, rtxSsrc: null,
-        cname: 'c', msidStream: 's', msidTrack: 't',
+        kind: 'video',
+        mid: 'v1',
+        primarySsrc: 5,
+        rtxSsrc: null,
+        cname: 'c',
+        msidStream: 's',
+        msidTrack: 't',
       );
       final local = origin.router.publishRelayedStream(
-        kind: MediaKind.video, stream: stream,
+        kind: MediaKind.video,
+        stream: stream,
       );
       final exp = origin.exportReceiver(local);
       expect(downstream.relayedReceivers, hasLength(1));
@@ -125,8 +130,7 @@ void main() {
       expect(seen, 0);
     });
 
-    test('export forwards simulcast layers preserving rids + ext ids',
-        () {
+    test('export forwards simulcast layers preserving rids + ext ids', () {
       final originSfu = _sfu();
       final downSfu = _sfu();
       final pipe = InMemoryRelayPipe();
@@ -142,17 +146,22 @@ void main() {
       );
 
       final stream = ProducerStream.simulcast(
-        kind: 'video', mid: 'v1',
+        kind: 'video',
+        mid: 'v1',
         layers: const [
           ProducerLayer(rid: 'q', primarySsrc: 100, rtxSsrc: 101),
           ProducerLayer(rid: 'h', primarySsrc: 200, rtxSsrc: 201),
           ProducerLayer(rid: 'f', primarySsrc: 300, rtxSsrc: 301),
         ],
-        cname: 'c', msidStream: 's', msidTrack: 't',
-        ridExtId: 4, repairedRidExtId: 5,
+        cname: 'c',
+        msidStream: 's',
+        msidTrack: 't',
+        ridExtId: 4,
+        repairedRidExtId: 5,
       );
       final local = origin.router.publishRelayedStream(
-        kind: MediaKind.video, stream: stream,
+        kind: MediaKind.video,
+        stream: stream,
       );
       origin.exportReceiver(local);
 
@@ -185,12 +194,17 @@ void main() {
       );
 
       final stream = ProducerStream(
-        kind: 'audio', mid: 'a1',
-        primarySsrc: 7, rtxSsrc: null,
-        cname: 'c', msidStream: 's', msidTrack: 't',
+        kind: 'audio',
+        mid: 'a1',
+        primarySsrc: 7,
+        rtxSsrc: null,
+        cname: 'c',
+        msidStream: 's',
+        msidTrack: 't',
       );
       final local = origin.router.publishRelayedStream(
-        kind: MediaKind.audio, stream: stream,
+        kind: MediaKind.audio,
+        stream: stream,
       );
       final exp = origin.exportReceiver(local);
       expect(exp.isStopped, isFalse);
@@ -215,12 +229,17 @@ void main() {
         transport: pipe.b,
       );
       final stream = ProducerStream(
-        kind: 'video', mid: 'v1',
-        primarySsrc: 9, rtxSsrc: null,
-        cname: 'c', msidStream: 's', msidTrack: 't',
+        kind: 'video',
+        mid: 'v1',
+        primarySsrc: 9,
+        rtxSsrc: null,
+        cname: 'c',
+        msidStream: 's',
+        msidTrack: 't',
       );
       final local = origin.router.publishRelayedStream(
-        kind: MediaKind.video, stream: stream,
+        kind: MediaKind.video,
+        stream: stream,
       );
       origin.exportReceiver(local);
 

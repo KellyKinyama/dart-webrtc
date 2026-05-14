@@ -47,6 +47,14 @@ class ProducerStream {
   /// to the session's [AudioObserver].
   final int? audioLevelExtId;
 
+  /// Phase 7 — extmap id of
+  /// `http://www.ietf.org/id/draft-holmer-rmcat-transport-wide-cc-extensions-01`
+  /// (transport-wide congestion control sequence number), or null when
+  /// the publisher didn't negotiate it. When set, the subscriber-side
+  /// `TwccStamper` rewrites this extension on every outbound primary
+  /// RTP packet with its own per-egress monotonic 16-bit sequence.
+  final int? twccExtId;
+
   ProducerStream._({
     required this.kind,
     required this.mid,
@@ -57,6 +65,7 @@ class ProducerStream {
     this.ridExtId,
     this.repairedRidExtId,
     this.audioLevelExtId,
+    this.twccExtId,
   }) : assert(layers.isNotEmpty, 'ProducerStream needs at least one layer');
 
   /// Single-layer factory (preserves the Phase 2 API).
@@ -69,6 +78,7 @@ class ProducerStream {
     required String msidStream,
     required String msidTrack,
     int? audioLevelExtId,
+    int? twccExtId,
   }) =>
       ProducerStream._(
         kind: kind,
@@ -77,6 +87,7 @@ class ProducerStream {
         msidStream: msidStream,
         msidTrack: msidTrack,
         audioLevelExtId: audioLevelExtId,
+        twccExtId: twccExtId,
         layers: [
           ProducerLayer(rid: '', primarySsrc: primarySsrc, rtxSsrc: rtxSsrc),
         ],
@@ -93,6 +104,7 @@ class ProducerStream {
     int? ridExtId,
     int? repairedRidExtId,
     int? audioLevelExtId,
+    int? twccExtId,
   }) =>
       ProducerStream._(
         kind: kind,
@@ -104,6 +116,7 @@ class ProducerStream {
         ridExtId: ridExtId,
         repairedRidExtId: repairedRidExtId,
         audioLevelExtId: audioLevelExtId,
+        twccExtId: twccExtId,
       );
 
   /// Highest-quality layer — the default forwarded layer, and the one
