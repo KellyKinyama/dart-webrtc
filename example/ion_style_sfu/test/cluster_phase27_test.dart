@@ -9,12 +9,13 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
+import 'dart:typed_data';
 
 import 'package:pure_dart_webrtc_ion_style_sfu/ion_style_sfu.dart';
 import 'package:test/test.dart';
 
 class _MemSink implements IOSink {
-  final BytesBuilder buf = BytesBuilder();
+  final BytesBuilder buf = BytesBuilder(copy: false);
   @override
   Encoding encoding = utf8;
   @override

@@ -351,7 +351,7 @@ String formatPrometheusCluster({
   counter(
       'ionsfu_sfu_sessions_rejected_total',
       'Session-spawn attempts rejected because the per-node session cap '
-      'was already reached.',
+          'was already reached.',
       sessionsRejectedAtCap);
   if (sessionCap != null) {
     gauge('ionsfu_sfu_session_cap', 'Configured per-node session cap.',

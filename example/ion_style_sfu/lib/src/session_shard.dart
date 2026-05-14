@@ -521,10 +521,30 @@ class _BootMsg {
 // ===================================================================
 
 void _workerMain(_BootMsg boot) {
-  final inbox = ReceivePort();
-  boot.handshake.send(inbox.sendPort);
-  final worker = _ShardWorker(boot.config, boot.replies, inbox);
-  worker.start();
+  // Phase 28 — crash containment. Any uncaught error inside the
+  // worker isolate is converted into a `closed` event with reason
+  // [ShardCloseReason.error] so the orchestrator can react (the
+  // ClusterCoordinator currently treats it the same as a circuit-
+  // breaker trip), and the isolate exits cleanly instead of taking
+  // the whole SFU process down via Isolate.current.kill().
+  runZonedGuarded(() {
+    final inbox = ReceivePort();
+    boot.handshake.send(inbox.sendPort);
+    final worker = _ShardWorker(boot.config, boot.replies, inbox);
+    worker.start();
+  }, (e, st) {
+    try {
+      boot.replies.send({
+        'event': 'closed',
+        'data': {
+          'reason': ShardCloseReason.error.index,
+          'message': 'uncaught: $e\n$st',
+        },
+      });
+    } catch (_) {
+      // The reply port may already be torn down; nothing more to do.
+    }
+  });
 }
 
 class _ShardWorker {

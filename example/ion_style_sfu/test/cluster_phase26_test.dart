@@ -31,8 +31,7 @@ void main() {
       await handle.close();
     });
 
-    test('/healthz reports ok then draining; /ws rejected with 503',
-        () async {
+    test('/healthz reports ok then draining; /ws rejected with 503', () async {
       final base = 'http://127.0.0.1:${handle.port}';
       final client = HttpClient();
       addTearDown(client.close);
@@ -41,8 +40,7 @@ void main() {
       var req = await client.getUrl(Uri.parse('$base/healthz'));
       var res = await req.close();
       expect(res.statusCode, HttpStatus.ok);
-      var body =
-          jsonDecode(await res.transform(utf8.decoder).join()) as Map;
+      var body = jsonDecode(await res.transform(utf8.decoder).join()) as Map;
       expect(body['status'], 'ok');
 
       // Trigger drain via the admin endpoint.

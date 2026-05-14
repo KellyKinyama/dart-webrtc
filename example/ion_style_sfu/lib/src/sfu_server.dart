@@ -255,9 +255,7 @@ Future<IonSfuServerHandle> runIonStyleSfuServer({
       // balancer / orchestrator stops sending new sessions.
       final draining = handle.draining;
       req.response
-        ..statusCode = draining
-            ? HttpStatus.serviceUnavailable
-            : HttpStatus.ok
+        ..statusCode = draining ? HttpStatus.serviceUnavailable : HttpStatus.ok
         ..headers.contentType = ContentType.json
         ..write(jsonEncode({
           'status': draining ? 'draining' : 'ok',
@@ -278,8 +276,7 @@ Future<IonSfuServerHandle> runIonStyleSfuServer({
       // when authToken is set; otherwise open (operator's choice).
       if (authToken != null) {
         final got = req.uri.queryParameters['token'] ??
-            _bearerHeader(
-                req.headers.value(HttpHeaders.authorizationHeader));
+            _bearerHeader(req.headers.value(HttpHeaders.authorizationHeader));
         if (got != authToken) {
           req.response.statusCode = HttpStatus.unauthorized;
           req.response.close();
@@ -424,11 +421,13 @@ Future<IonSfuServerHandle> runIonStyleSfuServer({
             armed = true;
             handle.drain();
             if (!quiet) {
-              log.info('signal received — draining', {'signal': sig.toString()});
+              log.info(
+                  'signal received — draining', {'signal': sig.toString()});
             }
           } else {
             if (!quiet) {
-              log.info('signal received again — closing', {'signal': sig.toString()});
+              log.info('signal received again — closing',
+                  {'signal': sig.toString()});
             }
             handle.close();
           }
@@ -437,6 +436,7 @@ Future<IonSfuServerHandle> runIonStyleSfuServer({
         // SIGTERM is unsupported on Windows — silently ignore.
       }
     }
+
     wire(ProcessSignal.sigint);
     wire(ProcessSignal.sigterm);
   }
@@ -615,7 +615,8 @@ class _IonPeerSession {
       shard = await sharded.getOrCreate(sid);
     } on SfuOverloadedException catch (e) {
       // Phase 25 — node session cap reached.
-      _send({'type': 'error', 'reason': 'serverOverloaded', 'detail': e.message});
+      _send(
+          {'type': 'error', 'reason': 'serverOverloaded', 'detail': e.message});
       await ws.close();
       return;
     }

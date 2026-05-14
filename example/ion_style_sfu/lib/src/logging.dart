@@ -52,7 +52,8 @@ class Logger {
 
   /// A logger that drops every record. Useful in tests and when the
   /// caller passes `quiet: true`.
-  factory Logger.silent() => Logger(level: LogLevel.error, out: _Null(), err: _Null());
+  factory Logger.silent() =>
+      Logger(level: LogLevel.error, out: _Null(), err: _Null());
 
   void debug(String msg, [Map<String, Object?>? fields]) =>
       _emit(LogLevel.debug, msg, fields);

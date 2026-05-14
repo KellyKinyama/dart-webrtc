@@ -63,8 +63,8 @@ void main() {
       // Third uid must be rejected — error surfaces as the toString().
       await expectLater(
         () => shard.join('carol'),
-        throwsA(predicate(
-            (e) => e.toString().contains('SessionFullException'))),
+        throwsA(
+            predicate((e) => e.toString().contains('SessionFullException'))),
       );
 
       final snap = await shard.snapshotJson();
