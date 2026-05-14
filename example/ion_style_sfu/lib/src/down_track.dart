@@ -17,6 +17,7 @@ import 'package:pure_dart_webrtc/webrtc/webrtc.dart';
 
 import 'buffer/buffer.dart';
 import 'buffer/nack.dart';
+import 'byte_pool.dart';
 import 'producer_layer.dart';
 import 'receiver.dart';
 import 'rtcp_rewrite.dart';
@@ -64,6 +65,17 @@ class DownTrack {
   /// the subscriber did not negotiate the transport-cc extension.
   final TwccStamper? twccStamper;
 
+  /// Phase 10 — buffer pool used for the rewritten copy. Defaults to
+  /// the per-isolate [BytePool.instance].
+  final BytePool pool;
+
+  /// Phase 10 — optional injected sink used **instead of** the real
+  /// SRTP transport. The load-test harness sets this to a counting
+  /// closure so the forward path can be exercised without a live
+  /// PeerConnection. When set, [rtcpSink] should usually be set too.
+  void Function(Uint8List rtp)? rtpSink;
+  void Function(Uint8List rtcp)? rtcpSink;
+
   /// Jitter buffer of forwarded primary RTP packets, keyed by the
   /// *rewritten* sequence number. Used by [NackResponder] to satisfy
   /// subscriber retransmit requests without involving the publisher.
@@ -81,7 +93,14 @@ class DownTrack {
     required this.rewrittenRtxSsrc,
     int jitterCapacity = 512,
     this.twccStamper,
-  })  : _jitter = JitterBuffer(capacity: jitterCapacity),
+    BytePool? pool,
+    this.rtpSink,
+    this.rtcpSink,
+  })  : pool = pool ?? BytePool.instance,
+        _jitter = JitterBuffer(
+          capacity: jitterCapacity,
+          onEvict: (buf) => (pool ?? BytePool.instance).release(buf),
+        ),
         trackType = receiver.isSimulcast
             ? DownTrackType.simulcast
             : DownTrackType.simple,
@@ -89,6 +108,7 @@ class DownTrack {
           rewrittenPrimarySsrc: rewrittenPrimarySsrc,
           rewrittenRtxSsrc: rewrittenRtxSsrc,
           currentLayer: receiver.stream.defaultLayer.rid,
+          pool: pool,
         ) {
     nack = NackResponder(buffer: _jitter);
     // Phase 8 — build the SSRC translation map for RTCP rewriting.
@@ -149,6 +169,34 @@ class DownTrack {
       packetsDroppedWrongLayer++;
       return;
     }
+
+    // Phase 10 — synthetic-sink fast path (load test harness). Skips
+    // the PC/peer/transport plumbing entirely.
+    final sink = rtpSink;
+    if (sink != null) {
+      final r = _rewriter.rewrite(rid: layer.rid, isRtx: isRtx, rtp: rtp);
+      if (r.dropped) {
+        packetsDroppedWrongLayer++;
+        return;
+      }
+      final out = r.out!;
+      if (!isRtx && r.outSeq != null) {
+        _jitter.record(r.outSeq!, out);
+      }
+      final twccId = receiver.stream.twccExtId;
+      if (!isRtx && twccId != null && twccStamper != null) {
+        final seq = twccStamper!.stamp(out, twccId);
+        if (seq != null) packetsTwccStamped++;
+      }
+      sink(out);
+      packetsForwarded++;
+      bytesForwarded += out.length;
+      // RTX bytes are not retained by the jitter buffer; release
+      // them immediately so the pool reclaims the capacity.
+      if (isRtx) pool.release(out);
+      return;
+    }
+
     final peer = subscriberPc.activePeer;
     final transport = subscriberPc.transport;
     if (peer == null || transport == null || !peer.isSecure) return;
@@ -174,6 +222,7 @@ class DownTrack {
     transport.sendRtp(peer, out);
     packetsForwarded++;
     bytesForwarded += out.length;
+    if (isRtx) pool.release(out);
   }
 
   /// Forward inbound publisher RTCP. Phase 8 — rewrites SR/RR so the

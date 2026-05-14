@@ -1,96 +1,456 @@
-// Phase 8 (part 2) — per-session isolate scaffolding.
+// Phase 11 — per-session worker isolate that owns the
+// PeerConnections.
 //
-// `SessionShard` owns a worker isolate dedicated to a single session.
-// The main isolate talks to it via a request/reply RPC over SendPorts,
-// keyed by a monotonically increasing correlation id so multiple
-// in-flight calls don't get mixed up.
+// Each `SessionShard` runs in a dedicated isolate. The worker hosts an
+// isolate-local `Sfu` whose only session is the one this shard is
+// responsible for. PeerConnections (publisher + subscriber per peer)
+// live entirely inside the worker, so PC compute / event-loop pressure
+// is isolated to that worker.
 //
-// This is the *lightweight scaffolding* tier of Phase 8.2: the shard
-// keeps a tiny in-isolate session model (peer ids + a few counters) so
-// we can prove the isolate boundary works end-to-end (spawn, RPC,
-// stats, close) without yet moving Peer/PeerConnection/Router into
-// the isolate. Future phases can grow the worker's responsibilities.
+// The main isolate communicates with each shard via a tagged
+// request/reply RPC plus a separate one-way event channel for things
+// the worker pushes asynchronously (gathered ICE candidates, server-
+// initiated subscriber offers, peer joins/leaves observed inside the
+// session, ICE connection state changes, snapshot deltas).
 
 import 'dart:async';
+import 'dart:convert';
+import 'dart:io';
 import 'dart:isolate';
+import 'dart:typed_data';
 
-/// Snapshot of a shard's session state, returned by [SessionShard.stats].
-class ShardStats {
+import 'package:pure_dart_webrtc/webrtc/webrtc.dart';
+
+import 'cascade_event.dart';
+import 'peer.dart';
+import 'relay/relay.dart';
+import 'session.dart';
+import 'sfu.dart';
+import 'stats/stats.dart';
+
+/// Discriminator for the codecs the shard's `Sfu` should be configured
+/// with. Codec class instances aren't sendable across isolates, so the
+/// main isolate ships a tag and the worker reconstructs the instance.
+enum ShardCodec { vp8, vp9, h264, pcmu, pcma }
+
+/// Boot configuration for a [SessionShard]. All fields must be primitive
+/// or otherwise sendable across isolate boundaries.
+class ShardConfig {
   final String sessionId;
-  final int peerCount;
-  final List<String> peerIds;
-  final int rtpForwarded;
-  final int rtcpForwarded;
 
-  const ShardStats({
+  /// Address the shard's UDP transports bind on.
+  final String bindAddress;
+
+  /// First UDP port available to this shard. The shard's [Sfu]
+  /// allocates `rtpBasePort + i` per transport. The orchestrator must
+  /// hand out non-overlapping ranges per shard.
+  final int rtpBasePort;
+
+  /// Optional override for the host candidate IP.
+  final String? announceAddress;
+
+  final List<ShardCodec> videoCodecs;
+  final List<ShardCodec> audioCodecs;
+
+  /// Quiet mode (suppress chatty stdout in the worker).
+  final bool quiet;
+
+  /// Phase 12 — when this SFU is *not* the owner of [sessionId], the
+  /// id of the local SFU node (used to tag the cascade so the owner
+  /// can deduplicate). Pair with [upstreamSfuId] / [upstreamHost] /
+  /// [upstreamPort] to make the worker auto-attach an outbound
+  /// cascade bridge on boot.
+  final String? selfSfuId;
+
+  /// Phase 12 — owner SFU id (for log/diagnostic tagging only).
+  final String? upstreamSfuId;
+
+  /// Phase 12 — owner SFU's relay UDP host. When non-null the worker
+  /// emits a [CascadeOutboundEvent] for every relay frame it wants to
+  /// send upstream, tagged with bridgeId 'upstream'. Main routes that
+  /// to the actual UDP socket.
+  final String? upstreamHost;
+
+  /// Phase 12 — owner SFU's relay UDP port.
+  final int? upstreamPort;
+
+  const ShardConfig({
     required this.sessionId,
-    required this.peerCount,
-    required this.peerIds,
-    required this.rtpForwarded,
-    required this.rtcpForwarded,
+    required this.bindAddress,
+    required this.rtpBasePort,
+    this.announceAddress,
+    this.videoCodecs = const [ShardCodec.vp8],
+    this.audioCodecs = const [ShardCodec.pcmu],
+    this.quiet = false,
+    this.selfSfuId,
+    this.upstreamSfuId,
+    this.upstreamHost,
+    this.upstreamPort,
   });
-
-  Map<String, Object?> toJson() => {
-        'sessionId': sessionId,
-        'peerCount': peerCount,
-        'peerIds': peerIds,
-        'rtpForwarded': rtpForwarded,
-        'rtcpForwarded': rtcpForwarded,
-      };
-
-  factory ShardStats._fromMap(Map<dynamic, dynamic> m) => ShardStats(
-        sessionId: m['sessionId'] as String,
-        peerCount: m['peerCount'] as int,
-        peerIds: (m['peerIds'] as List).cast<String>(),
-        rtpForwarded: m['rtpForwarded'] as int,
-        rtcpForwarded: m['rtcpForwarded'] as int,
-      );
 }
 
-/// Main-isolate handle to a per-session worker isolate.
-///
-/// Each call sends a tagged request to the worker and completes a
-/// `Completer` when the matching reply arrives. The worker is
-/// single-threaded so requests are processed in arrival order.
+/// Reasons a [SessionShard] may close itself.
+enum ShardCloseReason { idle, mainRequested, error }
+
+/// Events the worker emits asynchronously back to the main isolate.
+sealed class ShardEvent {
+  final String sessionId;
+  const ShardEvent(this.sessionId);
+}
+
+/// Trickle ICE candidate gathered on a peer's PC.
+class IceCandidateEvent extends ShardEvent {
+  final String uid;
+  final String target; // 'pub' | 'sub'
+  final String? candidate;
+  final String? sdpMid;
+  final int? sdpMLineIndex;
+  const IceCandidateEvent({
+    required String sessionId,
+    required this.uid,
+    required this.target,
+    required this.candidate,
+    required this.sdpMid,
+    required this.sdpMLineIndex,
+  }) : super(sessionId);
+}
+
+/// Server-initiated subscriber offer that must be sent to the client.
+class SubscriberOfferEvent extends ShardEvent {
+  final String uid;
+  final String sdp;
+  const SubscriberOfferEvent({
+    required String sessionId,
+    required this.uid,
+    required this.sdp,
+  }) : super(sessionId);
+}
+
+/// Lifecycle event observed inside the session.
+class PeerLifecycleEvent extends ShardEvent {
+  final String uid;
+  final bool joined;
+  const PeerLifecycleEvent({
+    required String sessionId,
+    required this.uid,
+    required this.joined,
+  }) : super(sessionId);
+}
+
+/// ICE connection-state change observed on either PC.
+class IceStateEvent extends ShardEvent {
+  final String uid;
+  final String target;
+  final String state;
+  const IceStateEvent({
+    required String sessionId,
+    required this.uid,
+    required this.target,
+    required this.state,
+  }) : super(sessionId);
+}
+
+/// Worker has shut itself down. After this no further events arrive
+/// and any RPC will throw.
+class ShardClosedEvent extends ShardEvent {
+  final ShardCloseReason reason;
+  final String? message;
+  const ShardClosedEvent({
+    required String sessionId,
+    required this.reason,
+    this.message,
+  }) : super(sessionId);
+}
+
+/// Cluster cascade frame the worker wants to ship out over the main-
+/// isolate UDP relay hub. Tagged with [bridgeId] so main can route to
+/// the right remote SFU endpoint.
+class CascadeOutboundEvent extends ShardEvent {
+  final String bridgeId;
+  final CascadeRelayKind kind;
+  final List<int> bytes;
+  const CascadeOutboundEvent({
+    required String sessionId,
+    required this.bridgeId,
+    required this.kind,
+    required this.bytes,
+  }) : super(sessionId);
+}
+
+/// Worker telling main that an inbound cascade bridge is no longer
+/// needed (the underlying [RelayPeer] closed). Main may reclaim its
+/// endpoint mapping.
+class CascadeBridgeClosedEvent extends ShardEvent {
+  final String bridgeId;
+  const CascadeBridgeClosedEvent({
+    required String sessionId,
+    required this.bridgeId,
+  }) : super(sessionId);
+}
+
+/// A remote SFU announced a stream over a cascade bridge and the
+/// worker just published it into the local session as a relayed
+/// receiver. Useful for tests and for cluster-wide observability.
+class RelayedStreamEvent extends ShardEvent {
+  final String bridgeId;
+  final String mid;
+  final String kind; // 'audio' | 'video'
+  final int primarySsrc;
+  const RelayedStreamEvent({
+    required String sessionId,
+    required this.bridgeId,
+    required this.mid,
+    required this.kind,
+    required this.primarySsrc,
+  }) : super(sessionId);
+}
+
+/// Main-isolate handle to a per-session worker isolate. Spawn via
+/// [SessionShard.spawn], drive signaling via the methods below, and
+/// observe asynchronous notifications via [events].
 class SessionShard {
   final String sessionId;
+  final ShardConfig config;
   final Isolate _isolate;
   final SendPort _toWorker;
   final ReceivePort _fromWorker;
   final Map<int, Completer<Object?>> _pending = {};
+  final StreamController<ShardEvent> _events =
+      StreamController<ShardEvent>.broadcast();
   int _nextReqId = 1;
   bool _closed = false;
 
-  SessionShard._(
-      this.sessionId, this._isolate, this._toWorker, this._fromWorker) {
-    _fromWorker.listen(_onReply);
+  SessionShard._(this.sessionId, this.config, this._isolate, this._toWorker,
+      this._fromWorker) {
+    _fromWorker.listen(_onMessage);
   }
 
-  /// Spawn a fresh worker isolate dedicated to [sessionId].
-  static Future<SessionShard> spawn(String sessionId) async {
+  /// Stream of asynchronous events emitted by the worker.
+  Stream<ShardEvent> get events => _events.stream;
+
+  /// `true` once [close] has been called or the worker self-closed.
+  bool get isClosed => _closed;
+
+  /// Spawn a new worker isolate dedicated to [config.sessionId].
+  static Future<SessionShard> spawn(ShardConfig config) async {
     final handshake = ReceivePort();
     final replies = ReceivePort();
     final iso = await Isolate.spawn<_BootMsg>(
       _workerMain,
-      _BootMsg(sessionId, handshake.sendPort, replies.sendPort),
-      debugName: 'session-shard:$sessionId',
+      _BootMsg(config, handshake.sendPort, replies.sendPort),
+      debugName: 'session-shard:${config.sessionId}',
+      errorsAreFatal: false,
     );
     final toWorker = await handshake.first as SendPort;
     handshake.close();
-    return SessionShard._(sessionId, iso, toWorker, replies);
+    return SessionShard._(config.sessionId, config, iso, toWorker, replies);
   }
 
-  void _onReply(dynamic msg) {
+  // ----- RPC ----------------------------------------------------------
+
+  /// Create a Peer in the worker for [uid].
+  Future<void> join(String uid,
+      {bool noPublish = false, bool noSubscribe = false}) async {
+    await _call('join', {
+      'uid': uid,
+      'noPublish': noPublish,
+      'noSubscribe': noSubscribe,
+    });
+  }
+
+  /// Apply the client's publisher offer; returns the server-side answer SDP.
+  Future<String> applyPublisherOffer(String uid, String offerSdp) async {
+    final r = await _call('pubOffer', {'uid': uid, 'sdp': offerSdp}) as String;
+    return r;
+  }
+
+  /// Apply the client's answer to a server-issued subscriber offer.
+  Future<void> applySubscriberAnswer(String uid, String answerSdp) async {
+    await _call('subAnswer', {'uid': uid, 'sdp': answerSdp});
+  }
+
+  /// Add a trickled ICE candidate. [target] is `'pub'` or `'sub'`.
+  Future<void> trickle(
+    String uid,
+    String target, {
+    required String? candidate,
+    required String? sdpMid,
+    required int? sdpMLineIndex,
+  }) async {
+    await _call('trickle', {
+      'uid': uid,
+      'target': target,
+      'candidate': candidate,
+      'sdpMid': sdpMid,
+      'sdpMLineIndex': sdpMLineIndex,
+    });
+  }
+
+  /// Drop a peer from the session.
+  Future<void> leave(String uid) async {
+    await _call('leave', {'uid': uid});
+  }
+
+  /// Snapshot stats for this shard's session.
+  Future<Map<String, Object?>> snapshotJson() async {
+    final r = await _call('snapshot') as Map<dynamic, dynamic>;
+    return r.cast<String, Object?>();
+  }
+
+  /// Phase 12 — attach a new cascade bridge inside the worker.
+  ///
+  /// The worker creates a synthetic [RelayTransport] that emits
+  /// [CascadeOutboundEvent]s back to main and accepts inbound bytes
+  /// via [deliverRelayInbound]. [role] picks whether the worker
+  /// initiates the relay handshake (outbound) or waits for it
+  /// (inbound).
+  Future<void> cascadeAttach({
+    required String bridgeId,
+    required CascadeBridgeRole role,
+    required String remoteId,
+  }) async {
+    await _call('bridgeAttach', {
+      'bridgeId': bridgeId,
+      'role': role.index,
+      'remoteId': remoteId,
+    });
+  }
+
+  /// Phase 12 — detach (and close) a cascade bridge.
+  Future<void> cascadeDetach(String bridgeId) async {
+    await _call('bridgeDetach', {'bridgeId': bridgeId});
+  }
+
+  /// Phase 13 — snapshot of every cascade bridge inside the worker.
+  /// Each entry exposes role, RTP packet count, established flag, and
+  /// the number of exported / relayed receivers.
+  Future<List<Map<String, Object?>>> cascadeBridgeStats() async {
+    final r = await _call('bridgeStats') as List;
+    return r
+        .map((e) => (e as Map).cast<String, Object?>())
+        .toList(growable: false);
+  }
+
+  /// Phase 12 — inject a relay frame received on the main-isolate UDP
+  /// hub for [bridgeId].
+  Future<void> deliverRelayInbound(
+    String bridgeId,
+    CascadeRelayKind kind,
+    Uint8List bytes,
+  ) async {
+    await _call('relayIn', {
+      'bridgeId': bridgeId,
+      'kind': kind.index,
+      'bytes': bytes,
+    });
+  }
+
+  /// Tear the worker down. Idempotent; safe to call after the worker
+  /// has self-closed.
+  Future<void> close() async {
+    if (_closed) return;
+    _closed = true;
+    try {
+      await _call('close').timeout(const Duration(seconds: 3));
+    } catch (_) {
+      // worker may already be gone
+    }
+    await _events.close();
+    _fromWorker.close();
+    _isolate.kill(priority: Isolate.immediate);
+    for (final c in _pending.values) {
+      if (!c.isCompleted) {
+        c.completeError(StateError('SessionShard($sessionId) closed'));
+      }
+    }
+    _pending.clear();
+  }
+
+  // ----- internals ---------------------------------------------------
+
+  void _onMessage(dynamic msg) {
     if (msg is! Map) return;
     final id = msg['id'];
-    if (id is! int) return;
-    final c = _pending.remove(id);
-    if (c == null) return;
-    final err = msg['error'];
-    if (err != null) {
-      c.completeError(StateError(err.toString()));
-    } else {
-      c.complete(msg['result']);
+    if (id is int) {
+      final c = _pending.remove(id);
+      if (c == null) return;
+      final err = msg['error'];
+      if (err != null) {
+        c.completeError(StateError(err.toString()));
+      } else {
+        c.complete(msg['result']);
+      }
+      return;
+    }
+    final ev = msg['event'];
+    if (ev is String) {
+      _onEvent(ev, (msg['data'] as Map).cast<String, Object?>());
+    }
+  }
+
+  void _onEvent(String event, Map<String, Object?> data) {
+    switch (event) {
+      case 'ice':
+        _events.add(IceCandidateEvent(
+          sessionId: sessionId,
+          uid: data['uid'] as String,
+          target: data['target'] as String,
+          candidate: data['candidate'] as String?,
+          sdpMid: data['sdpMid'] as String?,
+          sdpMLineIndex: data['sdpMLineIndex'] as int?,
+        ));
+      case 'subOffer':
+        _events.add(SubscriberOfferEvent(
+          sessionId: sessionId,
+          uid: data['uid'] as String,
+          sdp: data['sdp'] as String,
+        ));
+      case 'peerJoined':
+        _events.add(PeerLifecycleEvent(
+          sessionId: sessionId,
+          uid: data['uid'] as String,
+          joined: true,
+        ));
+      case 'peerLeft':
+        _events.add(PeerLifecycleEvent(
+          sessionId: sessionId,
+          uid: data['uid'] as String,
+          joined: false,
+        ));
+      case 'iceState':
+        _events.add(IceStateEvent(
+          sessionId: sessionId,
+          uid: data['uid'] as String,
+          target: data['target'] as String,
+          state: data['state'] as String,
+        ));
+      case 'closed':
+        _events.add(ShardClosedEvent(
+          sessionId: sessionId,
+          reason: ShardCloseReason.values[data['reason'] as int],
+          message: data['message'] as String?,
+        ));
+        _closed = true;
+      case 'relayOut':
+        _events.add(CascadeOutboundEvent(
+          sessionId: sessionId,
+          bridgeId: data['bridgeId'] as String,
+          kind: CascadeRelayKind.values[data['kind'] as int],
+          bytes: (data['bytes'] as List).cast<int>(),
+        ));
+      case 'bridgeClosed':
+        _events.add(CascadeBridgeClosedEvent(
+          sessionId: sessionId,
+          bridgeId: data['bridgeId'] as String,
+        ));
+      case 'relayedStream':
+        _events.add(RelayedStreamEvent(
+          sessionId: sessionId,
+          bridgeId: data['bridgeId'] as String,
+          mid: data['mid'] as String,
+          kind: data['kind'] as String,
+          primarySsrc: data['primarySsrc'] as int,
+        ));
     }
   }
 
@@ -104,73 +464,65 @@ class SessionShard {
     _toWorker.send({'id': id, 'op': op, 'payload': payload});
     return c.future;
   }
-
-  /// Register a peer with the shard. Idempotent.
-  Future<void> addPeer(String peerId) async {
-    await _call('addPeer', peerId);
-  }
-
-  /// Drop a peer from the shard. Idempotent.
-  Future<void> removePeer(String peerId) async {
-    await _call('removePeer', peerId);
-  }
-
-  /// Bump the shard's RTP-forwarded counter by [n] (used for stats).
-  Future<void> recordRtpForwarded(int n) async {
-    await _call('rtp', n);
-  }
-
-  /// Bump the shard's RTCP-forwarded counter by [n].
-  Future<void> recordRtcpForwarded(int n) async {
-    await _call('rtcp', n);
-  }
-
-  /// Snapshot the shard's session state.
-  Future<ShardStats> stats() async {
-    final r = await _call('stats') as Map;
-    return ShardStats._fromMap(r);
-  }
-
-  /// Tear the shard's worker isolate down. Idempotent.
-  Future<void> close() async {
-    if (_closed) return;
-    _closed = true;
-    try {
-      await _call('close');
-    } catch (_) {
-      // Worker may already be gone.
-    }
-    _fromWorker.close();
-    _isolate.kill(priority: Isolate.immediate);
-    // Fail any straggling pendings.
-    for (final c in _pending.values) {
-      if (!c.isCompleted) {
-        c.completeError(StateError('SessionShard($sessionId) closed'));
-      }
-    }
-    _pending.clear();
-  }
 }
 
 class _BootMsg {
-  final String sessionId;
+  final ShardConfig config;
   final SendPort handshake;
   final SendPort replies;
-  const _BootMsg(this.sessionId, this.handshake, this.replies);
+  const _BootMsg(this.config, this.handshake, this.replies);
 }
 
-/// Worker entry point. Keep this top-level so `Isolate.spawn` can
-/// reach it. Holds a tiny in-isolate session model.
+// ===================================================================
+// Worker side (runs in the spawned isolate).
+// ===================================================================
+
 void _workerMain(_BootMsg boot) {
   final inbox = ReceivePort();
-  // Hand our SendPort back so the main proxy can call us.
   boot.handshake.send(inbox.sendPort);
+  final worker = _ShardWorker(boot.config, boot.replies, inbox);
+  worker.start();
+}
 
-  final peerIds = <String>{};
-  var rtpForwarded = 0;
-  var rtcpForwarded = 0;
+class _ShardWorker {
+  final ShardConfig config;
+  final SendPort replies;
+  final ReceivePort inbox;
+  late final Sfu sfu;
+  final Map<String, Peer> peers = {};
+  final Map<String, _CascadeBridge> bridges = {};
+  bool closed = false;
 
-  inbox.listen((msg) {
+  _ShardWorker(this.config, this.replies, this.inbox);
+
+  Session? get _session {
+    for (final p in peers.values) {
+      final s = p.session;
+      if (s != null) return s;
+    }
+    // No peers yet — force-create the session so cascade bridges have
+    // somewhere to publish into. Idempotent in the underlying Sfu.
+    return sfu.getSession(config.sessionId);
+  }
+
+  void start() {
+    sfu = Sfu(WebRTCTransportConfig(
+      bindAddress: InternetAddress(config.bindAddress),
+      rtpBasePort: config.rtpBasePort,
+      announceAddress: config.announceAddress == null
+          ? null
+          : InternetAddress(config.announceAddress!),
+      defaultVideoCodecs: _materialiseCodecs(config.videoCodecs),
+      defaultAudioCodecs: _materialiseCodecs(config.audioCodecs),
+    ));
+    inbox.listen((msg) => _onMessage(msg));
+    // Note: any upstream cascade bridge is attached explicitly by the
+    // main-isolate orchestrator after it subscribes to the event
+    // stream — otherwise the initial cascade-hello relayOut event
+    // would be dropped by the (broadcast) event controller.
+  }
+
+  Future<void> _onMessage(dynamic msg) async {
     if (msg is! Map) return;
     final id = msg['id'] as int?;
     final op = msg['op'] as String?;
@@ -181,37 +533,453 @@ void _workerMain(_BootMsg boot) {
     String? error;
     try {
       switch (op) {
-        case 'addPeer':
-          peerIds.add(payload as String);
+        case 'join':
+          await _join((payload as Map).cast<String, Object?>());
           result = null;
-        case 'removePeer':
-          peerIds.remove(payload as String);
+        case 'pubOffer':
+          result = await _pubOffer((payload as Map).cast<String, Object?>());
+        case 'subAnswer':
+          await _subAnswer((payload as Map).cast<String, Object?>());
           result = null;
-        case 'rtp':
-          rtpForwarded += (payload as int);
+        case 'trickle':
+          await _trickle((payload as Map).cast<String, Object?>());
           result = null;
-        case 'rtcp':
-          rtcpForwarded += (payload as int);
+        case 'leave':
+          await _leave((payload as Map).cast<String, Object?>());
           result = null;
-        case 'stats':
-          result = {
-            'sessionId': boot.sessionId,
-            'peerCount': peerIds.length,
-            'peerIds': peerIds.toList(),
-            'rtpForwarded': rtpForwarded,
-            'rtcpForwarded': rtcpForwarded,
-          };
+        case 'snapshot':
+          result = snapshotSfu(sfu).toJson();
+        case 'bridgeStats':
+          result = _bridgeStats();
+        case 'bridgeAttach':
+          _bridgeAttach((payload as Map).cast<String, Object?>());
+          result = null;
+        case 'bridgeDetach':
+          await _bridgeDetach((payload as Map).cast<String, Object?>());
+          result = null;
+        case 'relayIn':
+          _relayIn((payload as Map).cast<String, Object?>());
+          result = null;
         case 'close':
           result = null;
-          boot.replies.send({'id': id, 'result': result});
-          inbox.close();
+          replies.send({'id': id, 'result': result});
+          await _shutdown(ShardCloseReason.mainRequested);
           return;
         default:
           error = 'unknown op: $op';
       }
-    } catch (e) {
-      error = e.toString();
+    } catch (e, st) {
+      error = '$e\n$st';
     }
-    boot.replies.send({'id': id, 'result': result, 'error': error});
+    replies.send({'id': id, 'result': result, 'error': error});
+  }
+
+  Future<void> _join(Map<String, Object?> p) async {
+    final uid = p['uid'] as String;
+    if (peers.containsKey(uid)) return;
+    final noPublish = (p['noPublish'] as bool?) ?? false;
+    final noSubscribe = (p['noSubscribe'] as bool?) ?? false;
+    final peer = Peer(sfu);
+    peer.onPublisherIceCandidate = (c) => _emitIce(uid, 'pub', c);
+    peer.onSubscriberIceCandidate = (c) => _emitIce(uid, 'sub', c);
+    peer.onSubscriberNegotiationNeeded = () => _emitSubOffer(uid);
+    peer.onIceConnectionStateChange =
+        (target, s) => _emitIceState(uid, target, s);
+    await peer.join(
+      sid: config.sessionId,
+      uid: uid,
+      joinConfig:
+          PeerJoinConfig(noPublish: noPublish, noSubscribe: noSubscribe),
+    );
+    peers[uid] = peer;
+    _emitEvent('peerJoined', {'uid': uid});
+
+    // Hook session-level events (idempotent — addPeer fires once per peer).
+    final session = peer.session;
+    if (session != null) {
+      session.onPeerLeft ??= (gone) {
+        _emitEvent('peerLeft', {'uid': gone.id});
+      };
+    }
+  }
+
+  Future<String> _pubOffer(Map<String, Object?> p) async {
+    final uid = p['uid'] as String;
+    final sdp = p['sdp'] as String;
+    final peer = peers[uid];
+    if (peer == null) {
+      throw StateError('unknown uid $uid');
+    }
+    final answer = await peer.answerPublisherOffer(sdp);
+    return answer.sdp;
+  }
+
+  Future<void> _subAnswer(Map<String, Object?> p) async {
+    final uid = p['uid'] as String;
+    final sdp = p['sdp'] as String;
+    final peer = peers[uid];
+    if (peer == null) return;
+    await peer.setSubscriberAnswer(sdp);
+  }
+
+  Future<void> _trickle(Map<String, Object?> p) async {
+    final uid = p['uid'] as String;
+    final target = p['target'] as String;
+    final cand = RTCIceCandidate(
+      candidate: (p['candidate'] as String?) ?? '',
+      sdpMid: p['sdpMid'] as String?,
+      sdpMLineIndex: p['sdpMLineIndex'] as int?,
+    );
+    final peer = peers[uid];
+    if (peer == null) return;
+    if (target == 'pub') {
+      await peer.addPublisherIceCandidate(cand);
+    } else {
+      await peer.addSubscriberIceCandidate(cand);
+    }
+  }
+
+  Future<void> _leave(Map<String, Object?> p) async {
+    final uid = p['uid'] as String;
+    final peer = peers.remove(uid);
+    if (peer == null) return;
+    await peer.close();
+    if (peers.isEmpty) {
+      // Session is empty — let the orchestrator reap us.
+      await _shutdown(ShardCloseReason.idle);
+    }
+  }
+
+  void _emitIce(String uid, String target, RTCIceCandidate? c) {
+    if (c == null) return;
+    _emitEvent('ice', {
+      'uid': uid,
+      'target': target,
+      'candidate': c.candidate,
+      'sdpMid': c.sdpMid,
+      'sdpMLineIndex': c.sdpMLineIndex,
+    });
+  }
+
+  void _emitSubOffer(String uid) {
+    final peer = peers[uid];
+    if (peer == null) return;
+    // Build asynchronously — negotiationneeded callback is sync void.
+    () async {
+      try {
+        final offer = await peer.createSubscriberOffer();
+        _emitEvent('subOffer', {'uid': uid, 'sdp': offer.sdp});
+      } catch (e) {
+        // Best-effort; surface as an iceState-style event for visibility.
+        _emitEvent('iceState',
+            {'uid': uid, 'target': 'sub', 'state': 'subOfferError:$e'});
+      }
+    }();
+  }
+
+  void _emitIceState(String uid, String target, RTCIceConnectionState state) {
+    _emitEvent('iceState', {'uid': uid, 'target': target, 'state': state.name});
+  }
+
+  void _emitEvent(String name, Map<String, Object?> data) {
+    if (closed) return;
+    replies.send({'event': name, 'data': data});
+  }
+
+  Future<void> _shutdown(ShardCloseReason reason, [String? message]) async {
+    if (closed) return;
+    closed = true;
+    try {
+      for (final b in bridges.values.toList()) {
+        await b.close();
+      }
+      bridges.clear();
+      for (final p in peers.values.toList()) {
+        await p.close();
+      }
+      peers.clear();
+      await sfu.close();
+    } catch (_) {
+      // best-effort
+    }
+    replies.send({
+      'event': 'closed',
+      'data': {'reason': reason.index, 'message': message},
+    });
+    inbox.close();
+  }
+
+  // ---- Phase 12 cascade bridges -----------------------------------
+
+  void _bridgeAttach(Map<String, Object?> p) {
+    final bridgeId = p['bridgeId'] as String;
+    final role = CascadeBridgeRole.values[p['role'] as int];
+    final remoteId = p['remoteId'] as String;
+    _attachBridge(bridgeId: bridgeId, role: role, remoteId: remoteId);
+  }
+
+  void _attachBridge({
+    required String bridgeId,
+    required CascadeBridgeRole role,
+    required String remoteId,
+  }) {
+    if (bridges.containsKey(bridgeId)) return;
+    final session = _session;
+    if (session == null) return;
+    final transport = _BridgeTransport(
+      bridgeId: bridgeId,
+      worker: this,
+    );
+    final relay = RelayPeer.over(
+      remoteId: remoteId,
+      session: session,
+      transport: transport,
+    );
+    final bridge = _CascadeBridge(
+      bridgeId: bridgeId,
+      role: role,
+      transport: transport,
+      relay: relay,
+      session: session,
+    );
+    bridges[bridgeId] = bridge;
+    relay.onEstablished = () => bridge.exportLocalProducers();
+    relay.onRelayedStream = (recv) {
+      // Count every RTP packet that arrives on this relayed receiver
+      // so tests / observability can verify the data plane.
+      recv.addRtpTap((_) => bridge.inboundRtpPackets++);
+      _emitEvent('relayedStream', {
+        'bridgeId': bridgeId,
+        'mid': recv.stream.mid,
+        'kind': recv.stream.kind,
+        'primarySsrc': recv.primarySsrc,
+      });
+    };
+    if (role == CascadeBridgeRole.outbound) {
+      // Send the cascade-hello so the owner can find us.
+      transport.sendControl({
+        'type': 'cascade-hello',
+        'sessionId': config.sessionId,
+        'fromSfu': config.selfSfuId,
+      });
+    }
+    relay.start();
+  }
+
+  Future<void> _bridgeDetach(Map<String, Object?> p) async {
+    final bridgeId = p['bridgeId'] as String;
+    final b = bridges.remove(bridgeId);
+    if (b == null) return;
+    await b.close();
+  }
+
+  void _relayIn(Map<String, Object?> p) {
+    final bridgeId = p['bridgeId'] as String;
+    final kind = CascadeRelayKind.values[p['kind'] as int];
+    final raw = p['bytes'];
+    final bytes =
+        raw is Uint8List ? raw : Uint8List.fromList((raw as List).cast<int>());
+    final b = bridges[bridgeId];
+    if (b == null) return;
+    b.transport.receive(kind, bytes);
+  }
+
+  List<Map<String, Object?>> _bridgeStats() {
+    return [
+      for (final b in bridges.values)
+        {
+          'bridgeId': b.bridgeId,
+          'role': b.role.index,
+          'exports': b.exports.length,
+          'inboundRtpPackets': b.inboundRtpPackets,
+          'relayedReceivers': b.relay.relayedReceivers.length,
+          'established': b.relay.established,
+        }
+    ];
+  }
+
+  void emitRelayOut(String bridgeId, CascadeRelayKind kind, Uint8List bytes) {
+    if (closed) return;
+    _emitEvent('relayOut', {
+      'bridgeId': bridgeId,
+      'kind': kind.index,
+      'bytes': bytes,
+    });
+  }
+
+  static List<SdpCodec> _materialiseCodecs(List<ShardCodec> tags) {
+    final out = <SdpCodec>[];
+    for (final t in tags) {
+      switch (t) {
+        case ShardCodec.vp8:
+          out.add(Vp8Codec());
+        case ShardCodec.vp9:
+          out.add(Vp9Codec());
+        case ShardCodec.h264:
+          out.add(H264Codec());
+        case ShardCodec.pcmu:
+          out.add(PcmuCodec());
+        case ShardCodec.pcma:
+          out.add(PcmaCodec());
+      }
+    }
+    return out;
+  }
+}
+
+// ===================================================================
+// Worker-side cascade bridge plumbing.
+// ===================================================================
+
+/// Synthetic [RelayTransport] living inside the worker. Every send
+/// becomes a [CascadeOutboundEvent] back to main; every receive
+/// arriving via the `relayIn` RPC is fanned into the appropriate
+/// [RelayPeer] callback.
+class _BridgeTransport implements RelayTransport {
+  final String bridgeId;
+  final _ShardWorker worker;
+
+  void Function(Map<String, Object?> msg)? _onControl;
+  void Function(Uint8List pkt)? _onRtp;
+  void Function(Uint8List pkt)? _onRtcp;
+  bool _closed = false;
+
+  _BridgeTransport({required this.bridgeId, required this.worker});
+
+  @override
+  set onControl(void Function(Map<String, Object?> msg) cb) => _onControl = cb;
+
+  @override
+  set onRtp(void Function(Uint8List pkt) cb) => _onRtp = cb;
+
+  @override
+  set onRtcp(void Function(Uint8List pkt) cb) => _onRtcp = cb;
+
+  @override
+  void sendControl(Map<String, Object?> msg) {
+    if (_closed) return;
+    final json = utf8JsonEncode(msg);
+    worker.emitRelayOut(bridgeId, CascadeRelayKind.control, json);
+  }
+
+  @override
+  void sendRtp(Uint8List pkt) {
+    if (_closed) return;
+    worker.emitRelayOut(bridgeId, CascadeRelayKind.rtp, pkt);
+  }
+
+  @override
+  void sendRtcp(Uint8List pkt) {
+    if (_closed) return;
+    worker.emitRelayOut(bridgeId, CascadeRelayKind.rtcp, pkt);
+  }
+
+  @override
+  Future<void> close() async {
+    _closed = true;
+  }
+
+  /// Called by the worker when a frame arrives from main for this
+  /// bridge.
+  void receive(CascadeRelayKind kind, Uint8List bytes) {
+    if (_closed) return;
+    switch (kind) {
+      case CascadeRelayKind.control:
+        final cb = _onControl;
+        if (cb == null) return;
+        try {
+          final decoded = utf8JsonDecode(bytes);
+          if (decoded is Map<String, Object?>) cb(decoded);
+        } catch (_) {
+          // bad control frame — drop
+        }
+      case CascadeRelayKind.rtp:
+        _onRtp?.call(bytes);
+      case CascadeRelayKind.rtcp:
+        _onRtcp?.call(bytes);
+    }
+  }
+}
+
+/// Bookkeeping for one cascade bridge inside the worker.
+class _CascadeBridge {
+  final String bridgeId;
+  final CascadeBridgeRole role;
+  final _BridgeTransport transport;
+  final RelayPeer relay;
+  final Session session;
+  final List<RelayExport> exports = [];
+
+  /// Count of RTP packets received from the remote side over this
+  /// bridge (origin-side: 0; downstream-side: matches what the remote
+  /// SFU forwarded). Useful for end-to-end media tests.
+  int inboundRtpPackets = 0;
+  bool _established = false;
+
+  _CascadeBridge({
+    required this.bridgeId,
+    required this.role,
+    required this.transport,
+    required this.relay,
+    required this.session,
   });
+
+  /// Idempotently push every local (non-cascaded) producer in the
+  /// session up the relay so the remote side can fan it out.
+  void exportLocalProducers() {
+    _established = true;
+    final existing = exports.map((e) => e.mid).toSet();
+    for (final peer in session.peers) {
+      final pub = peer.publisher;
+      if (pub == null) continue;
+      for (final recv in pub.router.receivers) {
+        if (recv.peerId.startsWith('cluster:')) continue;
+        if (existing.contains(recv.stream.mid)) continue;
+        try {
+          final exp = relay.exportReceiver(recv);
+          exports.add(exp);
+          existing.add(exp.mid);
+        } catch (_) {
+          // best-effort
+        }
+      }
+    }
+    // Re-sweep on every new peer that joins.
+    final prev = session.onPeerJoined;
+    session.onPeerJoined = (p) {
+      prev?.call(p);
+      if (_established) exportLocalProducers();
+    };
+  }
+
+  Future<void> close() async {
+    for (final e in exports.toList()) {
+      try {
+        e.stop();
+      } catch (_) {}
+    }
+    exports.clear();
+    try {
+      await relay.close();
+    } catch (_) {}
+  }
+}
+
+/// Tiny JSON helpers — kept here so we don't pull in `dart:convert` at
+/// the top of the file twice.
+Uint8List utf8JsonEncode(Object? value) {
+  return Uint8List.fromList(_jsonUtf8.encode(value));
+}
+
+Object? utf8JsonDecode(Uint8List bytes) {
+  return _jsonUtf8.decode(bytes);
+}
+
+final _jsonUtf8 = _Utf8JsonCodec();
+
+class _Utf8JsonCodec {
+  List<int> encode(Object? value) =>
+      const Utf8Encoder().convert(const JsonEncoder().convert(value));
+  Object? decode(List<int> bytes) =>
+      const JsonDecoder().convert(const Utf8Decoder().convert(bytes));
 }

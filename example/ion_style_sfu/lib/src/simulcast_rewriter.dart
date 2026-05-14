@@ -9,6 +9,7 @@
 
 import 'dart:typed_data';
 
+import 'byte_pool.dart';
 import 'rtp_header.dart';
 
 class _LayerOffset {
@@ -54,6 +55,10 @@ class SimulcastRewriter {
   /// Currently forwarded layer's RID. Empty string for non-simulcast.
   String currentLayer;
 
+  /// Phase 10 — buffer pool used to allocate the rewritten copy. Defaults
+  /// to the per-isolate [BytePool.instance]; tests/benches may override.
+  final BytePool pool;
+
   final Map<String, _LayerOffset> _layerOffsets = {};
   bool _resyncOnNext = true;
 
@@ -67,7 +72,8 @@ class SimulcastRewriter {
     required this.rewrittenPrimarySsrc,
     required this.rewrittenRtxSsrc,
     required this.currentLayer,
-  });
+    BytePool? pool,
+  }) : pool = pool ?? BytePool.instance;
 
   /// Switch the forwarded layer. Returns true when [rid] differs from
   /// the prior current layer (i.e. a real switch happened).
@@ -128,7 +134,7 @@ class SimulcastRewriter {
         ? (rewrittenRtxSsrc ?? rewrittenPrimarySsrc)
         : rewrittenPrimarySsrc;
 
-    final out = Uint8List.fromList(rtp);
+    final out = pool.acquireFrom(rtp);
     out[8] = (outSsrc >> 24) & 0xff;
     out[9] = (outSsrc >> 16) & 0xff;
     out[10] = (outSsrc >> 8) & 0xff;

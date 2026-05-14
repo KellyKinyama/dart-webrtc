@@ -2,6 +2,7 @@
 
 import 'dart:io';
 
+import 'package:pure_dart_webrtc_ion_style_sfu/src/cluster/locator.dart';
 import 'package:pure_dart_webrtc_ion_style_sfu/src/sfu_server.dart';
 
 Future<void> main(List<String> arguments) async {
@@ -9,6 +10,13 @@ Future<void> main(List<String> arguments) async {
   int wsPort = 9090;
   int rtpBase = 51000;
   String? announceIp;
+  String? authToken;
+  int maxPeersPerRoom = 0;
+  int maxRooms = 0;
+  String? selfId;
+  int? relayPort;
+  String? relaySecret;
+  final clusterPeers = <ClusterPeer>[];
 
   for (var i = 0; i < arguments.length; i++) {
     switch (arguments[i]) {
@@ -24,19 +32,94 @@ Future<void> main(List<String> arguments) async {
       case '--announce-ip':
         announceIp = arguments[++i];
         break;
+      case '--auth-token':
+        authToken = arguments[++i];
+        break;
+      case '--max-peers-per-room':
+        maxPeersPerRoom = int.parse(arguments[++i]);
+        break;
+      case '--max-rooms':
+        maxRooms = int.parse(arguments[++i]);
+        break;
+      case '--self-id':
+        selfId = arguments[++i];
+        break;
+      case '--relay-port':
+        relayPort = int.parse(arguments[++i]);
+        break;
+      case '--relay-secret':
+        relaySecret = arguments[++i];
+        break;
+      case '--peers':
+        for (final spec in arguments[++i].split(',')) {
+          final s = spec.trim();
+          if (s.isEmpty) continue;
+          clusterPeers.add(ClusterPeer.parse(s));
+        }
+        break;
       case '-h':
       case '--help':
-        stdout.writeln('Usage: dart run bin/sfu_server.dart '
-            '[--ip 0.0.0.0] [--ws-port 9090] [--rtp-base 51000] '
-            '[--announce-ip 1.2.3.4]');
+        stdout.writeln(_help);
         return;
     }
   }
 
-  await runIonStyleSfuServer(
+  if (clusterPeers.isNotEmpty) {
+    selfId ??= clusterPeers.first.id;
+    relayPort ??= wsPort + 1;
+  }
+
+  final handle = await runIonStyleSfuServer(
     ip: ip,
     port: wsPort,
     rtpBase: rtpBase,
     announceIp: announceIp,
+    authToken: authToken,
+    maxPeersPerRoom: maxPeersPerRoom,
+    maxRooms: maxRooms,
+    clusterPeers: clusterPeers,
+    selfClusterId: selfId,
+    relayPort: relayPort,
+    relaySecret: relaySecret,
   );
+
+  // Phase 10 — graceful shutdown on SIGINT/SIGTERM.
+  Future<void> shutdown(ProcessSignal sig) async {
+    stdout.writeln('shutting down ($sig)');
+    await handle.close();
+    exit(0);
+  }
+
+  ProcessSignal.sigint.watch().listen(shutdown);
+  if (!Platform.isWindows) {
+    ProcessSignal.sigterm.watch().listen(shutdown);
+  }
 }
+
+const _help = '''
+Usage: dart run bin/sfu_server.dart [options]
+
+Transport:
+  --ip <addr>             Bind address (default 0.0.0.0)
+  --ws-port <port>        WebSocket / HTTP port (default 9090)
+  --rtp-base <port>       First UDP port for media transports (default 51000)
+  --announce-ip <addr>    Override the host candidate IP (NAT/wildcard binds)
+
+Production:
+  --auth-token <token>    Require this bearer token on /ws/<sid>
+  --max-peers-per-room N  Reject join past N peers in a single room
+  --max-rooms N           Reject cold-create past N concurrent rooms
+
+Cluster (cross-host scaling):
+  --peers host:httpPort:relayPort,...  Cluster membership
+  --self-id host:httpPort              This SFU's id (must match a --peers entry)
+  --relay-port <port>                  UDP port for relay traffic (default ws-port+1)
+  --relay-secret <secret>              HMAC-SHA256 shared secret for relay auth
+
+Endpoints:
+  /ws/<sessionId>     WebSocket signaling (one peer per connection)
+  /stats              JSON snapshot
+  /metrics            Prometheus text exposition v0.0.4
+  /healthz            Liveness + cluster summary
+  /locate?sid=<id>    Resolve a session's owner SFU
+''';
