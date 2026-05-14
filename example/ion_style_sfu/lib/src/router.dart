@@ -82,6 +82,9 @@ class Router {
         codecs: transceiver.codecs,
         stream: s,
       );
+      // Phase 4 — wire the session-level audio observer so audio
+      // tracks contribute their RFC 6464 levels.
+      receiver.audioObserver = session.audioObserver;
       _byId[id] = receiver;
       // Index every layer's primary + RTX SSRC so simulcast packets
       // route to the same receiver regardless of which layer they're

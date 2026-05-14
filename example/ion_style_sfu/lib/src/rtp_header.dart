@@ -108,3 +108,25 @@ String? decodeRidString(Uint8List? bytes) {
   }
   return sb.toString();
 }
+
+/// One RFC 6464 audio-level reading.
+///
+/// `level` is the negated dBov of the source; 0 represents the loudest
+/// possible level (0 dBov), 127 represents silence (or below). `voice`
+/// reflects the V flag (true = the encoder believes the frame contains
+/// voice activity).
+class AudioLevel {
+  final int level;
+  final bool voice;
+  const AudioLevel(this.level, this.voice);
+}
+
+/// Decode an `urn:ietf:params:rtp-hdrext:ssrc-audio-level` (RFC 6464)
+/// extension payload. The payload is a single byte: 1-bit V flag in
+/// the MSB followed by 7-bit level (-dBov, 0..127). Returns null when
+/// [bytes] is null or empty.
+AudioLevel? decodeAudioLevel(Uint8List? bytes) {
+  if (bytes == null || bytes.isEmpty) return null;
+  final b = bytes[0];
+  return AudioLevel(b & 0x7f, (b & 0x80) != 0);
+}

@@ -31,7 +31,8 @@ class Session {
   final Map<String, Router> _routers = {};
 
   /// Phase 4: audio observer (RFC 6464). Created up-front so callers can
-  /// attach event listeners before the first peer joins.
+  /// attach event listeners before the first peer joins. Started lazily
+  /// when the first peer joins; stopped when the session goes idle.
   final AudioObserver audioObserver = AudioObserver();
 
   bool _closed = false;
@@ -63,7 +64,10 @@ class Session {
     }
     final wasEmpty = _peers.isEmpty;
     _peers[peer.id] = peer;
-    if (wasEmpty) onFirstPeer?.call(peer);
+    if (wasEmpty) {
+      audioObserver.start();
+      onFirstPeer?.call(peer);
+    }
     onPeerJoined?.call(peer);
   }
 
@@ -74,6 +78,7 @@ class Session {
     _routers.remove(peer.id);
     onPeerLeft?.call(peer);
     if (_peers.isEmpty) {
+      audioObserver.stop();
       // Idle session — let the SFU drop us. Phase 8 may keep sessions
       // warm for a configurable grace period.
       sfu.removeSession(id);

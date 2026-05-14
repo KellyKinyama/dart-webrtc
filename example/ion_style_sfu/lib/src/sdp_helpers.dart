@@ -14,6 +14,10 @@ const String _ridExtUri = 'urn:ietf:params:rtp-hdrext:sdes:rtp-stream-id';
 const String _repairedRidExtUri =
     'urn:ietf:params:rtp-hdrext:sdes:repaired-rtp-stream-id';
 
+/// URI of `urn:ietf:params:rtp-hdrext:ssrc-audio-level` (RFC 6464).
+const String _audioLevelExtUri =
+    'urn:ietf:params:rtp-hdrext:ssrc-audio-level';
+
 /// Resolve the extmap id for [uri] in a parsed m= section, or null when
 /// not negotiated.
 int? _extIdFor(Map m, String uri) {
@@ -137,10 +141,10 @@ List<ProducerStream> parsePublisherOffer({
     // the RID extension on the first packet of each layer.
     final ridExtId = _extIdFor(m, _ridExtUri);
     final repairedRidExtId = _extIdFor(m, _repairedRidExtUri);
+    final audioLevelExtId = _extIdFor(m, _audioLevelExtUri);
     final simulcastRids = _parseSimulcastSendRids(m);
-    final hasModernSimulcast = simGroups.isEmpty &&
-        simulcastRids.length >= 2 &&
-        ridExtId != null;
+    final hasModernSimulcast =
+        simGroups.isEmpty && simulcastRids.length >= 2 && ridExtId != null;
 
     String resolveStreamId(int ssrc) {
       final raw = msids[ssrc];
@@ -166,7 +170,8 @@ List<ProducerStream> parsePublisherOffer({
                 (_) => true,
                 orElse: () => null,
               );
-      final cname = firstPrimary != null ? (cnames[firstPrimary] ?? peerId) : peerId;
+      final cname =
+          firstPrimary != null ? (cnames[firstPrimary] ?? peerId) : peerId;
       final streamId =
           firstPrimary != null ? resolveStreamId(firstPrimary) : peerId;
       final trackId = firstPrimary != null
@@ -185,6 +190,7 @@ List<ProducerStream> parsePublisherOffer({
         msidTrack: trackId,
         ridExtId: ridExtId,
         repairedRidExtId: repairedRidExtId,
+        audioLevelExtId: audioLevelExtId,
       ));
       continue; // skip the SSRC-walk loop for this m= section
     }
@@ -228,6 +234,7 @@ List<ProducerStream> parsePublisherOffer({
           cname: cname,
           msidStream: streamId,
           msidTrack: trackId,
+          audioLevelExtId: audioLevelExtId,
         ));
       } else {
         out.add(ProducerStream(
@@ -238,6 +245,7 @@ List<ProducerStream> parsePublisherOffer({
           cname: cname,
           msidStream: streamId,
           msidTrack: trackId,
+          audioLevelExtId: audioLevelExtId,
         ));
       }
     }

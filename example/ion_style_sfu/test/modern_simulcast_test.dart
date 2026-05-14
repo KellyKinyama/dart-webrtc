@@ -72,8 +72,7 @@ Uint8List _rtpWithRid({
 
 void main() {
   group('parsePublisherOffer modern simulcast (no SIM group)', () {
-    test('builds one ProducerStream with 3 placeholder layers + ridExtId',
-        () {
+    test('builds one ProducerStream with 3 placeholder layers + ridExtId', () {
       final streams =
           parsePublisherOffer(peerId: 'user1', offerSdp: _modernOffer);
       expect(streams, hasLength(1));
@@ -102,8 +101,7 @@ void main() {
       );
     }
 
-    test('first packet on an unknown SSRC binds it to the matching RID',
-        () {
+    test('first packet on an unknown SSRC binds it to the matching RID', () {
       final r = build();
       final learned = <(int, String, bool)>[];
       r.onSsrcLearned = (ssrc, layer, {required bool isRtx}) {
@@ -119,8 +117,7 @@ void main() {
       ]);
     });
 
-    test('subsequent packets on a bound SSRC do not re-fire the hook',
-        () {
+    test('subsequent packets on a bound SSRC do not re-fire the hook', () {
       final r = build();
       var fires = 0;
       r.onSsrcLearned = (_, __, {required bool isRtx}) => fires++;
@@ -141,8 +138,7 @@ void main() {
       expect(learned, [(0x99999999, 'f', true)]);
     });
 
-    test('packet with an unknown RID is dropped (no binding, no fanout)',
-        () {
+    test('packet with an unknown RID is dropped (no binding, no fanout)', () {
       final r = build();
       var fires = 0;
       r.onSsrcLearned = (_, __, {required bool isRtx}) => fires++;

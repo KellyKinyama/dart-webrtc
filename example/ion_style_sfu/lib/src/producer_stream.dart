@@ -41,6 +41,12 @@ class ProducerStream {
   /// SSRCs are not pre-announced.
   final int? repairedRidExtId;
 
+  /// extmap id of `urn:ietf:params:rtp-hdrext:ssrc-audio-level` (RFC
+  /// 6464), or null when the publisher didn't negotiate it. When set
+  /// the [Receiver] feeds every inbound packet's audio-level reading
+  /// to the session's [AudioObserver].
+  final int? audioLevelExtId;
+
   ProducerStream._({
     required this.kind,
     required this.mid,
@@ -50,6 +56,7 @@ class ProducerStream {
     required this.msidTrack,
     this.ridExtId,
     this.repairedRidExtId,
+    this.audioLevelExtId,
   }) : assert(layers.isNotEmpty, 'ProducerStream needs at least one layer');
 
   /// Single-layer factory (preserves the Phase 2 API).
@@ -61,6 +68,7 @@ class ProducerStream {
     required String cname,
     required String msidStream,
     required String msidTrack,
+    int? audioLevelExtId,
   }) =>
       ProducerStream._(
         kind: kind,
@@ -68,6 +76,7 @@ class ProducerStream {
         cname: cname,
         msidStream: msidStream,
         msidTrack: msidTrack,
+        audioLevelExtId: audioLevelExtId,
         layers: [
           ProducerLayer(rid: '', primarySsrc: primarySsrc, rtxSsrc: rtxSsrc),
         ],
@@ -83,6 +92,7 @@ class ProducerStream {
     required String msidTrack,
     int? ridExtId,
     int? repairedRidExtId,
+    int? audioLevelExtId,
   }) =>
       ProducerStream._(
         kind: kind,
@@ -93,6 +103,7 @@ class ProducerStream {
         layers: List.unmodifiable(layers),
         ridExtId: ridExtId,
         repairedRidExtId: repairedRidExtId,
+        audioLevelExtId: audioLevelExtId,
       );
 
   /// Highest-quality layer — the default forwarded layer, and the one

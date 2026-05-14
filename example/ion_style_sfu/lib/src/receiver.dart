@@ -11,6 +11,7 @@ import 'dart:typed_data';
 import 'package:pure_dart_webrtc/signal/sdp_v2.dart' show SdpCodec;
 import 'package:pure_dart_webrtc/webrtc/webrtc.dart' show MediaKind;
 
+import 'audio_observer.dart';
 import 'down_track.dart';
 import 'producer_layer.dart';
 import 'producer_stream.dart';
@@ -45,6 +46,11 @@ class Receiver {
   /// straight to this Receiver without re-reading the RID extension.
   void Function(int ssrc, ProducerLayer layer, {required bool isRtx})?
       onSsrcLearned;
+
+  /// Optional audio-level observer fed by [deliverRtp] when the
+  /// publisher negotiated the RFC 6464 `ssrc-audio-level` extension and
+  /// this is an audio receiver. Set by Router on creation.
+  AudioObserver? audioObserver;
 
   final List<DownTrack> _downTracks = [];
 
@@ -131,6 +137,22 @@ class Receiver {
     if (layer == null) return;
     final isRtx = rtxLayer != null;
 
+    // Phase 4 — feed the audio-level observer for primary audio
+    // packets when the extension was negotiated. RTX retransmits are
+    // skipped (they re-send already-observed primary frames).
+    final observer = audioObserver;
+    final levelExtId = stream.audioLevelExtId;
+    if (!isRtx &&
+        observer != null &&
+        levelExtId != null &&
+        kind == MediaKind.audio) {
+      final exts = readRtpExtensions(rtp);
+      final lvl = decodeAudioLevel(exts[levelExtId]);
+      if (lvl != null) {
+        observer.observe(id, lvl.level, voice: lvl.voice);
+      }
+    }
+
     // Snapshot to avoid concurrent-modification if a DownTrack closes
     // during iteration.
     final snap = List<DownTrack>.from(_downTracks, growable: false);
@@ -150,6 +172,7 @@ class Receiver {
   void close() {
     if (_closed) return;
     _closed = true;
+    audioObserver?.forget(id);
     final snap = List<DownTrack>.from(_downTracks, growable: false);
     for (final dt in snap) {
       dt.close();
