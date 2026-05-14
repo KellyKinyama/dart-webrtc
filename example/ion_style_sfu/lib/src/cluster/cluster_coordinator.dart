@@ -126,6 +126,7 @@ class ClusterCoordinator {
         upstreamPort: owner.relayPort,
         bridgeIdleTimeoutMs: base.bridgeIdleTimeoutMs,
         bridgeKeepaliveMs: base.bridgeKeepaliveMs,
+        maxPeersPerSession: base.maxPeersPerSession,
       );
     };
     // Wire up the upstream endpoint as soon as the shard is born.

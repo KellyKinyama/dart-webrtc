@@ -76,6 +76,10 @@ Future<IonSfuServerHandle> runIonStyleSfuServer({
   // consecutive reconnect failures. Null = retry forever (the
   // pre-Phase-23 default).
   int? upstreamReconnectMaxAttempts,
+  // Phase 25 — node-wide cap on simultaneous sessions. Null = no cap.
+  int? maxSessions,
+  // Phase 25 — per-session cap on simultaneous peers. Null = no cap.
+  int? maxPeersPerSession,
 }) async {
   final bindAddr = InternetAddress(ip);
   final advertisedIp = announceIp ??
@@ -90,6 +94,8 @@ Future<IonSfuServerHandle> runIonStyleSfuServer({
     quiet: quiet,
     bridgeIdleTimeoutMs: bridgeIdleTimeoutMs,
     bridgeKeepaliveMs: bridgeKeepaliveMs,
+    maxSessions: maxSessions,
+    maxPeersPerSession: maxPeersPerSession,
   ));
 
   // Optional cluster wiring — hub + locator now; coordinator is
@@ -204,6 +210,9 @@ Future<IonSfuServerHandle> runIonStyleSfuServer({
               upstreamReconnectAttempts: cluster.upstreamReconnectAttempts,
               upstreamReconnectsSucceeded: cluster.upstreamReconnectsSucceeded,
               upstreamReconnectsGivenUp: cluster.upstreamReconnectsGivenUp,
+              sessionsRejectedAtCap: sharded.sessionsRejectedAtCap,
+              sessionCap: maxSessions,
+              peerCap: maxPeersPerSession,
             ));
           } catch (_) {
             // best-effort — never fail /metrics on cluster snapshot
@@ -517,10 +526,34 @@ class _IonPeerSession {
       }
     }
 
-    final shard = await sharded.getOrCreate(sid);
+    final SessionShard shard;
+    try {
+      shard = await sharded.getOrCreate(sid);
+    } on SfuOverloadedException catch (e) {
+      // Phase 25 — node session cap reached.
+      _send({'type': 'error', 'reason': 'serverOverloaded', 'detail': e.message});
+      await ws.close();
+      return;
+    }
     _shard = shard;
     router.register(uid, ws);
-    await shard.join(uid);
+    try {
+      await shard.join(uid);
+    } catch (e) {
+      // Phase 25 — translate cap exceptions to a clean client error.
+      if (e is SessionFullException ||
+          e.toString().contains('SessionFullException')) {
+        _send({
+          'type': 'error',
+          'reason': 'sessionFull',
+          'limit': e is SessionFullException ? e.cap : null,
+        });
+        router.deregister(uid);
+        await ws.close();
+        return;
+      }
+      rethrow;
+    }
     _send({'type': 'joined', 'uid': uid, 'sid': sid});
   }
 

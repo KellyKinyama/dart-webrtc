@@ -89,6 +89,12 @@ class ShardConfig {
   /// reaper does not tear down healthy-but-silent links.
   final int? bridgeKeepaliveMs;
 
+  /// Phase 25 — hard cap on simultaneous peers in this session.
+  /// `null` (default) disables the cap. The worker rejects further
+  /// `join` calls past the cap with [SessionFullException], which
+  /// the orchestrator translates to a 4xx for the client.
+  final int? maxPeersPerSession;
+
   const ShardConfig({
     required this.sessionId,
     required this.bindAddress,
@@ -103,7 +109,20 @@ class ShardConfig {
     this.upstreamPort,
     this.bridgeIdleTimeoutMs,
     this.bridgeKeepaliveMs,
+    this.maxPeersPerSession,
   });
+}
+
+/// Phase 25 — thrown from the worker when a join would push the
+/// session past [ShardConfig.maxPeersPerSession]. Surfaced to main
+/// as the rejected RPC's error string.
+class SessionFullException implements Exception {
+  final String sessionId;
+  final int cap;
+  const SessionFullException(this.sessionId, this.cap);
+  @override
+  String toString() =>
+      'SessionFullException: session $sessionId is full (cap=$cap)';
 }
 
 /// Reasons a [SessionShard] may close itself.
@@ -612,6 +631,13 @@ class _ShardWorker {
   Future<void> _join(Map<String, Object?> p) async {
     final uid = p['uid'] as String;
     if (peers.containsKey(uid)) return;
+    // Phase 25 — enforce the per-session peer cap *before* allocating
+    // any PC resources. New uids past the cap are rejected; existing
+    // uids re-joining are tolerated above (the early-return).
+    final cap = config.maxPeersPerSession;
+    if (cap != null && peers.length >= cap) {
+      throw SessionFullException(config.sessionId, cap);
+    }
     final noPublish = (p['noPublish'] as bool?) ?? false;
     final noSubscribe = (p['noSubscribe'] as bool?) ?? false;
     final peer = Peer(sfu);

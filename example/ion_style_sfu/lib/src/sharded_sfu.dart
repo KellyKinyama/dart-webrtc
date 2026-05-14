@@ -33,6 +33,18 @@ class ShardConfigTemplate {
   /// Phase 19 — propagated as [ShardConfig.bridgeKeepaliveMs].
   final int? bridgeKeepaliveMs;
 
+  /// Phase 25 — hard cap on the number of live shards (sessions)
+  /// per node. Null = unlimited (the pre-Phase-25 default). Hitting
+  /// the cap causes [ShardedSfu.getOrCreate] to throw
+  /// [SfuOverloadedException], which the signaling layer translates
+  /// to HTTP 503.
+  final int? maxSessions;
+
+  /// Phase 25 — propagated as [ShardConfig.maxPeersPerSession].
+  /// Null = unlimited. Worker rejects further join() calls past this
+  /// cap with a SessionFullException.
+  final int? maxPeersPerSession;
+
   const ShardConfigTemplate({
     required this.bindAddress,
     required this.rtpBasePort,
@@ -43,7 +55,19 @@ class ShardConfigTemplate {
     this.quiet = false,
     this.bridgeIdleTimeoutMs,
     this.bridgeKeepaliveMs,
+    this.maxSessions,
+    this.maxPeersPerSession,
   });
+}
+
+/// Phase 25 — thrown by [ShardedSfu.getOrCreate] when the per-node
+/// session cap is reached. Translated to HTTP 503 by the signaling
+/// layer.
+class SfuOverloadedException implements Exception {
+  final String message;
+  const SfuOverloadedException(this.message);
+  @override
+  String toString() => 'SfuOverloadedException: $message';
 }
 
 /// Per-session-isolate registry.
@@ -76,6 +100,10 @@ class ShardedSfu {
 
   ShardedSfu(this.template);
 
+  /// Phase 25 — monotonic counter of session-spawn attempts that
+  /// were rejected because the per-node cap was already hit.
+  int sessionsRejectedAtCap = 0;
+
   /// Live shards (snapshot).
   Iterable<SessionShard> get shards => _shards.values;
   int get shardCount => _shards.length;
@@ -89,6 +117,13 @@ class ShardedSfu {
     if (existing != null) return Future.value(existing);
     final pending = _spawning[sessionId];
     if (pending != null) return pending;
+    // Phase 25 — honour the per-node session cap.
+    final cap = template.maxSessions;
+    if (cap != null && _shards.length + _spawning.length >= cap) {
+      sessionsRejectedAtCap++;
+      throw SfuOverloadedException(
+          'session cap reached ($cap) — cannot spawn $sessionId');
+    }
     final slot = _nextSlot++;
     final base = ShardConfig(
       sessionId: sessionId,
@@ -100,6 +135,7 @@ class ShardedSfu {
       quiet: template.quiet,
       bridgeIdleTimeoutMs: template.bridgeIdleTimeoutMs,
       bridgeKeepaliveMs: template.bridgeKeepaliveMs,
+      maxPeersPerSession: template.maxPeersPerSession,
     );
     final cfg = configure?.call(base) ?? base;
     final f = SessionShard.spawn(cfg).then((shard) {

@@ -285,6 +285,10 @@ String formatPrometheusCluster({
   int upstreamReconnectAttempts = 0,
   int upstreamReconnectsSucceeded = 0,
   int upstreamReconnectsGivenUp = 0,
+  // Phase 25 — overload counters.
+  int sessionsRejectedAtCap = 0,
+  int? sessionCap,
+  int? peerCap,
 }) {
   final out = StringBuffer();
 
@@ -342,6 +346,20 @@ String formatPrometheusCluster({
       'ionsfu_cluster_upstream_reconnect_given_up_total',
       'Upstream-bridge reconnect loops abandoned by the circuit breaker.',
       upstreamReconnectsGivenUp);
+
+  // Phase 25 — overload caps + rejection counter.
+  counter(
+      'ionsfu_sfu_sessions_rejected_total',
+      'Session-spawn attempts rejected because the per-node session cap '
+      'was already reached.',
+      sessionsRejectedAtCap);
+  if (sessionCap != null) {
+    gauge('ionsfu_sfu_session_cap', 'Configured per-node session cap.',
+        sessionCap);
+  }
+  if (peerCap != null) {
+    gauge('ionsfu_sfu_peer_cap', 'Configured per-session peer cap.', peerCap);
+  }
 
   // Per-bridge gauges — labels: session, bridge, role, remote.
   if (bridges.isNotEmpty) {
