@@ -122,10 +122,36 @@ class ShardedSfu {
   /// Look up an existing shard without spawning.
   SessionShard? get(String sessionId) => _shards[sessionId];
 
+  /// Phase 24 — sessions whose close event we already synthesized
+  /// via [closeShard]. The worker's own ShardClosedEvent that
+  /// arrives a moment later is suppressed so subscribers don't see
+  /// the close twice.
+  final Set<String> _suppressNextCloseEvent = {};
+
   /// Tear a single shard down.
-  Future<void> closeShard(String sessionId) async {
+  ///
+  /// [reason] is surfaced to subscribers via a synthetic
+  /// [ShardClosedEvent] so callers can distinguish, e.g., a Phase 24
+  /// circuit-breaker close from a normal idle shutdown. Defaults to
+  /// [ShardCloseReason.mainRequested] for backwards compatibility.
+  Future<void> closeShard(
+    String sessionId, {
+    ShardCloseReason reason = ShardCloseReason.mainRequested,
+    String? message,
+  }) async {
     final s = _shards.remove(sessionId);
-    if (s != null) await s.close();
+    if (s == null) return;
+    // Emit the synthetic close event *before* the actual teardown so
+    // subscribers always see the reason we intended (the worker's
+    // own close path would surface mainRequested).
+    _suppressNextCloseEvent.add(sessionId);
+    onEvent?.call(ShardClosedEvent(
+      sessionId: sessionId,
+      reason: reason,
+      message: message,
+    ));
+    onShardClosed?.call(sessionId);
+    await s.close();
   }
 
   /// Aggregate `/stats` across every live shard.
@@ -184,6 +210,13 @@ class ShardedSfu {
   }
 
   void _onShardEvent(SessionShard shard, ShardEvent event) {
+    if (event is ShardClosedEvent &&
+        _suppressNextCloseEvent.remove(shard.sessionId)) {
+      // Phase 24 — closeShard() already emitted the synthetic event.
+      // Still need to clean up local maps.
+      _shards.remove(shard.sessionId);
+      return;
+    }
     onEvent?.call(event);
     if (event is ShardClosedEvent) {
       _shards.remove(shard.sessionId);

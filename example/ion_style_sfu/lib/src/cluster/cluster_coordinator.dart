@@ -378,6 +378,19 @@ class ClusterCoordinator {
       upstreamReconnectsGivenUp++;
       log('upstream reconnect giving up for ${shard.sessionId} '
           'after $attempts attempts');
+      // Phase 24 — the local non-owner shard is now permanently
+      // useless (no upstream means no media). Reap it so subscribers
+      // see a clean ShardClosedEvent and the worker isolate is
+      // freed. Best-effort: a closeShard race is harmless because
+      // ShardedSfu.closeShard is idempotent on a missing session.
+      _consecutiveFailures.remove(shard.sessionId);
+      sharded
+          .closeShard(shard.sessionId,
+              reason: ShardCloseReason.upstreamUnreachable)
+          .catchError((Object e) {
+        log('shard close after breaker trip failed for '
+            '${shard.sessionId}: $e');
+      });
       return;
     }
     final delayMs = _backoffMs(attempts);

@@ -107,7 +107,14 @@ class ShardConfig {
 }
 
 /// Reasons a [SessionShard] may close itself.
-enum ShardCloseReason { idle, mainRequested, error }
+enum ShardCloseReason {
+  idle,
+  mainRequested,
+  error,
+  // Phase 24 — the cluster's upstream-reconnect circuit breaker
+  // tripped, so this non-owner shard can never reach its owner.
+  upstreamUnreachable,
+}
 
 /// Events the worker emits asynchronously back to the main isolate.
 sealed class ShardEvent {
