@@ -120,8 +120,7 @@ void main() {
         octetCount: 0,
       );
       final map = RtcpSsrcMap()..primary[0x11111111] = 0x99999999;
-      final out = rewriteRtcpForSubscriber(sr, map,
-          tsOffsetFor: (_) => 500);
+      final out = rewriteRtcpForSubscriber(sr, map, tsOffsetFor: (_) => 500);
       expect(_r32(out, 4), 0x22222222);
       expect(_r32(out, 16), 1000); // ts not shifted either
     });
@@ -183,8 +182,7 @@ void main() {
         octetCount: 0,
       );
       final map = RtcpSsrcMap()..primary[0x11111111] = 0x99999999;
-      final out = rewriteRtcpForSubscriber(sr, map,
-          tsOffsetFor: (_) => 0x200);
+      final out = rewriteRtcpForSubscriber(sr, map, tsOffsetFor: (_) => 0x200);
       // 0xFFFFFF00 + 0x200 = 0x100000100 → wrap → 0x100
       expect(_r32(out, 16), 0x100);
     });
@@ -245,8 +243,8 @@ void main() {
         ..setRange(0, sr.length, sr)
         ..setRange(sr.length, sr.length + sdes.length, sdes);
       final map = RtcpSsrcMap()..primary[0x11111111] = 0x99999999;
-      final out = rewriteRtcpForSubscriber(compound, map,
-          tsOffsetFor: (_) => 50);
+      final out =
+          rewriteRtcpForSubscriber(compound, map, tsOffsetFor: (_) => 50);
       expect(_r32(out, 4), 0x99999999);
       expect(_r32(out, 16), 150);
       // SDES preserved verbatim.
@@ -275,8 +273,7 @@ void main() {
 
     test('truncated header is tolerated (returns copy)', () {
       final buf = Uint8List.fromList([0x80, 200, 0]); // 3 bytes
-      final out =
-          rewriteRtcpForSubscriber(buf, RtcpSsrcMap()..primary[1] = 2);
+      final out = rewriteRtcpForSubscriber(buf, RtcpSsrcMap()..primary[1] = 2);
       expect(out, equals(buf));
     });
 

@@ -26,5 +26,7 @@ export 'src/twcc/remb.dart';
 export 'src/twcc/twcc_stamper.dart';
 export 'src/bwe.dart';
 export 'src/relay/relay.dart';
+export 'src/session_shard.dart';
+export 'src/sharded_sfu.dart';
 export 'src/stats/stats.dart';
 export 'src/sfu_server.dart';
