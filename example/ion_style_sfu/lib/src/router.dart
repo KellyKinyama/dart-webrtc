@@ -186,6 +186,59 @@ class Router {
   List<ProducerStream> get producerStreams =>
       [for (final r in _byId.values) r.stream];
 
+  /// Phase 6 — publish a [ProducerStream] that originated on a remote
+  /// SFU. Builds a [Receiver] (with no PeerConnection-backed codec
+  /// list, since the relay link pre-agrees codecs out of band),
+  /// indexes its SSRCs in the routing tables, and announces it to the
+  /// session so existing subscribers wire up DownTracks.
+  Receiver publishRelayedStream({
+    required MediaKind kind,
+    required ProducerStream stream,
+  }) {
+    final id = '$peerId:${stream.mid}';
+    final receiver = Receiver(
+      id: id,
+      peerId: peerId,
+      kind: kind,
+      codecs: const [],
+      stream: stream,
+    );
+    receiver.audioObserver = session.audioObserver;
+    _byId[id] = receiver;
+    for (final ssrc in stream.allPrimarySsrcs) {
+      if (ssrc != 0) _byPrimarySsrc[ssrc] = receiver;
+    }
+    for (final ssrc in stream.allRtxSsrcs) {
+      if (ssrc != 0) _byRtxSsrc[ssrc] = receiver;
+    }
+    receiver.onSsrcLearned = (ssrc, layer, {required bool isRtx}) {
+      if (isRtx) {
+        _byRtxSsrc[ssrc] = receiver;
+      } else {
+        _byPrimarySsrc[ssrc] = receiver;
+      }
+    };
+    session.publish(this, receiver);
+    return receiver;
+  }
+
+  /// Phase 6 — remove a [Receiver] previously added (typically by
+  /// [publishRelayedStream]). Tears down its DownTracks and removes
+  /// its SSRCs from the routing tables.
+  void removeReceiver(Receiver receiver) {
+    if (_byId.remove(receiver.id) == null) return;
+    _byPrimarySsrc.removeWhere((_, v) => identical(v, receiver));
+    _byRtxSsrc.removeWhere((_, v) => identical(v, receiver));
+    for (final ssrc in receiver.stream.allPrimarySsrcs) {
+      _gap.remove(ssrc);
+    }
+    // Detach from all subscribers in the session.
+    for (final peer in session.peers) {
+      peer.subscriber?.removeReceiver(receiver);
+    }
+    receiver.close();
+  }
+
   void close() {
     if (_closed) return;
     _closed = true;

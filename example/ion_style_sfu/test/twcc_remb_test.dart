@@ -71,7 +71,10 @@ void main() {
     test('build returns null for empty arrivals', () {
       expect(
         buildTwcc(
-          senderSsrc: 1, mediaSsrc: 2, fbPktCount: 0, arrivals: [],
+          senderSsrc: 1,
+          mediaSsrc: 2,
+          fbPktCount: 0,
+          arrivals: [],
         ),
         isNull,
       );
@@ -85,7 +88,10 @@ void main() {
         (101, 1_000_000),
       ];
       final pkt = buildTwcc(
-        senderSsrc: 1, mediaSsrc: 2, fbPktCount: 1, arrivals: arrivals,
+        senderSsrc: 1,
+        mediaSsrc: 2,
+        fbPktCount: 1,
+        arrivals: arrivals,
       )!;
       final fb = parseFeedback(pkt).whereType<TwccFeedback>().single;
       expect(fb.statuses.length, 2);

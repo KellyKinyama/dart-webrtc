@@ -21,10 +21,16 @@ void main() {
     test('subsequent REMB updates via EMA', () {
       final bwe = BandwidthEstimator(smoothing: 0.5);
       bwe.onRemb(const RembFeedback(
-        senderSsrc: 0, mediaSsrc: 0, bps: 1_000_000, ssrcs: [],
+        senderSsrc: 0,
+        mediaSsrc: 0,
+        bps: 1_000_000,
+        ssrcs: [],
       ));
       bwe.onRemb(const RembFeedback(
-        senderSsrc: 0, mediaSsrc: 0, bps: 2_000_000, ssrcs: [],
+        senderSsrc: 0,
+        mediaSsrc: 0,
+        bps: 2_000_000,
+        ssrcs: [],
       ));
       // EMA: 1_000_000 + 0.5 * (2_000_000 - 1_000_000) = 1_500_000.
       expect(bwe.currentBps, 1_500_000);
@@ -38,8 +44,7 @@ void main() {
   });
 
   group('LayerSelector', () {
-    test('picks the highest rid whose threshold the estimate meets',
-        () {
+    test('picks the highest rid whose threshold the estimate meets', () {
       final bwe = BandwidthEstimator()..setBps(800_000);
       final sel = LayerSelector(estimator: bwe);
       final changes = <(String, String)>[];

@@ -180,23 +180,19 @@ Iterable<RtcpFeedback> parseFeedback(Uint8List rtcp) sync* {
         final p = off + 12;
         final baseSeq = (rtcp[p] << 8) | rtcp[p + 1];
         final pktCount = (rtcp[p + 2] << 8) | rtcp[p + 3];
-        final refTime =
-            (rtcp[p + 4] << 16) | (rtcp[p + 5] << 8) | rtcp[p + 6];
+        final refTime = (rtcp[p + 4] << 16) | (rtcp[p + 5] << 8) | rtcp[p + 6];
         final fbPktCount = rtcp[p + 7];
 
         final statuses = <int>[];
         var ci = p + 8;
-        while (statuses.length < pktCount &&
-            ci + 2 <= off + pktLen) {
+        while (statuses.length < pktCount && ci + 2 <= off + pktLen) {
           final chunk = (rtcp[ci] << 8) | rtcp[ci + 1];
           ci += 2;
           if ((chunk & 0x8000) == 0) {
             // Run-length: T=0, S(2), L(13).
             final status = (chunk >> 13) & 0x03;
             final runLen = chunk & 0x1FFF;
-            for (var k = 0;
-                k < runLen && statuses.length < pktCount;
-                k++) {
+            for (var k = 0; k < runLen && statuses.length < pktCount; k++) {
               statuses.add(status);
             }
           } else {
