@@ -3,10 +3,13 @@
 // PeerConnection (the consumer side).
 //
 // Mirrors `pkg/sfu/downtrack.go`. Phase 2 introduces SSRC rewriting and
-// the per-track jitter buffer that backs NACK retransmission. Phase 3
+// the per-track jitter buffer that backs NACK retransmission. Phase 3a
 // adds simulcast layer filtering — packets from layers other than
 // [currentLayer] are dropped, so the subscriber only ever sees one
 // continuous SSRC stream regardless of how many the publisher sends.
+// Phase 3b adds SN/TS continuity across layer switches plus RFC 4588
+// OSN rewriting so RTX still resolves into the rewritten primary
+// sequence-number space.
 
 import 'dart:typed_data';
 
@@ -16,6 +19,7 @@ import 'buffer/buffer.dart';
 import 'buffer/nack.dart';
 import 'producer_layer.dart';
 import 'receiver.dart';
+import 'simulcast_rewriter.dart';
 
 enum DownTrackType { simple, simulcast }
 
@@ -41,24 +45,18 @@ class DownTrack {
   /// receiver carries multiple layers.
   final DownTrackType trackType;
 
-  /// RID of the layer we're currently forwarding. Empty string for
-  /// non-simulcast receivers (matches the single layer's empty rid).
-  /// Updated via [setCurrentLayer].
-  String currentLayer;
-
-  /// Phase 4: sequence-number / timestamp offsets so a layer switch (or
-  /// publisher restart) doesn't desync the receiver.
-  int snOffset = 0;
-  int tsOffset = 0;
+  /// SSRC + SN/TS rewrite engine. Holds per-layer offsets so a layer
+  /// switch produces a continuous outbound stream.
+  final SimulcastRewriter _rewriter;
 
   /// Counters surfaced via [Stats].
   int packetsForwarded = 0;
   int bytesForwarded = 0;
   int packetsDroppedWrongLayer = 0;
 
-  /// Jitter buffer of forwarded primary RTP packets, keyed by sequence
-  /// number. Used by [NackResponder] to satisfy subscriber retransmit
-  /// requests without involving the publisher.
+  /// Jitter buffer of forwarded primary RTP packets, keyed by the
+  /// *rewritten* sequence number. Used by [NackResponder] to satisfy
+  /// subscriber retransmit requests without involving the publisher.
   final JitterBuffer _jitter;
   late final NackResponder nack;
 
@@ -76,22 +74,30 @@ class DownTrack {
         trackType = receiver.isSimulcast
             ? DownTrackType.simulcast
             : DownTrackType.simple,
-        currentLayer = receiver.stream.defaultLayer.rid {
+        _rewriter = SimulcastRewriter(
+          rewrittenPrimarySsrc: rewrittenPrimarySsrc,
+          rewrittenRtxSsrc: rewrittenRtxSsrc,
+          currentLayer: receiver.stream.defaultLayer.rid,
+        ) {
     nack = NackResponder(buffer: _jitter);
   }
 
   bool get isClosed => _closed;
+
+  /// RID of the layer currently being forwarded.
+  String get currentLayer => _rewriter.currentLayer;
+
+  /// Number of times [setCurrentLayer] actually changed the layer.
+  int get layerSwitches => _rewriter.layerSwitches;
 
   /// Switch the forwarded simulcast layer to [rid]. No-op when this
   /// track is not simulcast or when the requested layer is unknown.
   /// Returns true if the layer changed.
   bool setCurrentLayer(String rid) {
     if (trackType != DownTrackType.simulcast) return false;
-    if (currentLayer == rid) return false;
     final exists = receiver.layers.any((l) => l.rid == rid);
     if (!exists) return false;
-    currentLayer = rid;
-    return true;
+    return _rewriter.setCurrentLayer(rid);
   }
 
   /// Push one publisher RTP packet to this subscriber's transport.
@@ -101,7 +107,7 @@ class DownTrack {
   /// silently dropped.
   void writeRtp(ProducerLayer layer, bool isRtx, Uint8List rtp) {
     if (_closed || rtp.length < 12) return;
-    if (layer.rid != currentLayer) {
+    if (layer.rid != _rewriter.currentLayer) {
       packetsDroppedWrongLayer++;
       return;
     }
@@ -109,21 +115,15 @@ class DownTrack {
     final transport = subscriberPc.transport;
     if (peer == null || transport == null || !peer.isSecure) return;
 
-    final outSsrc = isRtx
-        ? (rewrittenRtxSsrc ?? rewrittenPrimarySsrc)
-        : rewrittenPrimarySsrc;
-
-    final out = Uint8List.fromList(rtp);
-    out[8] = (outSsrc >> 24) & 0xff;
-    out[9] = (outSsrc >> 16) & 0xff;
-    out[10] = (outSsrc >> 8) & 0xff;
-    out[11] = outSsrc & 0xff;
-
-    if (!isRtx) {
-      final seq = (out[2] << 8) | out[3];
-      _jitter.record(seq, out);
+    final r = _rewriter.rewrite(rid: layer.rid, isRtx: isRtx, rtp: rtp);
+    if (r.dropped) {
+      packetsDroppedWrongLayer++;
+      return;
     }
-
+    final out = r.out!;
+    if (!isRtx && r.outSeq != null) {
+      _jitter.record(r.outSeq!, out);
+    }
     transport.sendRtp(peer, out);
     packetsForwarded++;
     bytesForwarded += out.length;

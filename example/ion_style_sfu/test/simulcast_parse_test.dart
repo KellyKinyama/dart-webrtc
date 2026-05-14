@@ -49,9 +49,8 @@ void main() {
     });
 
     test('layers carry their own primary + RTX SSRCs from FID groups', () {
-      final s =
-          parsePublisherOffer(peerId: 'user1', offerSdp: _simulcastOffer)
-              .single;
+      final s = parsePublisherOffer(peerId: 'user1', offerSdp: _simulcastOffer)
+          .single;
       expect(s.layers[0].primarySsrc, 3001);
       expect(s.layers[0].rtxSsrc, 3011);
       expect(s.layers[1].primarySsrc, 3002);
@@ -61,26 +60,23 @@ void main() {
     });
 
     test('default-layer accessors point at the highest layer', () {
-      final s =
-          parsePublisherOffer(peerId: 'user1', offerSdp: _simulcastOffer)
-              .single;
+      final s = parsePublisherOffer(peerId: 'user1', offerSdp: _simulcastOffer)
+          .single;
       expect(s.primarySsrc, 3003);
       expect(s.rtxSsrc, 3013);
       expect(s.defaultLayer.rid, 'f');
     });
 
     test('allPrimarySsrcs / allRtxSsrcs enumerate every layer', () {
-      final s =
-          parsePublisherOffer(peerId: 'user1', offerSdp: _simulcastOffer)
-              .single;
+      final s = parsePublisherOffer(peerId: 'user1', offerSdp: _simulcastOffer)
+          .single;
       expect(s.allPrimarySsrcs.toList(), [3001, 3002, 3003]);
       expect(s.allRtxSsrcs.toList(), [3011, 3012, 3013]);
     });
 
     test('msid is preserved across layers', () {
-      final s =
-          parsePublisherOffer(peerId: 'user1', offerSdp: _simulcastOffer)
-              .single;
+      final s = parsePublisherOffer(peerId: 'user1', offerSdp: _simulcastOffer)
+          .single;
       expect(s.msidStream, 'simStream');
       expect(s.msidTrack, 'simTrack');
       expect(s.cname, 'user1');
@@ -118,9 +114,11 @@ void main() {
         msidTrack: 't',
       );
       expect(s.isSimulcast, isTrue);
-      expect(() => s.layers.add(
-            const ProducerLayer(rid: 'x', primarySsrc: 3, rtxSsrc: null),
-          ), throwsUnsupportedError);
+      expect(
+          () => s.layers.add(
+                const ProducerLayer(rid: 'x', primarySsrc: 3, rtxSsrc: null),
+              ),
+          throwsUnsupportedError);
     });
   });
 }

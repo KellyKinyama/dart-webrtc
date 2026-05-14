@@ -1,0 +1,151 @@
+// Phase 3b — testable simulcast SN/TS rewrite engine, extracted from
+// DownTrack so the offset arithmetic can be verified in isolation
+// (without spinning up a real DTLS transport).
+//
+// Maintains per-layer (snOffset, tsOffset) pairs that are recomputed on
+// every layer switch so the outbound stream stays monotonically
+// continuous regardless of which producer layer is currently being
+// forwarded.
+
+import 'dart:typed_data';
+
+import 'rtp_header.dart';
+
+class _LayerOffset {
+  int snOffset;
+  int tsOffset;
+  _LayerOffset(this.snOffset, this.tsOffset);
+}
+
+/// Outcome of rewriting a single packet.
+class RewriteResult {
+  /// The rewritten packet (mutated copy of the input). Null when the
+  /// packet was dropped (RTX before its layer's primary baseline).
+  final Uint8List? out;
+
+  /// Outbound primary sequence number for this layer. Null for RTX or
+  /// for dropped packets.
+  final int? outSeq;
+
+  /// Outbound primary timestamp for this layer. Null for RTX or for
+  /// dropped packets.
+  final int? outTs;
+
+  /// True when the packet was rewritten as RTX.
+  final bool isRtx;
+
+  const RewriteResult({
+    required this.out,
+    required this.outSeq,
+    required this.outTs,
+    required this.isRtx,
+  });
+
+  bool get dropped => out == null;
+}
+
+/// Rewrites publisher-side RTP packets onto a single outbound SSRC pair
+/// (primary + optional RTX) while preserving SN/TS continuity across
+/// simulcast layer switches. One instance per DownTrack.
+class SimulcastRewriter {
+  final int rewrittenPrimarySsrc;
+  final int? rewrittenRtxSsrc;
+
+  /// Currently forwarded layer's RID. Empty string for non-simulcast.
+  String currentLayer;
+
+  final Map<String, _LayerOffset> _layerOffsets = {};
+  bool _resyncOnNext = true;
+
+  int _lastOutSeq = 0;
+  int _lastOutTs = 0;
+  bool _haveLastOut = false;
+
+  int layerSwitches = 0;
+
+  SimulcastRewriter({
+    required this.rewrittenPrimarySsrc,
+    required this.rewrittenRtxSsrc,
+    required this.currentLayer,
+  });
+
+  /// Switch the forwarded layer. Returns true when [rid] differs from
+  /// the prior current layer (i.e. a real switch happened).
+  bool setCurrentLayer(String rid) {
+    if (currentLayer == rid) return false;
+    currentLayer = rid;
+    _layerOffsets.remove(rid);
+    _resyncOnNext = true;
+    layerSwitches++;
+    return true;
+  }
+
+  /// Rewrite [rtp] (a publisher-side packet on layer [rid]) onto this
+  /// DownTrack's outbound SSRC space. [isRtx] marks RFC 4588 RTX
+  /// packets; their embedded OSN field is shifted by the layer's
+  /// snOffset so it still points at the rewritten primary sequence
+  /// number.
+  RewriteResult rewrite({
+    required String rid,
+    required bool isRtx,
+    required Uint8List rtp,
+  }) {
+    if (rtp.length < 12) {
+      return const RewriteResult(
+          out: null, outSeq: null, outTs: null, isRtx: false);
+    }
+    final inSeq = rtpSeq(rtp);
+    final inTs = rtpTimestamp(rtp);
+
+    var off = _layerOffsets[rid];
+    if (!isRtx && (off == null || _resyncOnNext)) {
+      final baseSeq = _haveLastOut ? ((_lastOutSeq + 1) & 0xffff) : inSeq;
+      final baseTs = _haveLastOut ? ((_lastOutTs + 1) & 0xffffffff) : inTs;
+      off = _LayerOffset(
+        (baseSeq - inSeq) & 0xffff,
+        (baseTs - inTs) & 0xffffffff,
+      );
+      _layerOffsets[rid] = off;
+      _resyncOnNext = false;
+    }
+    if (off == null) {
+      // RTX arrived before we ever forwarded a primary on this layer.
+      return const RewriteResult(
+          out: null, outSeq: null, outTs: null, isRtx: true);
+    }
+
+    final outSsrc = isRtx
+        ? (rewrittenRtxSsrc ?? rewrittenPrimarySsrc)
+        : rewrittenPrimarySsrc;
+
+    final out = Uint8List.fromList(rtp);
+    out[8] = (outSsrc >> 24) & 0xff;
+    out[9] = (outSsrc >> 16) & 0xff;
+    out[10] = (outSsrc >> 8) & 0xff;
+    out[11] = outSsrc & 0xff;
+
+    if (!isRtx) {
+      final outSeq = (inSeq + off.snOffset) & 0xffff;
+      final outTs = (inTs + off.tsOffset) & 0xffffffff;
+      writeRtpSeq(out, outSeq);
+      writeRtpTimestamp(out, outTs);
+      _lastOutSeq = outSeq;
+      _lastOutTs = outTs;
+      _haveLastOut = true;
+      return RewriteResult(
+          out: out, outSeq: outSeq, outTs: outTs, isRtx: false);
+    } else {
+      final payloadOff = rtpPayloadOffset(out);
+      if (payloadOff + 2 > out.length) {
+        return const RewriteResult(
+            out: null, outSeq: null, outTs: null, isRtx: true);
+      }
+      final origOsn = (out[payloadOff] << 8) | out[payloadOff + 1];
+      final newOsn = (origOsn + off.snOffset) & 0xffff;
+      out[payloadOff] = (newOsn >> 8) & 0xff;
+      out[payloadOff + 1] = newOsn & 0xff;
+      writeRtpSeq(out, (inSeq + off.snOffset) & 0xffff);
+      return RewriteResult(out: out, outSeq: null, outTs: null, isRtx: true);
+    }
+  }
+}

@@ -76,8 +76,7 @@ class Receiver {
   /// attached DownTrack with the layer + isRtx flag pre-resolved.
   void deliverRtp(Uint8List rtp) {
     if (_closed || rtp.length < 12) return;
-    final ssrc =
-        (rtp[8] << 24) | (rtp[9] << 16) | (rtp[10] << 8) | rtp[11];
+    final ssrc = (rtp[8] << 24) | (rtp[9] << 16) | (rtp[10] << 8) | rtp[11];
     final primaryLayer = _byPrimarySsrc[ssrc];
     final rtxLayer = primaryLayer == null ? _byRtxSsrc[ssrc] : null;
     final layer = primaryLayer ?? rtxLayer;

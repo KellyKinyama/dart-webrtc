@@ -18,6 +18,8 @@ export 'src/audio_observer.dart';
 export 'src/buffer/buffer.dart';
 export 'src/buffer/nack.dart';
 export 'src/simulcast.dart';
+export 'src/simulcast_rewriter.dart';
+export 'src/rtp_header.dart';
 export 'src/twcc/twcc.dart';
 export 'src/twcc/remb.dart';
 export 'src/relay/relay.dart';
