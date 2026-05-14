@@ -754,6 +754,22 @@ class _ShardWorker {
         'kind': recv.stream.kind,
         'primarySsrc': recv.primarySsrc,
       });
+      // Re-export this newly-arrived stream over every *other* bridge
+      // so true cluster fan-out works (A → owner → B). The per-bridge
+      // loop-prevention in [exportLocalProducers] skips the bridge
+      // that originated the stream.
+      for (final other in bridges.values) {
+        if (identical(other, bridge)) continue;
+        if (!other._established) continue;
+        other.exportLocalProducers();
+      }
+    };
+    relay.onClosed = () {
+      // Either the remote sent `bye` or we shut down locally. Drop
+      // our bookkeeping and tell main so it can reclaim the route.
+      if (bridges.remove(bridgeId) != null) {
+        _emitEvent('bridgeClosed', {'bridgeId': bridgeId});
+      }
     };
     if (role == CascadeBridgeRole.outbound) {
       // Send the cascade-hello so the owner can find us.
@@ -924,27 +940,39 @@ class _CascadeBridge {
     required this.session,
   });
 
-  /// Idempotently push every local (non-cascaded) producer in the
-  /// session up the relay so the remote side can fan it out.
+  /// Idempotently push every (eligible) producer in the session up the
+  /// relay so the remote side can fan it out. Eligibility:
+  ///
+  /// * Real peers' publisher receivers — always exported.
+  /// * Receivers introduced by *other* cascade bridges — exported,
+  /// so two non-owner SFUs cascading through the same owner can
+  /// reach each other (full-mesh).
+  /// * Receivers from *this* bridge's relay — skipped (loop
+  /// prevention).
   void exportLocalProducers() {
     _established = true;
     final existing = exports.map((e) => e.mid).toSet();
-    for (final peer in session.peers) {
-      final pub = peer.publisher;
-      if (pub == null) continue;
-      for (final recv in pub.router.receivers) {
-        if (recv.peerId.startsWith('cluster:')) continue;
-        if (existing.contains(recv.stream.mid)) continue;
+    // Drop exports whose underlying receiver has been removed (e.g.
+    // the originating bridge tore down). Cheap; runs at sweep time.
+    exports.removeWhere((e) => e.isStopped);
+    final selfRemote = relay.remoteId;
+    for (final router in session.routers) {
+      // Don't echo our own bridge's relay receivers back.
+      if (router.peerId == selfRemote) continue;
+      for (final recv in router.receivers) {
+        final mid = recv.stream.mid;
+        if (existing.contains(mid)) continue;
         try {
           final exp = relay.exportReceiver(recv);
           exports.add(exp);
-          existing.add(exp.mid);
+          existing.add(mid);
         } catch (_) {
           // best-effort
         }
       }
     }
-    // Re-sweep on every new peer that joins.
+    // Re-sweep on every new peer that joins (covers a real publisher
+    // arriving after the cascade is up).
     final prev = session.onPeerJoined;
     session.onPeerJoined = (p) {
       prev?.call(p);

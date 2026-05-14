@@ -268,6 +268,11 @@ class RelayPeer {
   /// feedback into their local publisher.
   void Function(Uint8List rtcp)? onUpstreamRtcp;
 
+  /// Fired exactly once when this relay peer transitions to the
+  /// closed state — either because [close] was called locally or
+  /// because the remote sent a `bye` control frame.
+  void Function()? onClosed;
+
   bool _closed = false;
 
   RelayPeer._({
@@ -477,6 +482,9 @@ class RelayPeer {
     }
     router.close();
     await transport.close();
+    try {
+      onClosed?.call();
+    } catch (_) {}
   }
 }
 

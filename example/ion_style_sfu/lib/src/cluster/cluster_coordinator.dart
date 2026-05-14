@@ -222,7 +222,13 @@ class ClusterCoordinator {
   void _onBridgeClosed(String sessionId, String bridgeId) {
     final key = _byBridge.remove('$sessionId:$bridgeId');
     if (key == null) return;
-    _byEndpoint.remove(key);
+    final route = _byEndpoint.remove(key);
+    if (route != null) {
+      // Drop the hub endpoint as well so a subsequent packet from
+      // the same host:port surfaces as `onUnknownPeer` rather than
+      // landing on the dead endpoint's callbacks.
+      hub.closeEndpoint(route.host, route.port);
+    }
   }
 
   void _reapShard(String sessionId) {
@@ -232,7 +238,11 @@ class ClusterCoordinator {
     }
     for (final k in dead) {
       final epKey = _byBridge.remove(k);
-      if (epKey != null) _byEndpoint.remove(epKey);
+      if (epKey == null) continue;
+      final route = _byEndpoint.remove(epKey);
+      if (route != null) {
+        hub.closeEndpoint(route.host, route.port);
+      }
     }
   }
 
