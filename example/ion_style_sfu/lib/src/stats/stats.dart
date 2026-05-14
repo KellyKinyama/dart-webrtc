@@ -284,6 +284,7 @@ String formatPrometheusCluster({
   String? selfId,
   int upstreamReconnectAttempts = 0,
   int upstreamReconnectsSucceeded = 0,
+  int upstreamReconnectsGivenUp = 0,
 }) {
   final out = StringBuffer();
 
@@ -337,6 +338,10 @@ String formatPrometheusCluster({
       'ionsfu_cluster_upstream_reconnect_succeeded_total',
       'Upstream-bridge reattach attempts that succeeded.',
       upstreamReconnectsSucceeded);
+  counter(
+      'ionsfu_cluster_upstream_reconnect_given_up_total',
+      'Upstream-bridge reconnect loops abandoned by the circuit breaker.',
+      upstreamReconnectsGivenUp);
 
   // Per-bridge gauges — labels: session, bridge, role, remote.
   if (bridges.isNotEmpty) {

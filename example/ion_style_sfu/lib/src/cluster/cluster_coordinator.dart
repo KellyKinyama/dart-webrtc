@@ -71,6 +71,12 @@ class ClusterCoordinator {
   /// the consecutive-failure count, used to grow the backoff.
   final Map<String, _ReconnectAttempt> _reconnects = {};
 
+  /// Phase 23 — consecutive-failure tally per upstream bridge
+  /// (`sessionId`). Reset to 0 on the first successful establish;
+  /// drives the backoff in [_scheduleUpstreamReconnect] and the
+  /// circuit breaker in [upstreamReconnectMaxAttempts].
+  final Map<String, int> _consecutiveFailures = {};
+
   /// Phase 22 — maximum reconnect backoff (ms). Capped to keep
   /// recovery snappy after a transient blip.
   static const int _reconnectMaxDelayMs = 5000;
@@ -79,10 +85,19 @@ class ClusterCoordinator {
   /// consecutive failure up to [_reconnectMaxDelayMs].
   static const int _reconnectBaseDelayMs = 100;
 
+  /// Phase 23 — give up on an upstream bridge after this many
+  /// consecutive failed reconnect attempts. Null = retry forever.
+  /// Configurable per coordinator instance.
+  final int? upstreamReconnectMaxAttempts;
+
   /// Phase 22 — monotonic counters surfaced via [/cluster] and
   /// Prometheus.
   int upstreamReconnectAttempts = 0;
   int upstreamReconnectsSucceeded = 0;
+
+  /// Phase 23 — number of upstream bridges abandoned after hitting
+  /// [upstreamReconnectMaxAttempts].
+  int upstreamReconnectsGivenUp = 0;
 
   bool _closed = false;
 
@@ -91,6 +106,7 @@ class ClusterCoordinator {
     required this.hub,
     required this.locator,
     void Function(String line)? log,
+    this.upstreamReconnectMaxAttempts,
   }) : log = log ?? ((l) => stderr.writeln('[cluster] $l')) {
     // Inject upstream cascade fields into every non-owner shard.
     sharded.configure = (base) {
@@ -117,23 +133,14 @@ class ClusterCoordinator {
       final owner = locator.ownerOf(shard.sessionId);
       if (owner == null || owner.id == locator.selfId) return;
       final host = InternetAddress(owner.host);
-      _registerOutboundRoute(
-        shard: shard,
-        bridgeId: 'upstream',
-        host: host,
-        port: owner.relayPort,
-      );
-      // Trigger the worker-side attach now that we're already
-      // subscribed to its event stream.
-      shard
-          .cascadeAttach(
-        bridgeId: 'upstream',
-        role: CascadeBridgeRole.outbound,
-        remoteId: 'cluster:${locator.selfId}:${shard.sessionId}',
-      )
-          .catchError((Object e) {
-        this.log('upstream attach failed for ${shard.sessionId}: $e');
-      });
+      // Phase 23 — go through the verified-attach path so the
+      // probe-then-detect-failure flow runs on the first try too.
+      // _attemptUpstreamReconnect handles route registration and
+      // failure-counter bookkeeping in one place. The initial
+      // attach is *not* a reconnect, so suppress the reconnect
+      // counter bump.
+      _attemptUpstreamReconnect(shard, host, owner.relayPort, 0,
+          isReconnect: false);
     };
     // Inbound: stranger sent us a control frame. We only attach if
     // it's a cascade-hello (we need a session id).
@@ -333,11 +340,12 @@ class ClusterCoordinator {
     // re-attach with capped exponential backoff. Inbound bridges
     // are not retried (the remote side will re-hello).
     if (bridgeId == 'upstream' && route != null) {
+      final attempts = _consecutiveFailures[sessionId] ?? 0;
       _scheduleUpstreamReconnect(
         shard: route.shard,
         host: route.host,
         port: route.port,
-        attempts: 0,
+        attempts: attempts,
       );
     }
   }
@@ -360,6 +368,18 @@ class ClusterCoordinator {
         owner.relayPort != port) {
       return;
     }
+    // Phase 23 — circuit breaker. After N consecutive failures, stop
+    // retrying and bump the give-up counter. The shard is left in
+    // place so a subsequent locator change (peer comes back) can
+    // reattach explicitly via onShardCreated when the session is
+    // recreated, but in the meantime we don't burn timers.
+    final cap = upstreamReconnectMaxAttempts;
+    if (cap != null && attempts > cap) {
+      upstreamReconnectsGivenUp++;
+      log('upstream reconnect giving up for ${shard.sessionId} '
+          'after $attempts attempts');
+      return;
+    }
     final delayMs = _backoffMs(attempts);
     final key = '${shard.sessionId}:upstream';
     _reconnects[key]?.timer.cancel();
@@ -380,8 +400,9 @@ class ClusterCoordinator {
     SessionShard shard,
     InternetAddress host,
     int port,
-    int attempts,
-  ) {
+    int attempts, {
+    bool isReconnect = true,
+  }) {
     if (_closed) return;
     // Owner may have moved between scheduling and firing.
     final owner = locator.ownerOf(shard.sessionId);
@@ -391,7 +412,7 @@ class ClusterCoordinator {
         owner.relayPort != port) {
       return;
     }
-    upstreamReconnectAttempts++;
+    if (isReconnect) upstreamReconnectAttempts++;
     _registerOutboundRoute(
       shard: shard,
       bridgeId: 'upstream',
@@ -404,11 +425,35 @@ class ClusterCoordinator {
       role: CascadeBridgeRole.outbound,
       remoteId: 'cluster:${locator.selfId}:${shard.sessionId}',
     )
-        .then((_) {
-      upstreamReconnectsSucceeded++;
-      log('upstream reconnect ok for ${shard.sessionId} (attempts=${attempts + 1})');
+        .then((_) async {
+      // Phase 23 — wait briefly for the relay handshake to complete.
+      // If the owner is unreachable, the bridge will sit there
+      // un-established, and we treat that as a failure so the
+      // circuit breaker can eventually trip.
+      final established = await _waitForUpstreamEstablished(
+        shard,
+        const Duration(milliseconds: 750),
+      );
+      if (_closed) return;
+      if (established) {
+        if (isReconnect) upstreamReconnectsSucceeded++;
+        _consecutiveFailures.remove(shard.sessionId);
+        log('upstream ${isReconnect ? 'reconnect' : 'attach'} ok '
+            'for ${shard.sessionId} (attempts=${attempts + 1})');
+        return;
+      }
+      // Bridge never established — force a clean close so the
+      // bridgeClosed event re-enters _onBridgeClosed with the new
+      // failure count.
+      _consecutiveFailures[shard.sessionId] = attempts + 1;
+      log('upstream reconnect did not establish for '
+          '${shard.sessionId} (attempts=${attempts + 1})');
+      try {
+        await shard.cascadeDetach('upstream');
+      } catch (_) {}
     }).catchError((Object e) {
       log('upstream reconnect failed for ${shard.sessionId}: $e');
+      _consecutiveFailures[shard.sessionId] = attempts + 1;
       // Roll back the route we just installed so the next attempt
       // re-binds cleanly. _onBridgeClosed won't fire again since
       // the worker never accepted the attach.
@@ -425,10 +470,36 @@ class ClusterCoordinator {
     });
   }
 
+  /// Phase 23 — poll the worker for an established upstream bridge
+  /// up to [timeout]. Returns true on the first success, false if
+  /// the timeout elapses or the shard goes away.
+  Future<bool> _waitForUpstreamEstablished(
+    SessionShard shard,
+    Duration timeout,
+  ) async {
+    final deadline = DateTime.now().add(timeout);
+    while (!_closed && DateTime.now().isBefore(deadline)) {
+      try {
+        final stats = await shard.cascadeBridgeStats();
+        for (final s in stats) {
+          if (s['bridgeId'] == 'upstream' && s['established'] == true) {
+            return true;
+          }
+        }
+      } catch (_) {
+        return false;
+      }
+      await Future<void>.delayed(const Duration(milliseconds: 50));
+    }
+    return false;
+  }
+
   void _reapShard(String sessionId) {
     // Phase 22 — cancel any pending reconnect for this shard.
     final reKey = '$sessionId:upstream';
     _reconnects.remove(reKey)?.timer.cancel();
+    // Phase 23 — forget any stale failure tally.
+    _consecutiveFailures.remove(sessionId);
     final dead = <String>[];
     for (final entry in _byBridge.entries) {
       if (entry.key.startsWith('$sessionId:')) dead.add(entry.key);

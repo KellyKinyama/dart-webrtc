@@ -72,6 +72,10 @@ Future<IonSfuServerHandle> runIonStyleSfuServer({
   // healthy-but-silent media bridges (e.g. audio paused) are not
   // wrongly torn down.
   int? bridgeKeepaliveMs,
+  // Phase 23 — give up on an upstream bridge after this many
+  // consecutive reconnect failures. Null = retry forever (the
+  // pre-Phase-23 default).
+  int? upstreamReconnectMaxAttempts,
 }) async {
   final bindAddr = InternetAddress(ip);
   final advertisedIp = announceIp ??
@@ -146,6 +150,7 @@ Future<IonSfuServerHandle> runIonStyleSfuServer({
       hub: hub,
       locator: locator,
       log: quiet ? (_) {} : null,
+      upstreamReconnectMaxAttempts: upstreamReconnectMaxAttempts,
     );
     if (!quiet) {
       stdout.writeln(
@@ -198,6 +203,7 @@ Future<IonSfuServerHandle> runIonStyleSfuServer({
               selfId: selfClusterId,
               upstreamReconnectAttempts: cluster.upstreamReconnectAttempts,
               upstreamReconnectsSucceeded: cluster.upstreamReconnectsSucceeded,
+              upstreamReconnectsGivenUp: cluster.upstreamReconnectsGivenUp,
             ));
           } catch (_) {
             // best-effort — never fail /metrics on cluster snapshot
@@ -261,6 +267,8 @@ Future<IonSfuServerHandle> runIonStyleSfuServer({
             'reconnect': {
               'attempts': c.upstreamReconnectAttempts,
               'succeeded': c.upstreamReconnectsSucceeded,
+              // Phase 23 — circuit-breaker give-up count.
+              'givenUp': c.upstreamReconnectsGivenUp,
             },
             'bridges': bridges,
           }));
