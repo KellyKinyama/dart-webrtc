@@ -70,10 +70,16 @@ void main() {
     test('stamps consecutive 16-bit sequence numbers into the ext', () {
       final st = TwccStamper();
       final p1 = _rtpWithExt(
-        ssrc: 1, seq: 0, extId: 3, extPayload: [0, 0],
+        ssrc: 1,
+        seq: 0,
+        extId: 3,
+        extPayload: [0, 0],
       );
       final p2 = _rtpWithExt(
-        ssrc: 1, seq: 1, extId: 3, extPayload: [0, 0],
+        ssrc: 1,
+        seq: 1,
+        extId: 3,
+        extPayload: [0, 0],
       );
       expect(st.stamp(p1, 3), 0);
       expect(st.stamp(p2, 3), 1);
@@ -96,7 +102,10 @@ void main() {
     test('returns null when the requested extId is absent', () {
       final st = TwccStamper();
       final p = _rtpWithExt(
-        ssrc: 1, seq: 0, extId: 5, extPayload: [0xAB],
+        ssrc: 1,
+        seq: 0,
+        extId: 5,
+        extPayload: [0xAB],
       );
       expect(st.stamp(p, 3), isNull);
       expect(st.missingExtensionDrops, 1);
@@ -111,11 +120,17 @@ void main() {
       }
       expect(st.lastSeq, 0xFFFE);
       final p = _rtpWithExt(
-        ssrc: 1, seq: 0, extId: 3, extPayload: [0, 0],
+        ssrc: 1,
+        seq: 0,
+        extId: 3,
+        extPayload: [0, 0],
       );
       expect(st.stamp(p, 3), 0xFFFF);
       final p2 = _rtpWithExt(
-        ssrc: 1, seq: 1, extId: 3, extPayload: [0, 0],
+        ssrc: 1,
+        seq: 1,
+        extId: 3,
+        extPayload: [0, 0],
       );
       expect(st.stamp(p2, 3), 0);
     });
@@ -123,7 +138,10 @@ void main() {
     test('records send time and size per seq', () {
       final st = TwccStamper();
       final p = _rtpWithExt(
-        ssrc: 1, seq: 0, extId: 3, extPayload: [0, 0],
+        ssrc: 1,
+        seq: 0,
+        extId: 3,
+        extPayload: [0, 0],
       );
       final seq = st.stamp(p, 3, sendTimeMicros: 1_000_000);
       expect(seq, 0);
@@ -163,8 +181,7 @@ void main() {
       expect(st.missingExtensionDrops, 1);
     });
 
-    test('multiple extensions: stamper only touches the matching one',
-        () {
+    test('multiple extensions: stamper only touches the matching one', () {
       // Build manually: BEDE with [ext1=audio-level (id=4, 1B),
       // ext3=transport-cc (id=3, 2B)].
       final extBytes = <int>[

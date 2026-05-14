@@ -263,7 +263,14 @@ class Subscriber {
         layerSelector.tick();
       } else if (fb is TwccFeedback) {
         final budget = _consumeBytesBudget();
-        bwe.onTwcc(fb, budget);
+        // Phase 7b — delay-based update first (uses send-time history
+        // recorded by the stamper). Falls back to the throughput-only
+        // path when we don't have enough history yet.
+        if (twccStamper.totalStamped > 0) {
+          bwe.onTwccDelay(fb, twccStamper);
+        } else {
+          bwe.onTwcc(fb, budget);
+        }
         layerSelector.activeVideoDownTracks = _videoDownTrackCount();
         layerSelector.tick();
       }

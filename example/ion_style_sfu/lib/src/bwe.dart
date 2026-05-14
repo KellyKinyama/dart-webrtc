@@ -17,6 +17,7 @@ import 'dart:async';
 import 'dart:math' as math;
 
 import 'rtcp.dart';
+import 'twcc/twcc_stamper.dart';
 
 /// Bitrate thresholds (bps) above which the next simulcast layer
 /// becomes affordable. Tuned for 360p/720p/1080p VP8 simulcast.
@@ -58,6 +59,19 @@ class BandwidthEstimator {
   /// EMA smoothing factor in (0, 1]; higher == more reactive.
   final double smoothing;
 
+  /// Phase 7b — delay-gradient threshold (dimensionless). When the
+  /// fitted slope of (arrival_delay vs send_time) exceeds this value
+  /// we declare congestion. Default ~ 1ms of growth per 100ms send
+  /// window (= 0.01).
+  final double overuseSlope;
+
+  /// Phase 7b — multiplicative back-off applied on overuse.
+  final double decreaseFactor;
+
+  /// Phase 7b — multiplicative bump applied on underuse (slope below
+  /// `-overuseSlope`). 1.0 = stay put.
+  final double increaseFactor;
+
   /// Most recent smoothed estimate, in bits-per-second. Zero until the
   /// first feedback arrives.
   int currentBps = 0;
@@ -65,8 +79,24 @@ class BandwidthEstimator {
   /// Wall-clock of the last update. Useful for staleness checks.
   DateTime? lastUpdate;
 
-  BandwidthEstimator({this.smoothing = 0.3})
-      : assert(smoothing > 0 && smoothing <= 1, 'smoothing in (0,1]');
+  /// Phase 7b — last delay-based controller decision. Useful for stats
+  /// and for assertions in tests.
+  BweDecision lastDecision = BweDecision.hold;
+
+  /// Phase 7b — last measured throughput in bps from TWCC arrivals,
+  /// or 0 when no usable samples were available.
+  int lastMeasuredBps = 0;
+
+  /// Phase 7b — last measured delay slope (dimensionless), or 0 when
+  /// no usable samples were available.
+  double lastSlope = 0.0;
+
+  BandwidthEstimator({
+    this.smoothing = 0.3,
+    this.overuseSlope = 0.01,
+    this.decreaseFactor = 0.85,
+    this.increaseFactor = 1.08,
+  }) : assert(smoothing > 0 && smoothing <= 1, 'smoothing in (0,1]');
 
   /// Set the estimate directly. Mostly for tests.
   void setBps(int bps) {
@@ -111,6 +141,116 @@ class BandwidthEstimator {
     lastUpdate = DateTime.now();
     return currentBps;
   }
+
+  /// Phase 7b — delay-based estimator. Uses [stamper]'s send-time
+  /// history to map each received TWCC seq back to its egress wallclock
+  /// and runs a simple Google-Congestion-Control-style decision:
+  ///
+  ///  - slope of (arrival_delay − send_delay) > [overuseSlope] →
+  ///    *decrease* by [decreaseFactor]
+  ///  - slope < -[overuseSlope] → *increase* by [increaseFactor]
+  ///  - otherwise → *hold*, but bias toward the measured throughput
+  ///    (EMA toward `bytes*8 / arrival_span`)
+  ///
+  /// Returns the new estimate. Updates [lastDecision], [lastSlope],
+  /// and [lastMeasuredBps].
+  int onTwccDelay(TwccFeedback fb, TwccStamper stamper) {
+    final samples = _collectSamples(fb, stamper);
+    if (samples.length < 2) {
+      lastDecision = BweDecision.hold;
+      lastSlope = 0.0;
+      lastMeasuredBps = 0;
+      return currentBps;
+    }
+    // Slope of (delay vs sendTime) — delay = arrival - send.
+    final t0 = samples.first.sendUs;
+    double sxy = 0, sx = 0, sy = 0, sxx = 0;
+    final n = samples.length;
+    for (final s in samples) {
+      final x = (s.sendUs - t0).toDouble();
+      final y = (s.arrivalUs - s.sendUs).toDouble();
+      sxy += x * y;
+      sx += x;
+      sy += y;
+      sxx += x * x;
+    }
+    final denom = (n * sxx) - (sx * sx);
+    final slope = denom == 0 ? 0.0 : ((n * sxy) - (sx * sy)) / denom;
+    lastSlope = slope;
+
+    // Measured throughput.
+    final arrivalSpan = samples.last.arrivalUs - samples.first.arrivalUs;
+    var totalBytes = 0;
+    for (final s in samples) {
+      totalBytes += s.sizeBytes;
+    }
+    final measured = arrivalSpan > 0
+        ? ((totalBytes * 8) * 1000000 / arrivalSpan).round()
+        : 0;
+    lastMeasuredBps = measured;
+
+    int target;
+    if (slope > overuseSlope) {
+      lastDecision = BweDecision.decrease;
+      final base = currentBps == 0 ? measured : currentBps;
+      target = (base * decreaseFactor).round();
+    } else if (slope < -overuseSlope) {
+      lastDecision = BweDecision.increase;
+      final base = currentBps == 0 ? measured : currentBps;
+      target = (base * increaseFactor).round();
+    } else {
+      lastDecision = BweDecision.hold;
+      target = measured > 0 ? measured : currentBps;
+    }
+
+    final next = currentBps == 0
+        ? target
+        : (currentBps + smoothing * (target - currentBps)).round();
+    currentBps = next < 0 ? 0 : next;
+    lastUpdate = DateTime.now();
+    return currentBps;
+  }
+
+  /// Reconstruct absolute arrival timestamps from [fb] and look each
+  /// received sequence number's send-time + byte size up in [stamper].
+  /// Drops samples for which the stamper no longer has history.
+  List<_TwccSample> _collectSamples(TwccFeedback fb, TwccStamper stamper) {
+    final out = <_TwccSample>[];
+    // Reference time is in 64ms units → microseconds.
+    var arrivalUs = fb.referenceTime * 64 * 1000;
+    for (var i = 0; i < fb.statuses.length; i++) {
+      final d = fb.deltaUs[i];
+      if (d != null) arrivalUs += d;
+      if (fb.statuses[i] == 0) continue; // not received
+      final seq = (fb.baseSeq + i) & 0xffff;
+      final sendUs = stamper.sendTimeMicrosFor(seq);
+      final size = stamper.sizeBytesFor(seq);
+      if (sendUs == null || size == null) continue;
+      out.add(_TwccSample(
+        seq: seq,
+        sendUs: sendUs,
+        arrivalUs: arrivalUs,
+        sizeBytes: size,
+      ));
+    }
+    return out;
+  }
+}
+
+/// Phase 7b — categorical output of the delay-based BWE controller.
+enum BweDecision { hold, increase, decrease }
+
+class _TwccSample {
+  final int seq;
+  final int sendUs;
+  final int arrivalUs;
+  final int sizeBytes;
+  const _TwccSample({
+    required this.seq,
+    required this.sendUs,
+    required this.arrivalUs,
+    required this.sizeBytes,
+  });
 }
 
 /// Picks one RID per receiver based on a [BandwidthEstimator]. Calls
