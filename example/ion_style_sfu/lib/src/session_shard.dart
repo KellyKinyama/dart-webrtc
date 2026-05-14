@@ -621,8 +621,7 @@ class _ShardWorker {
     if (idleTimeout != null && idleTimeout > 0) {
       _idleSinceMs = DateTime.now().millisecondsSinceEpoch;
       final tickMs = (idleTimeout ~/ 4).clamp(100, 5000);
-      _idleSessionReaper =
-          Timer.periodic(Duration(milliseconds: tickMs), (_) {
+      _idleSessionReaper = Timer.periodic(Duration(milliseconds: tickMs), (_) {
         _checkIdleSession(idleTimeout);
       });
     }

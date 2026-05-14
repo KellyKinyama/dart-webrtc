@@ -13,6 +13,142 @@ This example is built directly on `pure_dart_webrtc`. It shares no code
 with `example/sfu`; the two demos are intentionally side-by-side so the
 single-PC and split-PC topologies can be compared.
 
+## Running the demo
+
+The split-PC browser client lives in [`web/index.html`](web/index.html)
+and talks to the SFU over WebSocket on port 9091 (the HTTP page itself
+is served separately on port 8000).
+
+### 1. Find your LAN IPv4 address
+
+The SFU has to advertise an ICE host candidate that the browser can
+actually route to. On Windows / PowerShell:
+
+```powershell
+Get-NetIPAddress -AddressFamily IPv4 |
+  Where-Object { $_.IPAddress -notmatch '^(127\.|169\.254\.)' -and $_.PrefixOrigin -ne 'WellKnown' } |
+  Select-Object IPAddress, InterfaceAlias | Format-Table -AutoSize
+```
+
+Pick your Wi-Fi or Ethernet IP (e.g. `10.100.53.178`). Avoid any
+`vEthernet (WSL …)` / `Default Switch` / Hyper-V interfaces — those
+are virtual adapters the browser cannot reach.
+
+### 2. Start the SFU
+
+```powershell
+cd example/ion_style_sfu
+dart run bin/sfu_server.dart `
+  --ip 0.0.0.0 `
+  --ws-port 9091 `
+  --rtp-base 51000 `
+  --announce-ip 10.100.53.178
+```
+
+Flags:
+
+* `--ip 0.0.0.0` — bind UDP/TCP on every interface (so traffic from any
+  network adapter can reach it).
+* `--ws-port 9091` — HTTP/WebSocket port (`/ws/<sid>`, `/stats`,
+  `/metrics`, `/healthz`, `/admin/drain`).
+* `--rtp-base 51000` — first UDP port for media transports. Each
+  session reserves a 64-port slice (`51000–51063`, `51064–51127`, …).
+* `--announce-ip <your-LAN-IP>` — the IP put into the SDP host
+  candidate. **Use the LAN IP from step 1**, not `127.0.0.1`. Loopback
+  works only when both tabs and the SFU are on the same machine *and*
+  the browser happens to choose its loopback adapter for ICE — most
+  Windows + Chrome combinations don't, which is why localhost ICE
+  often hangs at `checking → disconnected`.
+
+You should see:
+
+```
+INFO  sfu listening {wsUrl=ws://10.100.53.178:9091/ws/<sessionId>, ...}
+```
+
+If Windows Firewall pops up the first time, allow `dart.exe` on
+private networks (port 9091 + the UDP range starting at 51000).
+
+### 3. Serve the browser client
+
+In a second terminal:
+
+```powershell
+cd example/ion_style_sfu/web
+python -m http.server 8000
+```
+
+(Any static file server works — `dart pub global run dhttpd`,
+`npx serve`, etc.)
+
+### 4. Open the demo in the browser
+
+Open one tab per peer (any number — the SFU fans out everyone to
+everyone). Use the **same LAN IP** for both the page and the WS so
+`getUserMedia` and the WebRTC ICE candidates agree:
+
+```
+http://10.100.53.178:8000/?server=ws://10.100.53.178:9091&sid=room1&uid=alice
+http://10.100.53.178:8000/?server=ws://10.100.53.178:9091&sid=room1&uid=bob
+http://10.100.53.178:8000/?server=ws://10.100.53.178:9091&sid=room1&uid=carol
+http://10.100.53.178:8000/?server=ws://10.100.53.178:9091&sid=room1&uid=dave
+```
+
+Each tab will:
+
+1. Prompt for camera/mic.
+2. Open `/ws/room1` and send `{type:"join"}`.
+3. Negotiate the publisher PC (its tracks → SFU).
+4. Negotiate the subscriber PC (every other peer's tracks → it).
+5. Show its local preview plus one remote `<video>` per other peer.
+
+Healthy console output ends with `pub ice: connected` and
+`sub ice: connected` for every joined tab. The `<pre>` panel below
+the videos polls `/stats` every 2 seconds.
+
+> If the tab logs `pub ice: disconnected` immediately after
+> `checking`, your browser couldn't reach the announced host
+> candidate. Re-check `--announce-ip` (it must match a real adapter
+> the browser can route to) and confirm the firewall rule.
+> If your laptop roams between Wi-Fi networks, the IP changes — stop
+> the SFU and restart with the new `--announce-ip`.
+
+### 5. Useful endpoints while the SFU is running
+
+```powershell
+# Live snapshot (counts, peers, RTP/RTCP totals)
+curl http://10.100.53.178:9091/stats | ConvertFrom-Json
+
+# Prometheus exposition
+curl http://10.100.53.178:9091/metrics
+
+# Liveness (returns 503 once draining)
+curl http://10.100.53.178:9091/healthz
+
+# Trigger graceful drain (no new sessions; existing peers keep going)
+curl -X POST http://10.100.53.178:9091/admin/drain
+```
+
+### Cluster mode (optional)
+
+To run two SFUs that cascade media across hosts:
+
+```powershell
+# Node A
+dart run bin/sfu_server.dart --ip 0.0.0.0 --ws-port 9091 --rtp-base 51000 `
+  --announce-ip 10.100.53.178 `
+  --self-id a:9091 `
+  --relay-port 9092 `
+  --relay-secret hunter2 `
+  --peers a:9091:9092@10.100.53.178,b:9091:9092@10.100.53.179
+
+# Node B (mirror; --self-id b:9091)
+```
+
+Sessions are owned by exactly one node (consistent hash on the sid);
+peers that hit a non-owner node are bridged via UDP relay. See
+[`docs/`](../../docs/) for the full design notes.
+
 ## Status
 
 The original "stub" phases have all landed. Each subsystem has its own
