@@ -1,0 +1,14 @@
+name: pure_dart_webrtc_rtc_peer_connection_examples
+description: Server-side RTCPeerConnection usage examples for pure_dart_webrtc.
+publish_to: none
+version: 0.1.0
+
+environment:
+  sdk: ^3.6.2
+
+dependencies:
+  pure_dart_webrtc:
+    path: ../../
+
+dev_dependencies:
+  lints: ^5.0.0
