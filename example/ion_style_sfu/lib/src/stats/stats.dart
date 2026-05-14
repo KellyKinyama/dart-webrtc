@@ -381,6 +381,63 @@ String formatPrometheusCluster({
             'ionsfu_cluster_bridge_rtt_ewma_ms${_bridgeLabels(b)} ${b['rttEwmaMs']}');
       }
     }
+    // Phase 21 — throughput counters (TX/RX × control/RTP/RTCP).
+    void bridgeCounter(String name, String help, String key) {
+      out.writeln('# HELP $name $help');
+      out.writeln('# TYPE $name counter');
+      for (final b in bridges) {
+        out.writeln('$name${_bridgeLabels(b)} ${b[key] ?? 0}');
+      }
+    }
+
+    bridgeCounter(
+        'ionsfu_cluster_bridge_tx_control_packets_total',
+        'Control frames sent toward the remote on this bridge.',
+        'txControlPackets');
+    bridgeCounter(
+        'ionsfu_cluster_bridge_tx_control_bytes_total',
+        'Control bytes sent toward the remote on this bridge.',
+        'txControlBytes');
+    bridgeCounter(
+        'ionsfu_cluster_bridge_tx_rtp_packets_total',
+        'RTP packets sent toward the remote on this bridge.',
+        'txRtpPackets');
+    bridgeCounter(
+        'ionsfu_cluster_bridge_tx_rtp_bytes_total',
+        'RTP bytes sent toward the remote on this bridge.',
+        'txRtpBytes');
+    bridgeCounter(
+        'ionsfu_cluster_bridge_tx_rtcp_packets_total',
+        'RTCP packets sent toward the remote on this bridge.',
+        'txRtcpPackets');
+    bridgeCounter(
+        'ionsfu_cluster_bridge_tx_rtcp_bytes_total',
+        'RTCP bytes sent toward the remote on this bridge.',
+        'txRtcpBytes');
+    bridgeCounter(
+        'ionsfu_cluster_bridge_rx_control_packets_total',
+        'Control frames received from the remote on this bridge.',
+        'rxControlPackets');
+    bridgeCounter(
+        'ionsfu_cluster_bridge_rx_control_bytes_total',
+        'Control bytes received from the remote on this bridge.',
+        'rxControlBytes');
+    bridgeCounter(
+        'ionsfu_cluster_bridge_rx_rtp_packets_total',
+        'RTP packets received from the remote on this bridge.',
+        'rxRtpPackets');
+    bridgeCounter(
+        'ionsfu_cluster_bridge_rx_rtp_bytes_total',
+        'RTP bytes received from the remote on this bridge.',
+        'rxRtpBytes');
+    bridgeCounter(
+        'ionsfu_cluster_bridge_rx_rtcp_packets_total',
+        'RTCP packets received from the remote on this bridge.',
+        'rxRtcpPackets');
+    bridgeCounter(
+        'ionsfu_cluster_bridge_rx_rtcp_bytes_total',
+        'RTCP bytes received from the remote on this bridge.',
+        'rxRtcpBytes');
   }
 
   return out.toString();

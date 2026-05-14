@@ -832,6 +832,18 @@ class _ShardWorker {
     final b = bridges[bridgeId];
     if (b == null) return;
     b.lastInboundAtMs = DateTime.now().millisecondsSinceEpoch;
+    // Phase 21 — RX throughput accounting (split by frame kind).
+    switch (kind) {
+      case CascadeRelayKind.control:
+        b.rxControlPackets++;
+        b.rxControlBytes += bytes.length;
+      case CascadeRelayKind.rtp:
+        b.rxRtpPackets++;
+        b.rxRtpBytes += bytes.length;
+      case CascadeRelayKind.rtcp:
+        b.rxRtcpPackets++;
+        b.rxRtcpBytes += bytes.length;
+    }
     // Phase 20 — peek at control frames so we can resolve pong
     // replies to the keepalive pings we sent and update RTT before
     // handing the frame off to the RelayPeer (which treats pong as
@@ -886,12 +898,41 @@ class _ShardWorker {
           'lastRttMs': b.lastRttMs,
           'rttEwmaMs': b.rttEwmaMs,
           'pendingPings': b.pendingPings.length,
+          // Phase 21 — throughput counters split by direction +
+          // frame kind.
+          'txControlPackets': b.txControlPackets,
+          'txControlBytes': b.txControlBytes,
+          'txRtpPackets': b.txRtpPackets,
+          'txRtpBytes': b.txRtpBytes,
+          'txRtcpPackets': b.txRtcpPackets,
+          'txRtcpBytes': b.txRtcpBytes,
+          'rxControlPackets': b.rxControlPackets,
+          'rxControlBytes': b.rxControlBytes,
+          'rxRtpPackets': b.rxRtpPackets,
+          'rxRtpBytes': b.rxRtpBytes,
+          'rxRtcpPackets': b.rxRtcpPackets,
+          'rxRtcpBytes': b.rxRtcpBytes,
         }
     ];
   }
 
   void emitRelayOut(String bridgeId, CascadeRelayKind kind, Uint8List bytes) {
     if (closed) return;
+    // Phase 21 — TX throughput accounting (split by frame kind).
+    final b = bridges[bridgeId];
+    if (b != null) {
+      switch (kind) {
+        case CascadeRelayKind.control:
+          b.txControlPackets++;
+          b.txControlBytes += bytes.length;
+        case CascadeRelayKind.rtp:
+          b.txRtpPackets++;
+          b.txRtpBytes += bytes.length;
+        case CascadeRelayKind.rtcp:
+          b.txRtcpPackets++;
+          b.txRtcpBytes += bytes.length;
+      }
+    }
     _emitEvent('relayOut', {
       'bridgeId': bridgeId,
       'kind': kind.index,
@@ -1088,6 +1129,22 @@ class _CascadeBridge {
   /// from the keepalive ping/pong. Null until the first pong.
   int? lastRttMs;
   double? rttEwmaMs;
+
+  /// Phase 21 — throughput counters split by direction and frame
+  /// kind. TX is what we sent toward the remote (via [_BridgeTransport]
+  /// send paths); RX is what arrived through the worker's `_relayIn`.
+  int txControlPackets = 0;
+  int txControlBytes = 0;
+  int txRtpPackets = 0;
+  int txRtpBytes = 0;
+  int txRtcpPackets = 0;
+  int txRtcpBytes = 0;
+  int rxControlPackets = 0;
+  int rxControlBytes = 0;
+  int rxRtpPackets = 0;
+  int rxRtpBytes = 0;
+  int rxRtcpPackets = 0;
+  int rxRtcpBytes = 0;
 
   _CascadeBridge({
     required this.bridgeId,

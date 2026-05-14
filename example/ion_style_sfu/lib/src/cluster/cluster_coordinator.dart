@@ -206,6 +206,19 @@ class ClusterCoordinator {
           'lastRttMs': s['lastRttMs'],
           'rttEwmaMs': s['rttEwmaMs'],
           'pendingPings': s['pendingPings'],
+          // Phase 21 — throughput counters (TX/RX × control/RTP/RTCP).
+          'txControlPackets': s['txControlPackets'],
+          'txControlBytes': s['txControlBytes'],
+          'txRtpPackets': s['txRtpPackets'],
+          'txRtpBytes': s['txRtpBytes'],
+          'txRtcpPackets': s['txRtcpPackets'],
+          'txRtcpBytes': s['txRtcpBytes'],
+          'rxControlPackets': s['rxControlPackets'],
+          'rxControlBytes': s['rxControlBytes'],
+          'rxRtpPackets': s['rxRtpPackets'],
+          'rxRtpBytes': s['rxRtpBytes'],
+          'rxRtcpPackets': s['rxRtcpPackets'],
+          'rxRtcpBytes': s['rxRtcpBytes'],
         },
       });
     }
