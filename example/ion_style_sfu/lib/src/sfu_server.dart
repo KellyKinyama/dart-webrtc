@@ -98,7 +98,12 @@ Future<IonSfuServerHandle> runIonStyleSfuServer({
   // (second signal). Off by default so tests don't fight the
   // process-wide signal listeners.
   bool installSignalHandlers = false,
+  // Phase 27 — caller-supplied structured logger. When null we
+  // build a [Logger] using stdout/stderr (or [Logger.silent] when
+  // [quiet] is true) so the operator-visible behaviour is unchanged.
+  Logger? logger,
 }) async {
+  final log = logger ?? (quiet ? Logger.silent() : Logger());
   final bindAddr = InternetAddress(ip);
   final advertisedIp = announceIp ??
       ((ip == '0.0.0.0' || ip == '::' || ip.isEmpty)
@@ -177,25 +182,23 @@ Future<IonSfuServerHandle> runIonStyleSfuServer({
       upstreamReconnectMaxAttempts: upstreamReconnectMaxAttempts,
     );
     if (!quiet) {
-      stdout.writeln(
-        'cluster mode: self=$selfClusterId, '
-        'peers=${peersList.length}, relayUdp=${hub.port}'
-        '${relaySecret == null ? ' (UNAUTHENTICATED)' : ''}',
-      );
+      log.info('cluster mode online', {
+        'self': selfClusterId,
+        'peers': peersList.length,
+        'relayUdp': hub.port,
+        'authenticated': relaySecret != null,
+      });
     }
   }
 
   final http = await HttpServer.bind(bindAddr, port);
   final handle = IonSfuServerHandle(http, sharded, cluster);
   if (!quiet) {
-    stdout.writeln(
-      'ion-style sharded SFU listening on '
-      'ws://$advertisedIp:${http.port}/ws/<sessionId>',
-    );
-    stdout.writeln(
-      'UDP transports start at port $rtpBase '
-      '(host candidate: $advertisedIp); each shard owns a 64-port slice.',
-    );
+    log.info('sfu listening', {
+      'wsUrl': 'ws://$advertisedIp:${http.port}/ws/<sessionId>',
+      'rtpBase': rtpBase,
+      'announce': advertisedIp,
+    });
   }
 
   http.listen((req) {
@@ -401,7 +404,7 @@ Future<IonSfuServerHandle> runIonStyleSfuServer({
           maxPeersPerRoom: maxPeersPerRoom,
         ).run(),
         onError: (e) {
-          if (!quiet) stderr.writeln('ws upgrade error: $e');
+          if (!quiet) log.warn('ws upgrade error', {'error': '$e'});
         },
       );
       return;
@@ -421,11 +424,11 @@ Future<IonSfuServerHandle> runIonStyleSfuServer({
             armed = true;
             handle.drain();
             if (!quiet) {
-              stdout.writeln('received ${sig.toString()}, draining...');
+              log.info('signal received — draining', {'signal': sig.toString()});
             }
           } else {
             if (!quiet) {
-              stdout.writeln('received ${sig.toString()} again, closing.');
+              log.info('signal received again — closing', {'signal': sig.toString()});
             }
             handle.close();
           }

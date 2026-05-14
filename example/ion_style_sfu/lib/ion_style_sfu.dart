@@ -28,6 +28,7 @@ export 'src/bwe.dart';
 export 'src/relay/relay.dart';
 export 'src/session_shard.dart';
 export 'src/sharded_sfu.dart';
+export 'src/logging.dart';
 export 'src/stats/stats.dart';
 export 'src/sfu_server.dart';
 export 'src/byte_pool.dart';
