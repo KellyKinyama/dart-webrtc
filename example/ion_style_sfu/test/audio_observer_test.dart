@@ -48,8 +48,7 @@ void main() {
     });
 
     test('threshold filter drops quiet tracks', () async {
-      final ob =
-          AudioObserver(threshold: 50, filter: 10, smoothing: 1.0);
+      final ob = AudioObserver(threshold: 50, filter: 10, smoothing: 1.0);
       final fut = ob.events.first;
       ob.observe('loud', 20); // loudness 107
       ob.observe('quiet', 100); // loudness 27 < 50
@@ -58,10 +57,8 @@ void main() {
       expect(ev.speakers, ['loud']);
     });
 
-    test('EMA smoothing — repeated observations climb the score',
-        () async {
-      final ob =
-          AudioObserver(threshold: 0, filter: 5, smoothing: 0.5);
+    test('EMA smoothing — repeated observations climb the score', () async {
+      final ob = AudioObserver(threshold: 0, filter: 5, smoothing: 0.5);
       // Two observations of level=27 → loudness=100. EMA after 1st = 50,
       // after 2nd = 75.
       ob.observe('x', 27);
@@ -78,8 +75,7 @@ void main() {
     });
 
     test('forget removes a track from future snapshots', () async {
-      final ob =
-          AudioObserver(threshold: 0, filter: 5, smoothing: 1.0);
+      final ob = AudioObserver(threshold: 0, filter: 5, smoothing: 1.0);
       ob.observe('gone', 0); // loudest possible = 127
       ob.observe('here', 50); // 77
       ob.forget('gone');
@@ -89,8 +85,7 @@ void main() {
       expect(ev.speakers, ['here']);
     });
 
-    test('start/stop are idempotent and dispose cancels the timer',
-        () async {
+    test('start/stop are idempotent and dispose cancels the timer', () async {
       final ob = AudioObserver(
         interval: const Duration(milliseconds: 5),
         threshold: 0,
@@ -110,8 +105,7 @@ void main() {
       ob.dispose(); // no-op
     });
 
-    test('snapshot with no active tracks emits an empty list',
-        () async {
+    test('snapshot with no active tracks emits an empty list', () async {
       final ob = AudioObserver(threshold: 200, smoothing: 1.0);
       final fut = ob.events.first;
       ob.observe('loud', 0);

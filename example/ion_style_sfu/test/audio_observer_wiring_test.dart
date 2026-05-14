@@ -59,8 +59,7 @@ Uint8List _audioRtp({
 }
 
 void main() {
-  test('parsePublisherOffer surfaces audioLevelExtId on audio streams',
-      () {
+  test('parsePublisherOffer surfaces audioLevelExtId on audio streams', () {
     final s =
         parsePublisherOffer(peerId: 'user1', offerSdp: _audioOffer).single;
     expect(s.kind, 'audio');
@@ -92,8 +91,7 @@ void main() {
     expect(ev.scores.single, 117);
   });
 
-  test('Receiver does not observe when audio-level extmap is absent',
-      () async {
+  test('Receiver does not observe when audio-level extmap is absent', () async {
     // Offer without the extmap line.
     final noExtOffer = _audioOffer.replaceAll(
       'a=extmap:1 urn:ietf:params:rtp-hdrext:ssrc-audio-level\n',

@@ -11,6 +11,7 @@ import 'dart:typed_data';
 import 'package:pure_dart_webrtc/webrtc/webrtc.dart';
 
 import 'down_track.dart';
+import 'bwe.dart';
 import 'producer_stream.dart';
 import 'receiver.dart';
 import 'rtcp.dart';
@@ -27,6 +28,32 @@ class Subscriber {
   /// Per-subscriber SSRC remapper. Stable for the lifetime of the
   /// subscriber.
   final SsrcAllocator allocator = SsrcAllocator();
+
+  /// Phase 5 — downlink bandwidth estimator. Fed by REMB / TWCC from
+  /// the subscriber side. Drives [layerSelector].
+  final BandwidthEstimator bwe = BandwidthEstimator();
+
+  /// Phase 5 — chooses the simulcast layer for each receiver. Fires
+  /// [Subscriber.setPreferredLayer] on every layer change.
+  late final LayerSelector layerSelector = LayerSelector(estimator: bwe)
+    ..onLayerChange = (receiverId, rid) {
+      setPreferredLayer(receiverId, rid);
+    };
+
+  /// Cumulative payload bytes seen since the last TWCC update — used
+  /// as the byte budget when [BandwidthEstimator.onTwcc] runs.
+  int _lastBytesForwardedSnapshot = 0;
+
+  /// Recompute the byte budget delta since the previous TWCC.
+  int _consumeBytesBudget() {
+    var total = 0;
+    for (final dt in _downTracks.values) {
+      total += dt.bytesForwarded;
+    }
+    final delta = total - _lastBytesForwardedSnapshot;
+    _lastBytesForwardedSnapshot = total;
+    return delta < 0 ? 0 : delta;
+  }
 
   /// receiverId → DownTrack. There's one DownTrack per (subscriber,
   /// producer-track) pair.
@@ -139,6 +166,13 @@ class Subscriber {
     _byRewrittenSsrc[rwPrimary] = dt;
     if (rwRtx != null) _byRewrittenSsrc[rwRtx] = dt;
     receiver.attachDownTrack(dt);
+    if (receiver.isSimulcast) {
+      layerSelector.register(
+        receiver.id,
+        [for (final l in receiver.layers) l.rid],
+        initialRid: receiver.stream.defaultLayer.rid,
+      );
+    }
     _scheduleNegotiation();
   }
 
@@ -150,6 +184,7 @@ class Subscriber {
     if (dt.rewrittenRtxSsrc != null) {
       _byRewrittenSsrc.remove(dt.rewrittenRtxSsrc);
     }
+    layerSelector.unregister(receiver.id);
     receiver.detachDownTrack(dt);
     dt.close();
     _scheduleNegotiation();
@@ -199,17 +234,40 @@ class Subscriber {
     if (_closed) return;
     for (final fb in parseFeedback(rtcp)) {
       final dt = _byRewrittenSsrc[fb.mediaSsrc];
-      if (dt == null) continue;
       if (fb is NackFeedback) {
+        if (dt == null) continue;
         final res = dt.nack.lookup(fb.allMissing());
         if (res.hits.isNotEmpty) dt.replay(res.hits);
         if (res.stillMissing.isNotEmpty) {
           _sendUpstreamNack(dt, res.stillMissing);
         }
       } else if (fb is PliFeedback) {
+        if (dt == null) continue;
         _sendUpstreamPli(dt);
+      } else if (fb is RembFeedback) {
+        // REMB doesn't carry a media SSRC (it's a transport-wide
+        // estimate). Feed it unconditionally.
+        bwe.onRemb(fb);
+        // Update active-video count and re-run layer selection
+        // immediately so a sharp drop reacts without waiting for the
+        // periodic tick.
+        layerSelector.activeVideoDownTracks = _videoDownTrackCount();
+        layerSelector.tick();
+      } else if (fb is TwccFeedback) {
+        final budget = _consumeBytesBudget();
+        bwe.onTwcc(fb, budget);
+        layerSelector.activeVideoDownTracks = _videoDownTrackCount();
+        layerSelector.tick();
       }
     }
+  }
+
+  int _videoDownTrackCount() {
+    var n = 0;
+    for (final dt in _downTracks.values) {
+      if (dt.receiver.kind == MediaKind.video) n++;
+    }
+    return n == 0 ? 1 : n;
   }
 
   void _sendUpstreamNack(DownTrack dt, List<int> missing) {

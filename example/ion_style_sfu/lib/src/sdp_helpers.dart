@@ -15,8 +15,7 @@ const String _repairedRidExtUri =
     'urn:ietf:params:rtp-hdrext:sdes:repaired-rtp-stream-id';
 
 /// URI of `urn:ietf:params:rtp-hdrext:ssrc-audio-level` (RFC 6464).
-const String _audioLevelExtUri =
-    'urn:ietf:params:rtp-hdrext:ssrc-audio-level';
+const String _audioLevelExtUri = 'urn:ietf:params:rtp-hdrext:ssrc-audio-level';
 
 /// Resolve the extmap id for [uri] in a parsed m= section, or null when
 /// not negotiated.
