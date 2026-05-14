@@ -1,0 +1,19 @@
+name: pure_dart_webrtc_ion_style_sfu
+description: >
+  Ion-sfu inspired SFU built on pure_dart_webrtc. Pub/Sub split
+  PeerConnections, Session/Router/Receiver/DownTrack abstractions,
+  staged toward simulcast layer selection, jitter buffer + NACK,
+  TWCC/REMB, audio observer, SFU-to-SFU relay, and isolate sharding.
+publish_to: none
+version: 0.1.0
+
+environment:
+  sdk: ^3.6.2
+
+dependencies:
+  pure_dart_webrtc:
+    path: ../../
+
+dev_dependencies:
+  lints: ^5.0.0
+  test: ^1.24.0

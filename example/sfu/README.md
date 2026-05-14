@@ -71,6 +71,19 @@ single isolate:
 - Coalesced join-time PLI bursts: a flock of joiners costs one PLI per
   producer instead of one per (producer × newcomer).
 
+## Scaling many rooms
+
+See [MULTI_ROOM_ARCHITECTURE.md](MULTI_ROOM_ARCHITECTURE.md) for the
+worker-pool design that shards rooms across N isolates:
+
+```powershell
+dart run bin\multi_room_server.dart --workers 4 --max-participants-per-room 25
+```
+
+Clients first hit `GET /room/<id>/locate` to discover which worker
+owns a room, then open `ws://host:<workerPort>/ws/<id>` directly. RTP
+never crosses an isolate boundary.
+
 ## Tests
 
 ```powershell

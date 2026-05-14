@@ -1,0 +1,185 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>ion-style SFU demo (Pub/Sub split PCs)</title>
+  <style>
+    body { font: 14px sans-serif; margin: 1em; background: #111; color: #eee; }
+    video { width: 320px; background: #000; margin: .25em; border: 1px solid #444; }
+    #log { font-family: monospace; white-space: pre-wrap; background: #000;
+           padding: .5em; height: 12em; overflow: auto; }
+    button, input { font: inherit; padding: .3em .6em; }
+    .label { font-size: 11px; color: #aaa; }
+  </style>
+</head>
+<body>
+  <h2>ion-style SFU demo</h2>
+  <p>Two PeerConnections per peer: <code>pub</code> (publish) and <code>sub</code> (subscribe).</p>
+  <p>
+    server: <input id="server" size="32">
+    sid: <input id="sid" value="room1" size="10">
+    uid: <input id="uid" size="10">
+    <button id="go">Join</button>
+  </p>
+  <script>
+    // Default the SFU URL to the same host that served this page, on
+    // port 9090 (override via ?server=ws://host:port or by editing the
+    // input). Default the uid to peer-<rand> so two tabs don't collide.
+    (function () {
+      const params = new URLSearchParams(location.search);
+      const wsScheme = location.protocol === 'https:' ? 'wss:' : 'ws:';
+      const defaultServer = params.get('server')
+        || `${wsScheme}//${location.hostname}:9090`;
+      document.getElementById('server').value = defaultServer;
+      const sidParam = params.get('sid');
+      if (sidParam) document.getElementById('sid').value = sidParam;
+      document.getElementById('uid').value =
+        params.get('uid') || ('peer-' + Math.random().toString(36).slice(2, 7));
+    })();
+  </script>
+  <div id="videos"></div>
+  <pre id="stats" style="background:#000;padding:.5em;font-size:12px;max-height:12em;overflow:auto"></pre>
+  <div id="log"></div>
+
+  <script>
+  const log = (...a) => {
+    document.getElementById('log').textContent += a.join(' ') + '\n';
+    console.log(...a);
+  };
+
+  document.getElementById('go').onclick = async () => {
+    const server = document.getElementById('server').value;
+    const sid = document.getElementById('sid').value || 'room1';
+    const uid = document.getElementById('uid').value || ('peer-' + Date.now());
+    const ws  = new WebSocket(`${server}/ws/${sid}`);
+    await new Promise((res, rej) => { ws.onopen = res; ws.onerror = rej; });
+
+    // ---------------- Publisher PC (client -> server) ----------------
+    const pubPc = new RTCPeerConnection();
+    const local = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
+
+    const localV = document.createElement('video');
+    localV.autoplay = true; localV.muted = true; localV.srcObject = local;
+    localV.dataset.label = 'local';
+    document.getElementById('videos').appendChild(localV);
+
+    for (const t of local.getTracks()) pubPc.addTrack(t, local);
+
+    pubPc.onicecandidate = (e) => {
+      if (!e.candidate) return;
+      ws.send(JSON.stringify({
+        type: 'trickle', target: 'pub',
+        candidate: e.candidate.candidate,
+        sdpMid: e.candidate.sdpMid,
+        sdpMLineIndex: e.candidate.sdpMLineIndex,
+      }));
+    };
+    pubPc.oniceconnectionstatechange = () =>
+      log('pub ice:', pubPc.iceConnectionState);
+
+    // ---------------- Subscriber PC (server -> client) ---------------
+    const subPc = new RTCPeerConnection();
+    const remoteStreams = new Map();   // streamId -> <video>
+    const pendingSubCands = [];
+    const pendingPubCands = [];
+
+    subPc.ontrack = (e) => {
+      const stream = e.streams[0];
+      if (!stream) return;
+      let v = remoteStreams.get(stream.id);
+      if (!v) {
+        v = document.createElement('video');
+        v.autoplay = true; v.playsInline = true;
+        v.dataset.label = 'remote ' + stream.id;
+        document.getElementById('videos').appendChild(v);
+        remoteStreams.set(stream.id, v);
+      }
+      v.srcObject = stream;
+    };
+    subPc.onicecandidate = (e) => {
+      if (!e.candidate) return;
+      ws.send(JSON.stringify({
+        type: 'trickle', target: 'sub',
+        candidate: e.candidate.candidate,
+        sdpMid: e.candidate.sdpMid,
+        sdpMLineIndex: e.candidate.sdpMLineIndex,
+      }));
+    };
+    subPc.oniceconnectionstatechange = () =>
+      log('sub ice:', subPc.iceConnectionState);
+
+    // ---------------- Signaling ----------------
+    ws.onmessage = async (ev) => {
+      const msg = JSON.parse(ev.data);
+      if (msg.type !== 'trickle') log('ws<=', msg.type, msg.target ?? '');
+      switch (msg.type) {
+        case 'joined': {
+          // Now create the publisher offer.
+          const offer = await pubPc.createOffer();
+          await pubPc.setLocalDescription(offer);
+          ws.send(JSON.stringify({ type: 'offer', target: 'pub', sdp: offer.sdp }));
+          break;
+        }
+        case 'answer': {
+          // Server answered our publisher offer.
+          if (msg.target === 'pub') {
+            await pubPc.setRemoteDescription({ type: 'answer', sdp: msg.sdp });
+            for (const c of pendingPubCands.splice(0)) {
+              try { await pubPc.addIceCandidate(c); } catch (e) { log('pub addCand err', e); }
+            }
+          }
+          break;
+        }
+        case 'offer': {
+          // Server sent us a subscriber offer (initial or renegotiation).
+          if (msg.target === 'sub') {
+            await subPc.setRemoteDescription({ type: 'offer', sdp: msg.sdp });
+            const ans = await subPc.createAnswer();
+            await subPc.setLocalDescription(ans);
+            ws.send(JSON.stringify({ type: 'answer', target: 'sub', sdp: ans.sdp }));
+            for (const c of pendingSubCands.splice(0)) {
+              try { await subPc.addIceCandidate(c); } catch (e) { log('sub addCand err', e); }
+            }
+          }
+          break;
+        }
+        case 'trickle': {
+          const c = {
+            candidate: msg.candidate,
+            sdpMid: msg.sdpMid,
+            sdpMLineIndex: msg.sdpMLineIndex,
+          };
+          const pc = msg.target === 'pub' ? pubPc : subPc;
+          const pending = msg.target === 'pub' ? pendingPubCands : pendingSubCands;
+          if (!pc.remoteDescription || !pc.remoteDescription.type) {
+            pending.push(c);
+          } else {
+            try { await pc.addIceCandidate(c); }
+            catch (e) { log('addCandidate(' + msg.target + ') err:', e); }
+          }
+          break;
+        }
+        case 'peer-joined':
+        case 'peer-left':
+          log(msg.type, msg.uid);
+          break;
+      }
+    };
+
+    ws.send(JSON.stringify({ type: 'join', sid, uid }));
+    log('joining as', uid, 'in', sid);
+
+    // periodic /stats
+    const statsEl = document.getElementById('stats');
+    const base = server.replace(/^ws/, 'http');
+    setInterval(async () => {
+      try {
+        const r = await fetch(base + '/stats');
+        const j = await r.json();
+        statsEl.textContent = JSON.stringify(j, null, 2);
+      } catch (_) {}
+    }, 2000);
+  };
+  </script>
+</body>
+</html>

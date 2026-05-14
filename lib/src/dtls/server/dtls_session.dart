@@ -102,13 +102,31 @@ class DtlsSession {
               'epoch=${rh.epoch} len=${rh.contentLen}');
         }
 
-        final decoded = await DecodeDtlsMessageResult.decode(
-          _ctx,
-          recordBytes,
-          0,
-          recordBytes.length,
-          CipherSuiteId.Tls_Ecdhe_Ecdsa_With_Aes_128_Gcm_Sha256,
-        );
+        DecodeDtlsMessageResult? decoded;
+        try {
+          decoded = await DecodeDtlsMessageResult.decode(
+            _ctx,
+            recordBytes,
+            0,
+            recordBytes.length,
+            CipherSuiteId.Tls_Ecdhe_Ecdsa_With_Aes_128_Gcm_Sha256,
+          );
+        } catch (e, st) {
+          // A single malformed record (e.g. a truncated post-handshake
+          // Alert) must NOT tear down the whole DTLS session — that
+          // would knock the participant off the SFU. Log and skip the
+          // bad record; subsequent records in the same datagram and
+          // future datagrams continue to flow.
+          // ignore: avoid_print
+          print('[dtls] skipping malformed record#$recordIdx '
+              'ct=${rh.contentType} len=${rh.contentLen}: $e');
+          if (_verbose) {
+            // ignore: avoid_print
+            print(st);
+          }
+          recordIdx++;
+          continue;
+        }
 
         if (_verbose) {
           // ignore: avoid_print

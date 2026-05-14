@@ -205,14 +205,26 @@ class Alert {
 
   static (Alert, int, bool?) unmarshal(
       Uint8List buf, int offset, int arrayLen) {
-
-        final alertLevel=AlertLevel.from(buf[offset]);
-        offset++;
-        final alertDescription=AlertDescription.from(buf[offset]);
+    // Defensive: a truncated / encrypted-but-undecrypted Alert record
+    // would otherwise blow up with a RangeError and abort the whole
+    // DTLS session. Return an `invalid` alert and advance offset by
+    // whatever bytes are actually available.
+    final available = buf.length - offset;
+    if (available < 2) {
+      final advanced = offset + (available > 0 ? available : 0);
+      return (
+        Alert(AlertLevel.invalid, AlertDescription.invalid),
+        advanced,
+        null,
+      );
+    }
+    final alertLevel = AlertLevel.from(buf[offset]);
+    offset++;
+    final alertDescription = AlertDescription.from(buf[offset]);
     return (
       Alert(alertLevel, alertDescription),
       offset,
-      null
+      null,
     );
   }
 

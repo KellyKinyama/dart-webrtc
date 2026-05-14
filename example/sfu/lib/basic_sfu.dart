@@ -640,7 +640,18 @@ class BasicSfu {
     if (video) pc.addTransceiver(trackOrKind: MediaKind.video);
     if (audio) pc.addTransceiver(trackOrKind: MediaKind.audio);
 
-    final usePort = port ?? (basePort + _nextPortOffset++);
+    // basePort == 0 is "let the OS pick a free port for every
+    // participant". Without this guard, the second participant would
+    // try to bind to port 1 (privileged), which fails or is
+    // unreachable, leaving DTLS stuck.
+    final int usePort;
+    if (port != null) {
+      usePort = port;
+    } else if (basePort == 0) {
+      usePort = 0;
+    } else {
+      usePort = basePort + _nextPortOffset++;
+    }
     final transport =
         await pc.bind(address, usePort, announceAddress: announceAddress);
 
@@ -1026,6 +1037,13 @@ class BasicSfu {
 
       if (ssrcs.isNotEmpty) m['ssrcs'] = ssrcs;
       if (groups.isNotEmpty) m['ssrcGroups'] = groups;
+      // Section-level msid wins over per-ssrc msid in Chrome's
+      // grouping logic. Without overriding it, every forwarded SSRC
+      // would land on the same MediaStream (the receiver's local
+      // streamId emitted by SdpAnswerBuilder) and `pc.ontrack` would
+      // only fire once per kind regardless of how many producers we
+      // route into separate m= sections.
+      m['msid'] = '${stream.msidStream} ${stream.msidTrack}';
     }
 
     if (!changed) return answerSdp;
