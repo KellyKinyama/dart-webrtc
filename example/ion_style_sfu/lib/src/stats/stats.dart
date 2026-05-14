@@ -270,6 +270,113 @@ String _trackLabels(DownTrackStats t) => '{session="${_esc(t.sessionId)}",'
     'track="${_esc(t.trackId)}",'
     'kind="${_esc(t.kind)}"}';
 
+/// Phase 18 — render cluster/relay observability counters in
+/// Prometheus exposition format. [hubStats] is `UdpRelayHub.stats`,
+/// [bridges] is the list returned by
+/// `ClusterCoordinator.detailedSnapshot()`. Pass [selfId] to label
+/// the `ionsfu_cluster_self` gauge.
+///
+/// Designed to be appended to the output of [formatPrometheus] when
+/// the SFU is running in cluster mode.
+String formatPrometheusCluster({
+  required Map<String, Object?> hubStats,
+  required List<Map<String, Object?>> bridges,
+  String? selfId,
+}) {
+  final out = StringBuffer();
+
+  void counter(String name, String help, Object value) {
+    out.writeln('# HELP $name $help');
+    out.writeln('# TYPE $name counter');
+    out.writeln('$name $value');
+  }
+
+  void gauge(String name, String help, Object value) {
+    out.writeln('# HELP $name $help');
+    out.writeln('# TYPE $name gauge');
+    out.writeln('$name $value');
+  }
+
+  if (selfId != null) {
+    out.writeln('# HELP ionsfu_cluster_self Identity of this SFU node.');
+    out.writeln('# TYPE ionsfu_cluster_self gauge');
+    out.writeln('ionsfu_cluster_self{id="${_esc(selfId)}"} 1');
+  }
+
+  gauge(
+    'ionsfu_relay_authenticated',
+    'Whether the relay hub enforces HMAC-SHA256 (1=yes,0=no).',
+    (hubStats['authenticated'] == true) ? 1 : 0,
+  );
+  gauge('ionsfu_relay_endpoints', 'Number of live relay endpoints.',
+      hubStats['endpoints'] ?? 0);
+  counter(
+      'ionsfu_relay_framing_errors_total',
+      'UDP datagrams dropped due to bad magic/version/type/length.',
+      hubStats['framingErrors'] ?? 0);
+  counter(
+      'ionsfu_relay_auth_failures_total',
+      'UDP datagrams dropped due to HMAC mismatch (when secret is set).',
+      hubStats['authFailures'] ?? 0);
+  counter(
+      'ionsfu_relay_unknown_peer_frames_total',
+      'Well-formed datagrams from a host:port with no live endpoint.',
+      hubStats['unknownPeerFrames'] ?? 0);
+
+  gauge('ionsfu_cluster_bridges', 'Number of live cascade bridges.',
+      bridges.length);
+
+  // Per-bridge gauges — labels: session, bridge, role, remote.
+  if (bridges.isNotEmpty) {
+    out.writeln(
+        '# HELP ionsfu_cluster_bridge_established Whether the bridge has '
+        'completed its relay handshake (1=yes,0=no).');
+    out.writeln('# TYPE ionsfu_cluster_bridge_established gauge');
+    for (final b in bridges) {
+      final lbl = _bridgeLabels(b);
+      final v = (b['established'] == true) ? 1 : 0;
+      out.writeln('ionsfu_cluster_bridge_established$lbl $v');
+    }
+    out.writeln('# HELP ionsfu_cluster_bridge_inbound_rtp_packets_total '
+        'RTP packets received on a cascade bridge.');
+    out.writeln(
+        '# TYPE ionsfu_cluster_bridge_inbound_rtp_packets_total counter');
+    for (final b in bridges) {
+      final lbl = _bridgeLabels(b);
+      out.writeln(
+          'ionsfu_cluster_bridge_inbound_rtp_packets_total$lbl ${b['inboundRtpPackets'] ?? 0}');
+    }
+    out.writeln('# HELP ionsfu_cluster_bridge_idle_ms '
+        'Milliseconds since the last inbound frame on this bridge.');
+    out.writeln('# TYPE ionsfu_cluster_bridge_idle_ms gauge');
+    for (final b in bridges) {
+      final lbl = _bridgeLabels(b);
+      out.writeln('ionsfu_cluster_bridge_idle_ms$lbl ${b['idleMs'] ?? 0}');
+    }
+    out.writeln('# HELP ionsfu_cluster_bridge_relayed_receivers '
+        'Number of relayed receivers currently published over this bridge.');
+    out.writeln('# TYPE ionsfu_cluster_bridge_relayed_receivers gauge');
+    for (final b in bridges) {
+      final lbl = _bridgeLabels(b);
+      out.writeln(
+          'ionsfu_cluster_bridge_relayed_receivers$lbl ${b['relayedReceivers'] ?? 0}');
+    }
+  }
+
+  return out.toString();
+}
+
+String _bridgeLabels(Map<String, Object?> b) {
+  final session = (b['sessionId'] ?? '') as String;
+  final bridge = (b['bridgeId'] ?? '') as String;
+  final role = (b['role'] ?? '') as String;
+  final remote = (b['remote'] ?? '') as String;
+  return '{session="${_esc(session)}",'
+      'bridge="${_esc(bridge)}",'
+      'role="${_esc(role)}",'
+      'remote="${_esc(remote)}"}';
+}
+
 /// Escape label values per Prometheus exposition format: backslash,
 /// double quote, and newline are the only required escapes.
 String _esc(String v) {

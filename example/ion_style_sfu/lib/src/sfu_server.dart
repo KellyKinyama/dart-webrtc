@@ -179,13 +179,26 @@ Future<IonSfuServerHandle> runIonStyleSfuServer({
       return;
     }
     if (req.uri.path == '/metrics') {
-      sharded.aggregateSnapshot().then((snap) {
+      sharded.aggregateSnapshot().then((snap) async {
+        final body = StringBuffer(formatPrometheus(snap));
+        if (cluster != null && hub != null) {
+          try {
+            final bridges = await cluster.detailedSnapshot();
+            body.write(formatPrometheusCluster(
+              hubStats: hub.stats,
+              bridges: bridges,
+              selfId: selfClusterId,
+            ));
+          } catch (_) {
+            // best-effort — never fail /metrics on cluster snapshot
+          }
+        }
         req.response
           ..headers.contentType =
               ContentType('text', 'plain', charset: 'utf-8', parameters: {
             'version': '0.0.4',
           })
-          ..write(formatPrometheus(snap));
+          ..write(body.toString());
         req.response.close();
       });
       return;
