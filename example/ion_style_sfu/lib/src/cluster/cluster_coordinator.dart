@@ -127,6 +127,7 @@ class ClusterCoordinator {
         bridgeIdleTimeoutMs: base.bridgeIdleTimeoutMs,
         bridgeKeepaliveMs: base.bridgeKeepaliveMs,
         maxPeersPerSession: base.maxPeersPerSession,
+        idleSessionTimeoutMs: base.idleSessionTimeoutMs,
       );
     };
     // Wire up the upstream endpoint as soon as the shard is born.

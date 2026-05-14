@@ -95,6 +95,16 @@ class ShardConfig {
   /// the orchestrator translates to a 4xx for the client.
   final int? maxPeersPerSession;
 
+  /// Phase 29 — when non-null, the worker periodically checks
+  /// whether the session has had zero peers and zero cascade
+  /// bridges continuously for this many milliseconds, and if so
+  /// triggers an [ShardCloseReason.idle] shutdown. Useful for
+  /// reaping shards that were spawned (e.g. by an inbound cascade
+  /// hello or a stalled join) but never accumulated activity.
+  /// Independent of [bridgeIdleTimeoutMs] which only reaps
+  /// individual silent bridges.
+  final int? idleSessionTimeoutMs;
+
   const ShardConfig({
     required this.sessionId,
     required this.bindAddress,
@@ -110,6 +120,7 @@ class ShardConfig {
     this.bridgeIdleTimeoutMs,
     this.bridgeKeepaliveMs,
     this.maxPeersPerSession,
+    this.idleSessionTimeoutMs,
   });
 }
 
@@ -567,6 +578,19 @@ class _ShardWorker {
   Timer? _bridgeKeepalive;
   int _keepaliveNonce = 0;
 
+  /// Phase 29 — periodic idle-session sweeper. Created in [start]
+  /// when [ShardConfig.idleSessionTimeoutMs] is non-null. Closes the
+  /// shard with [ShardCloseReason.idle] when it has had zero peers
+  /// AND zero bridges for [_idleSinceMs] longer than the configured
+  /// timeout.
+  Timer? _idleSessionReaper;
+
+  /// Phase 29 — wall-clock ms when the worker first observed both
+  /// `peers` and `bridges` empty. Reset to the current time on
+  /// every transition into the empty state. `null` means we have
+  /// peers and/or bridges right now.
+  int? _idleSinceMs;
+
   _ShardWorker(this.config, this.replies, this.inbox);
 
   Session? get _session {
@@ -590,6 +614,18 @@ class _ShardWorker {
       defaultAudioCodecs: _materialiseCodecs(config.audioCodecs),
     ));
     inbox.listen((msg) => _onMessage(msg));
+    // Phase 29 — start the idle-session reaper if configured. The
+    // shard is born empty, so seed the marker and let the timer
+    // reap it if no one ever joins / no bridge ever attaches.
+    final idleTimeout = config.idleSessionTimeoutMs;
+    if (idleTimeout != null && idleTimeout > 0) {
+      _idleSinceMs = DateTime.now().millisecondsSinceEpoch;
+      final tickMs = (idleTimeout ~/ 4).clamp(100, 5000);
+      _idleSessionReaper =
+          Timer.periodic(Duration(milliseconds: tickMs), (_) {
+        _checkIdleSession(idleTimeout);
+      });
+    }
     // Note: any upstream cascade bridge is attached explicitly by the
     // main-isolate orchestrator after it subscribes to the event
     // stream — otherwise the initial cascade-hello relayOut event
@@ -673,6 +709,7 @@ class _ShardWorker {
           PeerJoinConfig(noPublish: noPublish, noSubscribe: noSubscribe),
     );
     peers[uid] = peer;
+    _markActivity();
     _emitEvent('peerJoined', {'uid': uid});
 
     // Hook session-level events (idempotent — addPeer fires once per peer).
@@ -725,6 +762,7 @@ class _ShardWorker {
     final peer = peers.remove(uid);
     if (peer == null) return;
     await peer.close();
+    _markIdleIfEmpty();
     if (peers.isEmpty) {
       // Session is empty — let the orchestrator reap us.
       await _shutdown(ShardCloseReason.idle);
@@ -774,6 +812,8 @@ class _ShardWorker {
     _bridgeReaper = null;
     _bridgeKeepalive?.cancel();
     _bridgeKeepalive = null;
+    _idleSessionReaper?.cancel();
+    _idleSessionReaper = null;
     try {
       for (final b in bridges.values.toList()) {
         await b.close();
@@ -828,6 +868,7 @@ class _ShardWorker {
       session: session,
     );
     bridges[bridgeId] = bridge;
+    _markActivity();
     relay.onEstablished = () => bridge.exportLocalProducers();
     relay.onRelayedStream = (recv) {
       // Count every RTP packet that arrives on this relayed receiver
@@ -853,6 +894,7 @@ class _ShardWorker {
       // Either the remote sent `bye` or we shut down locally. Drop
       // our bookkeeping and tell main so it can reclaim the route.
       if (bridges.remove(bridgeId) != null) {
+        _markIdleIfEmpty();
         _emitEvent('bridgeClosed', {'bridgeId': bridgeId});
       }
     };
@@ -873,6 +915,7 @@ class _ShardWorker {
     final bridgeId = p['bridgeId'] as String;
     final b = bridges.remove(bridgeId);
     if (b == null) return;
+    _markIdleIfEmpty();
     // Phase 22 — emit `bridgeClosed` so main can reclaim the route
     // and (for upstream bridges) trigger an auto-reconnect. The
     // RelayPeer.onClosed handler is a no-op now because we already
@@ -996,6 +1039,41 @@ class _ShardWorker {
       'kind': kind.index,
       'bytes': bytes,
     });
+  }
+
+  /// Phase 29 — called when peers/bridges may have transitioned to
+  /// non-empty. Clears the idle marker so the reaper sees activity.
+  void _markActivity() {
+    _idleSinceMs = null;
+  }
+
+  /// Phase 29 — called when peers/bridges may have transitioned to
+  /// empty. Stamps `_idleSinceMs` if (and only if) the shard is now
+  /// fully idle. No-op if the reaper is disabled.
+  void _markIdleIfEmpty() {
+    if (config.idleSessionTimeoutMs == null) return;
+    if (peers.isEmpty && bridges.isEmpty) {
+      _idleSinceMs ??= DateTime.now().millisecondsSinceEpoch;
+    } else {
+      _idleSinceMs = null;
+    }
+  }
+
+  /// Phase 29 — periodic check; closes the shard with reason
+  /// [ShardCloseReason.idle] if it has been fully empty for the
+  /// configured timeout.
+  void _checkIdleSession(int timeoutMs) {
+    if (closed) return;
+    final since = _idleSinceMs;
+    if (since == null) return;
+    if (peers.isNotEmpty || bridges.isNotEmpty) {
+      _idleSinceMs = null;
+      return;
+    }
+    final now = DateTime.now().millisecondsSinceEpoch;
+    if (now - since >= timeoutMs) {
+      _shutdown(ShardCloseReason.idle);
+    }
   }
 
   /// Phase 15 — schedule the idle-bridge sweeper if configured and

@@ -93,6 +93,12 @@ Future<IonSfuServerHandle> runIonStyleSfuServer({
   int? maxSessions,
   // Phase 25 — per-session cap on simultaneous peers. Null = no cap.
   int? maxPeersPerSession,
+  // Phase 29 — when non-null, every shard's worker periodically
+  // closes itself with reason 'idle' if it has been fully empty
+  // (no peers, no cascade bridges) for this many milliseconds.
+  // Independent of [bridgeIdleTimeoutMs] which only reaps silent
+  // bridges within a session.
+  int? idleSessionTimeoutMs,
   // Phase 26 — when true, install SIGINT/SIGTERM handlers that
   // call [IonSfuServerHandle.drain] (first signal) then [close]
   // (second signal). Off by default so tests don't fight the
@@ -119,6 +125,7 @@ Future<IonSfuServerHandle> runIonStyleSfuServer({
     bridgeKeepaliveMs: bridgeKeepaliveMs,
     maxSessions: maxSessions,
     maxPeersPerSession: maxPeersPerSession,
+    idleSessionTimeoutMs: idleSessionTimeoutMs,
   ));
 
   // Optional cluster wiring — hub + locator now; coordinator is

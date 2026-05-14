@@ -45,6 +45,12 @@ class ShardConfigTemplate {
   /// cap with a SessionFullException.
   final int? maxPeersPerSession;
 
+  /// Phase 29 — propagated as [ShardConfig.idleSessionTimeoutMs].
+  /// Null = disabled. Worker periodically closes shards that have
+  /// been fully empty (no peers, no cascade bridges) for longer
+  /// than this many milliseconds.
+  final int? idleSessionTimeoutMs;
+
   const ShardConfigTemplate({
     required this.bindAddress,
     required this.rtpBasePort,
@@ -57,6 +63,7 @@ class ShardConfigTemplate {
     this.bridgeKeepaliveMs,
     this.maxSessions,
     this.maxPeersPerSession,
+    this.idleSessionTimeoutMs,
   });
 }
 
@@ -136,6 +143,7 @@ class ShardedSfu {
       bridgeIdleTimeoutMs: template.bridgeIdleTimeoutMs,
       bridgeKeepaliveMs: template.bridgeKeepaliveMs,
       maxPeersPerSession: template.maxPeersPerSession,
+      idleSessionTimeoutMs: template.idleSessionTimeoutMs,
     );
     final cfg = configure?.call(base) ?? base;
     final f = SessionShard.spawn(cfg).then((shard) {
