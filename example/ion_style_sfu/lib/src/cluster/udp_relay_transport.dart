@@ -57,6 +57,22 @@ class UdpRelayHub {
   void Function(InternetAddress addr, int port, int type, Uint8List payload)?
       onUnknownPeer;
 
+  // Phase 17 — observability counters. Bumped on every drop in
+  // [_decode]; surfaced via [stats].
+  int _framingErrors = 0;
+  int _authFailures = 0;
+  int _unknownPeerFrames = 0;
+
+  /// Snapshot of hub-level counters. Cheap; safe for `/cluster`.
+  Map<String, Object?> get stats => {
+        'port': port,
+        'authenticated': _secret != null,
+        'endpoints': _endpoints.length,
+        'framingErrors': _framingErrors,
+        'authFailures': _authFailures,
+        'unknownPeerFrames': _unknownPeerFrames,
+      };
+
   bool _closed = false;
 
   UdpRelayHub._(this._socket, this._secret, this.onError) {
@@ -129,6 +145,7 @@ class UdpRelayHub {
       ep._dispatch(type.$1, type.$2);
       return;
     }
+    _unknownPeerFrames++;
     final cb = onUnknownPeer;
     if (cb != null) {
       cb(dg.address, dg.port, type.$1, type.$2);
@@ -138,28 +155,47 @@ class UdpRelayHub {
   /// Decodes [data] into (type, payload). Returns null on framing /
   /// HMAC failure.
   (int, Uint8List)? _decode(Uint8List data) {
-    if (data.length < _headerLen) return null;
+    if (data.length < _headerLen) {
+      _framingErrors++;
+      return null;
+    }
     final magic = (data[0] << 24) | (data[1] << 16) | (data[2] << 8) | data[3];
-    if (magic != _frameMagic) return null;
-    if (data[4] != _frameVersion) return null;
+    if (magic != _frameMagic) {
+      _framingErrors++;
+      return null;
+    }
+    if (data[4] != _frameVersion) {
+      _framingErrors++;
+      return null;
+    }
     final type = data[5];
     if (type != _typeControl && type != _typeRtp && type != _typeRtcp) {
+      _framingErrors++;
       return null;
     }
     final declaredLen =
         (data[8] << 24) | (data[9] << 16) | (data[10] << 8) | data[11];
     final secret = _secret;
     final payloadEnd = secret == null ? data.length : data.length - _hmacLen;
-    if (payloadEnd < _headerLen) return null;
+    if (payloadEnd < _headerLen) {
+      _framingErrors++;
+      return null;
+    }
     final actualLen = payloadEnd - _headerLen;
-    if (actualLen != declaredLen) return null;
+    if (actualLen != declaredLen) {
+      _framingErrors++;
+      return null;
+    }
     if (secret != null) {
       final mac = Hmac(sha256, secret)
           .convert(data.sublist(0, payloadEnd))
           .bytes
           .sublist(0, _hmacLen);
       final got = data.sublist(payloadEnd, payloadEnd + _hmacLen);
-      if (!_constantTimeEq(mac, got)) return null;
+      if (!_constantTimeEq(mac, got)) {
+        _authFailures++;
+        return null;
+      }
     }
     final payload = Uint8List.sublistView(data, _headerLen, payloadEnd);
     return (type, Uint8List.fromList(payload));

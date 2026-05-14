@@ -232,6 +232,7 @@ Future<IonSfuServerHandle> runIonStyleSfuServer({
                   'self': p.id == selfClusterId,
                 },
             ],
+            'relay': hub?.stats,
             'bridges': bridges,
           }));
         req.response.close();
