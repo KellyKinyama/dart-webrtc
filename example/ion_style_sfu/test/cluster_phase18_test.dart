@@ -109,8 +109,8 @@ void main() {
         await wrongHub.close();
       });
 
-      final sid = _sessionOwnedBy(
-          ownerPeer.id, [ownerPeer, fakePeer, wrongPeer]);
+      final sid =
+          _sessionOwnedBy(ownerPeer.id, [ownerPeer, fakePeer, wrongPeer]);
 
       // Bring up a real (correctly-signed) inbound bridge.
       final transport = fakeHub.endpointTo(
@@ -171,10 +171,9 @@ void main() {
       // The labels for our live inbound bridge should be present and
       // marked established=1.
       expect(
-        RegExp(
-                r'ionsfu_cluster_bridge_established\{[^}]*session="' +
-                    RegExp.escape(sid) +
-                    r'"[^}]*\} 1')
+        RegExp(r'ionsfu_cluster_bridge_established\{[^}]*session="' +
+                RegExp.escape(sid) +
+                r'"[^}]*\} 1')
             .hasMatch(body),
         isTrue,
         reason: 'inbound bridge for $sid should be reported established=1',

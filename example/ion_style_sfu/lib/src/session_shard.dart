@@ -82,6 +82,13 @@ class ShardConfig {
   /// hub endpoint exactly as it would for a remote `bye`.
   final int? bridgeIdleTimeoutMs;
 
+  /// Phase 19 — when non-null, every established cascade bridge
+  /// emits a relay-level `ping` every this many milliseconds. The
+  /// remote side replies with `pong`, and the inbound delivery
+  /// resets the bridge's `lastInboundAt` so the [bridgeIdleTimeoutMs]
+  /// reaper does not tear down healthy-but-silent links.
+  final int? bridgeKeepaliveMs;
+
   const ShardConfig({
     required this.sessionId,
     required this.bindAddress,
@@ -95,6 +102,7 @@ class ShardConfig {
     this.upstreamHost,
     this.upstreamPort,
     this.bridgeIdleTimeoutMs,
+    this.bridgeKeepaliveMs,
   });
 }
 
@@ -502,10 +510,16 @@ class _ShardWorker {
   final Map<String, _CascadeBridge> bridges = {};
   bool closed = false;
 
-  /// Phase 15 \u2014 periodic idle-bridge sweeper. Created on demand
+  /// Phase 15 — periodic idle-bridge sweeper. Created on demand
   /// when the first bridge is attached if [ShardConfig.bridgeIdleTimeoutMs]
   /// is non-null.
   Timer? _bridgeReaper;
+
+  /// Phase 19 — periodic keepalive ping emitter for established
+  /// bridges. Created on demand when the first bridge is attached if
+  /// [ShardConfig.bridgeKeepaliveMs] is non-null.
+  Timer? _bridgeKeepalive;
+  int _keepaliveNonce = 0;
 
   _ShardWorker(this.config, this.replies, this.inbox);
 
@@ -705,6 +719,8 @@ class _ShardWorker {
     closed = true;
     _bridgeReaper?.cancel();
     _bridgeReaper = null;
+    _bridgeKeepalive?.cancel();
+    _bridgeKeepalive = null;
     try {
       for (final b in bridges.values.toList()) {
         await b.close();
@@ -797,6 +813,7 @@ class _ShardWorker {
     }
     relay.start();
     _ensureBridgeReaper();
+    _ensureBridgeKeepalive();
   }
 
   Future<void> _bridgeDetach(Map<String, Object?> p) async {
@@ -871,6 +888,30 @@ class _ShardWorker {
       // close() drives RelayPeer.onClosed → our onClosed handler
       // removes [b] from [bridges] and emits the bridgeClosed event.
       b.close();
+    }
+  }
+
+  /// Phase 19 — schedule the keepalive emitter if configured.
+  void _ensureBridgeKeepalive() {
+    final intervalMs = config.bridgeKeepaliveMs;
+    if (intervalMs == null || intervalMs <= 0) return;
+    if (_bridgeKeepalive != null) return;
+    _bridgeKeepalive = Timer.periodic(
+      Duration(milliseconds: intervalMs),
+      (_) => _emitKeepalivePings(),
+    );
+  }
+
+  void _emitKeepalivePings() {
+    if (closed || bridges.isEmpty) return;
+    for (final b in bridges.values) {
+      if (!b.relay.established) continue;
+      try {
+        b.transport.sendControl({
+          'type': RelayMsgType.ping,
+          'nonce': ++_keepaliveNonce,
+        });
+      } catch (_) {}
     }
   }
 

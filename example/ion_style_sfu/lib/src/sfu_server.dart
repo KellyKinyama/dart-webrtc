@@ -66,6 +66,12 @@ Future<IonSfuServerHandle> runIonStyleSfuServer({
   // coordinator reclaims the UDP hub endpoint exactly as it would for
   // a remote `bye`.
   int? bridgeIdleTimeoutMs,
+  // Phase 19 — when non-null, every established cascade bridge emits
+  // a relay-level ping every this many milliseconds. Pair with
+  // [bridgeIdleTimeoutMs] (typically keepalive < timeout / 2) so
+  // healthy-but-silent media bridges (e.g. audio paused) are not
+  // wrongly torn down.
+  int? bridgeKeepaliveMs,
 }) async {
   final bindAddr = InternetAddress(ip);
   final advertisedIp = announceIp ??
@@ -79,6 +85,7 @@ Future<IonSfuServerHandle> runIonStyleSfuServer({
     announceAddress: advertisedIp,
     quiet: quiet,
     bridgeIdleTimeoutMs: bridgeIdleTimeoutMs,
+    bridgeKeepaliveMs: bridgeKeepaliveMs,
   ));
 
   // Optional cluster wiring — hub + locator now; coordinator is

@@ -226,6 +226,13 @@ abstract class RelayMsgType {
   static const announce = 'announce';
   static const remove = 'remove';
   static const bye = 'bye';
+  // Phase 19 — keepalive ping / pong. Either side may send a ping at
+  // any time after the handshake; the other side replies with a pong
+  // carrying the same nonce. Both messages count as inbound activity
+  // for the bridge idle reaper, so a healthy-but-silent media bridge
+  // (e.g. audio paused) is not wrongly torn down.
+  static const ping = 'ping';
+  static const pong = 'pong';
 }
 
 /// One half of a relay link.
@@ -433,6 +440,19 @@ class RelayPeer {
         break;
       case RelayMsgType.bye:
         close();
+        break;
+      case RelayMsgType.ping:
+        // Echo nonce so the sender can correlate / measure RTT.
+        try {
+          transport.sendControl({
+            'type': RelayMsgType.pong,
+            if (msg['nonce'] != null) 'nonce': msg['nonce'],
+          });
+        } catch (_) {}
+        break;
+      case RelayMsgType.pong:
+        // No further action — the inbound delivery itself is what
+        // bumps lastInboundAt on the carrying transport (worker side).
         break;
     }
   }

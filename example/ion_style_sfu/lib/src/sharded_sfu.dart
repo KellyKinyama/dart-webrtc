@@ -30,6 +30,9 @@ class ShardConfigTemplate {
   /// Phase 15 — propagated as [ShardConfig.bridgeIdleTimeoutMs].
   final int? bridgeIdleTimeoutMs;
 
+  /// Phase 19 — propagated as [ShardConfig.bridgeKeepaliveMs].
+  final int? bridgeKeepaliveMs;
+
   const ShardConfigTemplate({
     required this.bindAddress,
     required this.rtpBasePort,
@@ -39,6 +42,7 @@ class ShardConfigTemplate {
     this.portsPerShard = 64,
     this.quiet = false,
     this.bridgeIdleTimeoutMs,
+    this.bridgeKeepaliveMs,
   });
 }
 
@@ -95,6 +99,7 @@ class ShardedSfu {
       audioCodecs: template.audioCodecs,
       quiet: template.quiet,
       bridgeIdleTimeoutMs: template.bridgeIdleTimeoutMs,
+      bridgeKeepaliveMs: template.bridgeKeepaliveMs,
     );
     final cfg = configure?.call(base) ?? base;
     final f = SessionShard.spawn(cfg).then((shard) {
