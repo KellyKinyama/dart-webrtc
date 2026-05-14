@@ -9,6 +9,7 @@ export 'src/subscriber.dart';
 export 'src/router.dart';
 export 'src/receiver.dart';
 export 'src/down_track.dart';
+export 'src/producer_layer.dart';
 export 'src/producer_stream.dart';
 export 'src/ssrc_allocator.dart';
 export 'src/sdp_helpers.dart';

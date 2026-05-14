@@ -83,8 +83,15 @@ class Router {
         stream: s,
       );
       _byId[id] = receiver;
-      _byPrimarySsrc[s.primarySsrc] = receiver;
-      if (s.rtxSsrc != null) _byRtxSsrc[s.rtxSsrc!] = receiver;
+      // Index every layer's primary + RTX SSRC so simulcast packets
+      // route to the same receiver regardless of which layer they're
+      // on.
+      for (final ssrc in s.allPrimarySsrcs) {
+        _byPrimarySsrc[ssrc] = receiver;
+      }
+      for (final ssrc in s.allRtxSsrcs) {
+        _byRtxSsrc[ssrc] = receiver;
+      }
       session.publish(this, receiver);
     }
   }
@@ -101,9 +108,10 @@ class Router {
     if (receiver == null) return;
     receiver.deliverRtp(rtp);
 
-    // Only run gap detection on primary SSRCs (RTX retransmissions
-    // legitimately arrive out of order).
-    if (ssrc == receiver.primarySsrc) {
+    // Run gap detection per primary SSRC (RTX retransmissions are
+    // expected to arrive out of order, so only key off primary
+    // SSRCs across every layer).
+    if (_byPrimarySsrc[ssrc] == receiver) {
       final det = _gap.putIfAbsent(ssrc, SeqGapDetector.new);
       final seq = (rtp[2] << 8) | rtp[3];
       final missing = det.feed(seq);

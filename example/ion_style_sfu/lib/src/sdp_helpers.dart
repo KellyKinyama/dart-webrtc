@@ -1,15 +1,16 @@
-// Phase 2 — SDP helpers shared by Router (parse publisher offer) and
+// Phase 2/3 — SDP helpers shared by Router (parse publisher offer) and
 // Subscriber (augment subscriber offer with rewritten SSRC lines).
 
 import 'package:pure_dart_webrtc/signal/sdp_v2.dart';
 
+import 'producer_layer.dart';
 import 'producer_stream.dart';
 import 'ssrc_allocator.dart';
 
 /// Parse [offerSdp] from a publisher and extract the producer streams
-/// declared in each m= section (one entry per primary SSRC).
-///
-/// Mirrors the loop in `BasicSfu.learnSsrcMappingFromOffer`.
+/// declared in each m= section. One [ProducerStream] per logical track:
+/// non-simulcast tracks have one layer, SIM-grouped simulcast tracks
+/// have N layers ordered low→high.
 List<ProducerStream> parsePublisherOffer({
   required String peerId,
   required String offerSdp,
@@ -41,25 +42,96 @@ List<ProducerStream> parsePublisherOffer({
       if (attr == 'msid') msids[n] = val;
     }
     final rtxSsrcs = rtxToPrimary.keys.toSet();
-    for (final ssrc in m.ssrcSet) {
-      if (rtxSsrcs.contains(ssrc)) continue;
-      var streamId = peerId;
-      var trackId = '$peerId-$kind-$mid';
+
+    // SIM groups: a=ssrc-group:SIM <ssrc1> <ssrc2> <ssrc3>
+    // Each ssrc is a primary for one simulcast layer (lowest first by
+    // convention; we preserve declared order).
+    final simGroups = <List<int>>[];
+    for (final g in (m['ssrcGroups'] as List?)?.cast<Map>() ?? const []) {
+      if (g['semantics'] != 'SIM') continue;
+      final raw = g['ssrcs']?.toString() ?? '';
+      final parsed = raw
+          .split(RegExp(r'\s+'))
+          .map(int.tryParse)
+          .whereType<int>()
+          .toList(growable: false);
+      if (parsed.length >= 2) simGroups.add(parsed);
+    }
+    final simByPrimary = <int, List<int>>{};
+    for (final g in simGroups) {
+      simByPrimary[g.first] = g;
+    }
+    final simSecondaryMembers = <int>{
+      for (final g in simGroups) ...g.skip(1),
+    };
+
+    String resolveStreamId(int ssrc) {
+      final raw = msids[ssrc];
+      if (raw == null) return peerId;
+      final parts = raw.split(RegExp(r'\s+'));
+      return parts.isNotEmpty && parts[0].isNotEmpty ? parts[0] : peerId;
+    }
+
+    String resolveTrackId(int ssrc) {
       final raw = msids[ssrc];
       if (raw != null) {
         final parts = raw.split(RegExp(r'\s+'));
-        if (parts.isNotEmpty && parts[0].isNotEmpty) streamId = parts[0];
-        if (parts.length > 1 && parts[1].isNotEmpty) trackId = parts[1];
+        if (parts.length > 1 && parts[1].isNotEmpty) return parts[1];
       }
-      out.add(ProducerStream(
-        kind: kind,
-        mid: mid,
-        primarySsrc: ssrc,
-        rtxSsrc: primaryToRtx[ssrc],
-        cname: cnames[ssrc] ?? peerId,
-        msidStream: streamId,
-        msidTrack: trackId,
-      ));
+      return '$peerId-$kind-$mid';
+    }
+
+    // Walk primary SSRCs in declaration order (m.ssrcSet preserves it),
+    // skipping RTX SSRCs and SIM-secondary members (those are emitted
+    // as part of the SIM-leader's stream below).
+    for (final ssrc in m.ssrcSet) {
+      if (rtxSsrcs.contains(ssrc)) continue;
+      if (simSecondaryMembers.contains(ssrc)) continue;
+      final cname = cnames[ssrc] ?? peerId;
+      final streamId = resolveStreamId(ssrc);
+      final trackId = resolveTrackId(ssrc);
+
+      final simMembers = simByPrimary[ssrc];
+      if (simMembers != null) {
+        // Simulcast: build one layer per member, ordered as declared.
+        // Convention is low→high quality; we don't reorder.
+        final layers = <ProducerLayer>[];
+        for (var i = 0; i < simMembers.length; i++) {
+          final s = simMembers[i];
+          // 3 layers default to q/h/f names, otherwise just the index.
+          String rid;
+          if (simMembers.length == 3) {
+            rid = const ['q', 'h', 'f'][i];
+          } else if (simMembers.length == 2) {
+            rid = const ['h', 'f'][i];
+          } else {
+            rid = 'l$i';
+          }
+          layers.add(ProducerLayer(
+            rid: rid,
+            primarySsrc: s,
+            rtxSsrc: primaryToRtx[s],
+          ));
+        }
+        out.add(ProducerStream.simulcast(
+          kind: kind,
+          mid: mid,
+          layers: layers,
+          cname: cname,
+          msidStream: streamId,
+          msidTrack: trackId,
+        ));
+      } else {
+        out.add(ProducerStream(
+          kind: kind,
+          mid: mid,
+          primarySsrc: ssrc,
+          rtxSsrc: primaryToRtx[ssrc],
+          cname: cname,
+          msidStream: streamId,
+          msidTrack: trackId,
+        ));
+      }
     }
   }
   return out;
@@ -69,7 +141,9 @@ List<ProducerStream> parsePublisherOffer({
 /// `a=ssrc-group:FID` and `a=ssrc:` lines describing the per-subscriber
 /// rewritten SSRCs for [streams]. Streams are paired with the
 /// SDP's m= sections in document order, kind-matched, skipping rejected
-/// (port=0) sections.
+/// (port=0) sections. Even simulcast streams emit a single outbound
+/// SSRC pair — the subscriber sees one continuous track regardless of
+/// the inbound layer being forwarded.
 ///
 /// Mirrors `BasicSfu.augmentAnswerSdp`, adapted to operate on offers.
 String augmentSubscriberOffer({

@@ -155,6 +155,18 @@ class Subscriber {
     _scheduleNegotiation();
   }
 
+  /// Switch the simulcast layer being forwarded for [receiverId] to
+  /// [rid] (`'q'`/`'h'`/`'f'` by convention). Returns true when the
+  /// layer changed. Triggers an upstream PLI so the new layer's next
+  /// keyframe arrives quickly.
+  bool setPreferredLayer(String receiverId, String rid) {
+    final dt = _downTracks[receiverId];
+    if (dt == null) return false;
+    if (!dt.setCurrentLayer(rid)) return false;
+    _sendUpstreamPli(dt);
+    return true;
+  }
+
   /// Generate the server-side offer for this subscriber PC. The raw
   /// offer from `pc.createOffer` does not declare the per-subscriber
   /// rewritten SSRCs; we inject them via [augmentSubscriberOffer] so
