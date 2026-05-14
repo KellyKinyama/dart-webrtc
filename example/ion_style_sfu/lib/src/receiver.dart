@@ -54,6 +54,12 @@ class Receiver {
 
   final List<DownTrack> _downTracks = [];
 
+  /// Phase 6b — RTP/RTCP taps. Each tap is fired *after* fan-out to
+  /// DownTracks with the raw inbound packet, so relays can forward the
+  /// unmodified upstream SSRC + sequence numbers downstream.
+  final List<void Function(Uint8List rtp)> _rtpTaps = [];
+  final List<void Function(Uint8List rtcp)> _rtcpTaps = [];
+
   bool _closed = false;
 
   Receiver({
@@ -91,6 +97,20 @@ class Receiver {
 
   void detachDownTrack(DownTrack dt) {
     _downTracks.remove(dt);
+  }
+
+  /// Phase 6b — install an RTP tap. The tap fires for every primary
+  /// and RTX packet delivered to this receiver, with the raw inbound
+  /// bytes. Returns a closure that removes the tap.
+  void Function() addRtpTap(void Function(Uint8List rtp) tap) {
+    _rtpTaps.add(tap);
+    return () => _rtpTaps.remove(tap);
+  }
+
+  /// Phase 6b — install an RTCP tap.
+  void Function() addRtcpTap(void Function(Uint8List rtcp) tap) {
+    _rtcpTaps.add(tap);
+    return () => _rtcpTaps.remove(tap);
   }
 
   /// Publisher → subscribers fast-path. Resolves which simulcast layer
@@ -159,6 +179,13 @@ class Receiver {
     for (final dt in snap) {
       dt.writeRtp(layer, isRtx, rtp);
     }
+    if (_rtpTaps.isNotEmpty) {
+      final tapSnap = List<void Function(Uint8List)>.from(
+          _rtpTaps, growable: false);
+      for (final t in tapSnap) {
+        t(rtp);
+      }
+    }
   }
 
   void deliverRtcp(Uint8List rtcp) {
@@ -166,6 +193,13 @@ class Receiver {
     final snap = List<DownTrack>.from(_downTracks, growable: false);
     for (final dt in snap) {
       dt.writeRtcp(rtcp);
+    }
+    if (_rtcpTaps.isNotEmpty) {
+      final tapSnap = List<void Function(Uint8List)>.from(
+          _rtcpTaps, growable: false);
+      for (final t in tapSnap) {
+        t(rtcp);
+      }
     }
   }
 
@@ -178,5 +212,7 @@ class Receiver {
       dt.close();
     }
     _downTracks.clear();
+    _rtpTaps.clear();
+    _rtcpTaps.clear();
   }
 }

@@ -73,12 +73,14 @@ void main() {
       expect(back.repairedRidExtId, 5);
     });
 
-    test('toProducerStream produces single-layer stream when rid empty',
-        () {
+    test('toProducerStream produces single-layer stream when rid empty', () {
       const d = RelayStreamDescriptor(
-        mid: '0', kind: 'audio',
+        mid: '0',
+        kind: 'audio',
         layers: [RelayLayerDescriptor(rid: '', primarySsrc: 7)],
-        cname: 'c', msidStream: 's', msidTrack: 't',
+        cname: 'c',
+        msidStream: 's',
+        msidTrack: 't',
       );
       final ps = d.toProducerStream();
       expect(ps.isSimulcast, isFalse);
@@ -86,15 +88,17 @@ void main() {
       expect(ps.rtxSsrc, isNull);
     });
 
-    test('toProducerStream produces simulcast stream when multi-layer',
-        () {
+    test('toProducerStream produces simulcast stream when multi-layer', () {
       const d = RelayStreamDescriptor(
-        mid: '0', kind: 'video',
+        mid: '0',
+        kind: 'video',
         layers: [
           RelayLayerDescriptor(rid: 'q', primarySsrc: 1),
           RelayLayerDescriptor(rid: 'f', primarySsrc: 2),
         ],
-        cname: 'c', msidStream: 's', msidTrack: 't',
+        cname: 'c',
+        msidStream: 's',
+        msidTrack: 't',
         ridExtId: 4,
       );
       final ps = d.toProducerStream();
@@ -154,10 +158,14 @@ void main() {
       final pipe = InMemoryRelayPipe();
 
       final origin = RelayPeer.over(
-        remoteId: 'origin', session: sessA, transport: pipe.a,
+        remoteId: 'origin',
+        session: sessA,
+        transport: pipe.a,
       );
       final downstream = RelayPeer.over(
-        remoteId: 'downstream', session: sessB, transport: pipe.b,
+        remoteId: 'downstream',
+        session: sessB,
+        transport: pipe.b,
       );
       origin.start(); // sends 'hello'
       expect(downstream.established, isTrue);
@@ -170,11 +178,14 @@ void main() {
       final pipe = InMemoryRelayPipe();
 
       RelayPeer.over(
-        remoteId: 'origin', session: _sfu().getSession('x'),
+        remoteId: 'origin',
+        session: _sfu().getSession('x'),
         transport: pipe.a,
       );
       final downstream = RelayPeer.over(
-        remoteId: 'origin', session: sess, transport: pipe.b,
+        remoteId: 'origin',
+        session: sess,
+        transport: pipe.b,
       );
 
       Receiver? notified;
@@ -184,11 +195,14 @@ void main() {
       pipe.a.sendControl({
         'type': RelayMsgType.announce,
         'stream': const RelayStreamDescriptor(
-          mid: 'v1', kind: 'video',
+          mid: 'v1',
+          kind: 'video',
           layers: [
             RelayLayerDescriptor(rid: '', primarySsrc: 0xAAAA, rtxSsrc: 0xBBBB),
           ],
-          cname: 'cn', msidStream: 's', msidTrack: 't',
+          cname: 'cn',
+          msidStream: 's',
+          msidTrack: 't',
         ).toJson(),
       });
 
@@ -199,26 +213,31 @@ void main() {
       expect(downstream.router.receiverForSsrc(0xBBBB), notified);
     });
 
-    test('announce + RTP packet routes through the downstream router',
-        () {
+    test('announce + RTP packet routes through the downstream router', () {
       final sfu = _sfu();
       final sess = sfu.getSession('room');
       final pipe = InMemoryRelayPipe();
 
       RelayPeer.over(
-        remoteId: 'origin', session: _sfu().getSession('x'),
+        remoteId: 'origin',
+        session: _sfu().getSession('x'),
         transport: pipe.a,
       );
       final downstream = RelayPeer.over(
-        remoteId: 'origin', session: sess, transport: pipe.b,
+        remoteId: 'origin',
+        session: sess,
+        transport: pipe.b,
       );
 
       pipe.a.sendControl({
         'type': RelayMsgType.announce,
         'stream': const RelayStreamDescriptor(
-          mid: 'v1', kind: 'video',
+          mid: 'v1',
+          kind: 'video',
           layers: [RelayLayerDescriptor(rid: '', primarySsrc: 42)],
-          cname: 'c', msidStream: 's', msidTrack: 't',
+          cname: 'c',
+          msidStream: 's',
+          msidTrack: 't',
         ).toJson(),
       });
 
@@ -232,8 +251,7 @@ void main() {
       pipe.a.sendRtp(_rtp(ssrc: 42, seq: 5));
 
       // Gap detected → router emits NACK → relay ships it back to origin.
-      expect(upstream, isNotEmpty,
-          reason: 'expected upstream NACK after gap');
+      expect(upstream, isNotEmpty, reason: 'expected upstream NACK after gap');
       // First byte: V=2 P=0 FMT=1 → 0x81. Second byte PT=205.
       expect(upstream.first[1], 205);
       expect(downstream.router.receiverForSsrc(42), isNotNull);
@@ -244,19 +262,25 @@ void main() {
       final sess = sfu.getSession('room');
       final pipe = InMemoryRelayPipe();
       RelayPeer.over(
-        remoteId: 'origin', session: _sfu().getSession('x'),
+        remoteId: 'origin',
+        session: _sfu().getSession('x'),
         transport: pipe.a,
       );
       final downstream = RelayPeer.over(
-        remoteId: 'origin', session: sess, transport: pipe.b,
+        remoteId: 'origin',
+        session: sess,
+        transport: pipe.b,
       );
 
       pipe.a.sendControl({
         'type': RelayMsgType.announce,
         'stream': const RelayStreamDescriptor(
-          mid: 'v1', kind: 'video',
+          mid: 'v1',
+          kind: 'video',
           layers: [RelayLayerDescriptor(rid: '', primarySsrc: 9)],
-          cname: 'c', msidStream: 's', msidTrack: 't',
+          cname: 'c',
+          msidStream: 's',
+          msidTrack: 't',
         ).toJson(),
       });
       expect(downstream.relayedReceivers, hasLength(1));
@@ -271,19 +295,25 @@ void main() {
       final sess = sfu.getSession('room');
       final pipe = InMemoryRelayPipe();
       RelayPeer.over(
-        remoteId: 'origin', session: _sfu().getSession('x'),
+        remoteId: 'origin',
+        session: _sfu().getSession('x'),
         transport: pipe.a,
       );
       final downstream = RelayPeer.over(
-        remoteId: 'origin', session: sess, transport: pipe.b,
+        remoteId: 'origin',
+        session: sess,
+        transport: pipe.b,
       );
 
       var fired = 0;
       downstream.onRelayedStream = (_) => fired++;
       final desc = const RelayStreamDescriptor(
-        mid: 'v1', kind: 'video',
+        mid: 'v1',
+        kind: 'video',
         layers: [RelayLayerDescriptor(rid: '', primarySsrc: 1)],
-        cname: 'c', msidStream: 's', msidTrack: 't',
+        cname: 'c',
+        msidStream: 's',
+        msidTrack: 't',
       ).toJson();
       pipe.a.sendControl({'type': RelayMsgType.announce, 'stream': desc});
       pipe.a.sendControl({'type': RelayMsgType.announce, 'stream': desc});
@@ -296,11 +326,14 @@ void main() {
       final sess = sfu.getSession('room');
       final pipe = InMemoryRelayPipe();
       RelayPeer.over(
-        remoteId: 'origin', session: _sfu().getSession('x'),
+        remoteId: 'origin',
+        session: _sfu().getSession('x'),
         transport: pipe.a,
       );
       final downstream = RelayPeer.over(
-        remoteId: 'origin', session: sess, transport: pipe.b,
+        remoteId: 'origin',
+        session: sess,
+        transport: pipe.b,
       );
       pipe.a.sendControl({'type': RelayMsgType.bye});
       expect(downstream.isClosed, isTrue);

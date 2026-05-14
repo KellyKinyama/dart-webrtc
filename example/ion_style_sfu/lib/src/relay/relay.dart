@@ -340,6 +340,54 @@ class RelayPeer {
     transport.sendRtcp(pkt);
   }
 
+  /// Phase 6b — tap [receiver], announce it to the peer, and forward
+  /// every inbound RTP/RTCP packet up the link. Returns a handle the
+  /// caller can use to stop exporting (which also sends an
+  /// `unannounce`).
+  ///
+  /// The relayed stream is announced with the receiver's *upstream*
+  /// SSRCs untouched, so the downstream SFU's [Router] will index the
+  /// same SSRC space as the publisher.
+  RelayExport exportReceiver(Receiver receiver, {String? mid}) {
+    final exportMid = mid ?? receiver.stream.mid;
+    final desc = RelayStreamDescriptor(
+      mid: exportMid,
+      kind: receiver.kind.name,
+      layers: [
+        for (final l in receiver.stream.layers)
+          RelayLayerDescriptor(
+            rid: l.rid,
+            primarySsrc: l.primarySsrc,
+            rtxSsrc: l.rtxSsrc,
+          ),
+      ],
+      cname: receiver.stream.cname,
+      msidStream: receiver.stream.msidStream,
+      msidTrack: receiver.stream.msidTrack,
+      ridExtId: receiver.stream.ridExtId,
+      repairedRidExtId: receiver.stream.repairedRidExtId,
+      audioLevelExtId: receiver.stream.audioLevelExtId,
+    );
+    announce(desc);
+    final removeRtp = receiver.addRtpTap(forwardRtp);
+    final removeRtcp = receiver.addRtcpTap(forwardRtcp);
+    final exp = RelayExport._(
+      relay: this,
+      mid: exportMid,
+      receiver: receiver,
+      removeRtpTap: removeRtp,
+      removeRtcpTap: removeRtcp,
+    );
+    _exports[exportMid] = exp;
+    return exp;
+  }
+
+  /// Active exports keyed by mid (origin side).
+  final Map<String, RelayExport> _exports = {};
+
+  /// Snapshot of active exports on this side.
+  Iterable<RelayExport> get exports => _exports.values;
+
   // ---------------------------------------------------------------- inbound
 
   void _onControl(Map<String, Object?> msg) {
@@ -411,6 +459,10 @@ class RelayPeer {
   Future<void> close() async {
     if (_closed) return;
     _closed = true;
+    for (final e in _exports.values.toList()) {
+      e._teardownLocal();
+    }
+    _exports.clear();
     try {
       transport.sendControl({'type': RelayMsgType.bye});
     } catch (_) {
@@ -418,5 +470,44 @@ class RelayPeer {
     }
     router.close();
     await transport.close();
+  }
+}
+
+/// Handle returned by [RelayPeer.exportReceiver]. Calling [stop]
+/// detaches the taps and sends an `unannounce` to the peer.
+class RelayExport {
+  final RelayPeer relay;
+  final String mid;
+  final Receiver receiver;
+  final void Function() _removeRtpTap;
+  final void Function() _removeRtcpTap;
+  bool _stopped = false;
+
+  RelayExport._({
+    required this.relay,
+    required this.mid,
+    required this.receiver,
+    required void Function() removeRtpTap,
+    required void Function() removeRtcpTap,
+  })  : _removeRtpTap = removeRtpTap,
+        _removeRtcpTap = removeRtcpTap;
+
+  bool get isStopped => _stopped;
+
+  /// Detach the taps and unannounce the stream.
+  void stop() {
+    if (_stopped) return;
+    _teardownLocal();
+    if (!relay.isClosed) {
+      relay.unannounce(mid);
+      relay._exports.remove(mid);
+    }
+  }
+
+  void _teardownLocal() {
+    if (_stopped) return;
+    _stopped = true;
+    _removeRtpTap();
+    _removeRtcpTap();
   }
 }
