@@ -36,8 +36,7 @@ TwccFeedback _twcc({
 
 void main() {
   group('BandwidthEstimator.onTwccDelay', () {
-    test('flat delay (arrival_delay constant) → hold, throughput EMA',
-        () {
+    test('flat delay (arrival_delay constant) → hold, throughput EMA', () {
       final st = TwccStamper();
       // 10 packets at 1000us send interval, 1200-byte each.
       final seqs = <int>[];
@@ -128,7 +127,8 @@ void main() {
       st.reserve(sizeBytes: 1200, sendTimeMicros: 1_000_000);
       st.reserve(sizeBytes: 1200, sendTimeMicros: 1_001_000);
       final fb = TwccFeedback(
-        senderSsrc: 1, mediaSsrc: 2,
+        senderSsrc: 1,
+        mediaSsrc: 2,
         baseSeq: 0,
         packetCount: 2,
         referenceTime: 1_000_000 ~/ (64 * 1000),

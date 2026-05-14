@@ -14,6 +14,7 @@ export 'src/producer_stream.dart';
 export 'src/ssrc_allocator.dart';
 export 'src/sdp_helpers.dart';
 export 'src/rtcp.dart';
+export 'src/rtcp_rewrite.dart';
 export 'src/audio_observer.dart';
 export 'src/buffer/buffer.dart';
 export 'src/buffer/nack.dart';

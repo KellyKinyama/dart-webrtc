@@ -80,6 +80,16 @@ class SimulcastRewriter {
     return true;
   }
 
+  /// Phase 8 — current layer's (snOffset, tsOffset) pair, or null when
+  /// the layer hasn't seen a primary packet yet (so no offset has been
+  /// computed). Used by SR rewriting to align the publisher's RTP
+  /// timestamp into the rewritten timeline.
+  ({int snOffset, int tsOffset})? currentLayerOffset() {
+    final off = _layerOffsets[currentLayer];
+    if (off == null) return null;
+    return (snOffset: off.snOffset, tsOffset: off.tsOffset);
+  }
+
   /// Rewrite [rtp] (a publisher-side packet on layer [rid]) onto this
   /// DownTrack's outbound SSRC space. [isRtx] marks RFC 4588 RTX
   /// packets; their embedded OSN field is shifted by the layer's

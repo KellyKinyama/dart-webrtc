@@ -19,6 +19,7 @@ import 'buffer/buffer.dart';
 import 'buffer/nack.dart';
 import 'producer_layer.dart';
 import 'receiver.dart';
+import 'rtcp_rewrite.dart';
 import 'simulcast_rewriter.dart';
 import 'twcc/twcc_stamper.dart';
 
@@ -90,6 +91,33 @@ class DownTrack {
           currentLayer: receiver.stream.defaultLayer.rid,
         ) {
     nack = NackResponder(buffer: _jitter);
+    // Phase 8 — build the SSRC translation map for RTCP rewriting.
+    // Every layer's primary + optional RTX maps to the rewritten
+    // SSRC pair, so SRs from any layer translate correctly.
+    for (final l in receiver.stream.layers) {
+      if (l.primarySsrc != 0) {
+        _ssrcMap.primary[l.primarySsrc] = rewrittenPrimarySsrc;
+      }
+      if (l.rtxSsrc != null && l.rtxSsrc != 0 && rewrittenRtxSsrc != null) {
+        _ssrcMap.rtx[l.rtxSsrc!] = rewrittenRtxSsrc!;
+      }
+    }
+    _removeSsrcListener = receiver.addSsrcListener(_onReceiverSsrcLearned);
+  }
+
+  /// Phase 8 — publisher→subscriber SSRC translation table for SR/RR
+  /// rewriting. Populated at construction; extended at runtime when
+  /// RID-discovery binds new SSRCs.
+  final RtcpSsrcMap _ssrcMap = RtcpSsrcMap();
+  void Function()? _removeSsrcListener;
+
+  void _onReceiverSsrcLearned(int ssrc, ProducerLayer layer,
+      {required bool isRtx}) {
+    if (isRtx) {
+      if (rewrittenRtxSsrc != null) _ssrcMap.rtx[ssrc] = rewrittenRtxSsrc!;
+    } else {
+      _ssrcMap.primary[ssrc] = rewrittenPrimarySsrc;
+    }
   }
 
   bool get isClosed => _closed;
@@ -148,13 +176,35 @@ class DownTrack {
     bytesForwarded += out.length;
   }
 
-  /// Forward inbound publisher RTCP. Phase 2 deliberately *drops*
-  /// publisher RTCP rather than relaying it: the rewritten SSRC space
-  /// makes the publisher's SR/RR meaningless to the subscriber, and
-  /// browsers generate their own RR independently. Phase 5 will rewrite
-  /// SR/RR per subscriber and re-enable forwarding.
+  /// Forward inbound publisher RTCP. Phase 8 — rewrites SR/RR so the
+  /// SSRCs and (for SR) the RTP timestamp match the subscriber's view
+  /// of the stream. Other RTCP types pass through unchanged. Compound
+  /// packets are walked sub-packet by sub-packet.
   void writeRtcp(Uint8List rtcp) {
     if (_closed) return;
+    final peer = subscriberPc.activePeer;
+    final transport = subscriberPc.transport;
+    if (peer == null || transport == null || !peer.isSecure) return;
+    final out = rewriteRtcpForSubscriber(
+      rtcp,
+      _ssrcMap,
+      tsOffsetFor: (publisherSsrc) {
+        // Only translate timestamps for the layer we're currently
+        // forwarding — SRs for other layers are still SSRC-rewritten
+        // (so the browser ignores them gracefully) but their RTP ts
+        // is left alone since the rewritten SSRC won't match anyway.
+        final off = _rewriter.currentLayerOffset();
+        if (off == null) return null;
+        // Match only the current layer's primary publisher SSRC. RTX
+        // SR is rare in practice and we leave its timestamp alone.
+        for (final l in receiver.stream.layers) {
+          if (l.rid != _rewriter.currentLayer) continue;
+          if (l.primarySsrc == publisherSsrc) return off.tsOffset;
+        }
+        return null;
+      },
+    );
+    transport.sendRtcp(peer, out);
   }
 
   /// Replay [packets] (already SSRC-rewritten primary packets fetched
@@ -173,5 +223,6 @@ class DownTrack {
   void close() {
     if (_closed) return;
     _closed = true;
+    _removeSsrcListener?.call();
   }
 }

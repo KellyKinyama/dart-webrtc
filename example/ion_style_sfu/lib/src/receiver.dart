@@ -47,6 +47,21 @@ class Receiver {
   void Function(int ssrc, ProducerLayer layer, {required bool isRtx})?
       onSsrcLearned;
 
+  /// Phase 8 — additional listeners (DownTracks register here so they
+  /// can extend their RTCP-rewrite SSRC map). Distinct from
+  /// [onSsrcLearned] so we don't clobber the Router's binding.
+  final List<
+          void Function(int ssrc, ProducerLayer layer, {required bool isRtx})>
+      _ssrcListeners = [];
+
+  /// Phase 8 — register an additional listener for SSRC bindings.
+  /// Returns a closure that removes the listener.
+  void Function() addSsrcListener(
+      void Function(int ssrc, ProducerLayer layer, {required bool isRtx}) cb) {
+    _ssrcListeners.add(cb);
+    return () => _ssrcListeners.remove(cb);
+  }
+
   /// Optional audio-level observer fed by [deliverRtp] when the
   /// publisher negotiated the RFC 6464 `ssrc-audio-level` extension and
   /// this is an audio receiver. Set by Router on creation.
@@ -139,6 +154,9 @@ class Receiver {
           rtxLayer = layer;
           _byRtxSsrc[ssrc] = layer;
           onSsrcLearned?.call(ssrc, layer, isRtx: true);
+          for (final l in _ssrcListeners) {
+            l(ssrc, layer, isRtx: true);
+          }
         }
       } else {
         final rid = decodeRidString(exts[stream.ridExtId!]);
@@ -148,6 +166,9 @@ class Receiver {
             primaryLayer = layer;
             _byPrimarySsrc[ssrc] = layer;
             onSsrcLearned?.call(ssrc, layer, isRtx: false);
+            for (final l in _ssrcListeners) {
+              l(ssrc, layer, isRtx: false);
+            }
           }
         }
       }
