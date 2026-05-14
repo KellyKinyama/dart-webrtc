@@ -35,6 +35,19 @@ class IonSfuServerHandle {
 
   int get port => http.port;
 
+  /// Phase 26 — once true, /healthz returns 503 and new /ws/
+  /// upgrade requests are rejected with 503. Existing WebSocket
+  /// sessions keep running so peers can finish their calls. Set via
+  /// [drain] or the POST /admin/drain endpoint.
+  bool draining = false;
+
+  /// Phase 26 — mark the node as draining (no new sessions, no new
+  /// peers). Idempotent. Does not close existing sockets; pair with
+  /// [close] once the operator's drain window has elapsed.
+  void drain() {
+    draining = true;
+  }
+
   Future<void> close() async {
     await http.close(force: true);
     await sharded.close();
@@ -80,6 +93,11 @@ Future<IonSfuServerHandle> runIonStyleSfuServer({
   int? maxSessions,
   // Phase 25 — per-session cap on simultaneous peers. Null = no cap.
   int? maxPeersPerSession,
+  // Phase 26 — when true, install SIGINT/SIGTERM handlers that
+  // call [IonSfuServerHandle.drain] (first signal) then [close]
+  // (second signal). Off by default so tests don't fight the
+  // process-wide signal listeners.
+  bool installSignalHandlers = false,
 }) async {
   final bindAddr = InternetAddress(ip);
   final advertisedIp = announceIp ??
@@ -168,6 +186,7 @@ Future<IonSfuServerHandle> runIonStyleSfuServer({
   }
 
   final http = await HttpServer.bind(bindAddr, port);
+  final handle = IonSfuServerHandle(http, sharded, cluster);
   if (!quiet) {
     stdout.writeln(
       'ion-style sharded SFU listening on '
@@ -229,11 +248,16 @@ Future<IonSfuServerHandle> runIonStyleSfuServer({
       return;
     }
     if (req.uri.path == '/healthz') {
+      // Phase 26 — drained nodes report 503 so an upstream load
+      // balancer / orchestrator stops sending new sessions.
+      final draining = handle.draining;
       req.response
-        ..statusCode = HttpStatus.ok
+        ..statusCode = draining
+            ? HttpStatus.serviceUnavailable
+            : HttpStatus.ok
         ..headers.contentType = ContentType.json
         ..write(jsonEncode({
-          'status': 'ok',
+          'status': draining ? 'draining' : 'ok',
           'shards': sharded.shardCount,
           'mode': cluster == null ? 'sharded' : 'cluster',
           if (cluster != null) ...{
@@ -243,6 +267,27 @@ Future<IonSfuServerHandle> runIonStyleSfuServer({
                 cluster.snapshot().map((b) => b.toJson()).toList(),
           },
         }));
+      req.response.close();
+      return;
+    }
+    if (req.uri.path == '/admin/drain' && req.method == 'POST') {
+      // Phase 26 — admin trigger to start draining. Token-protected
+      // when authToken is set; otherwise open (operator's choice).
+      if (authToken != null) {
+        final got = req.uri.queryParameters['token'] ??
+            _bearerHeader(
+                req.headers.value(HttpHeaders.authorizationHeader));
+        if (got != authToken) {
+          req.response.statusCode = HttpStatus.unauthorized;
+          req.response.close();
+          return;
+        }
+      }
+      handle.drain();
+      req.response
+        ..statusCode = HttpStatus.ok
+        ..headers.contentType = ContentType.json
+        ..write(jsonEncode({'draining': true}));
       req.response.close();
       return;
     }
@@ -311,6 +356,14 @@ Future<IonSfuServerHandle> runIonStyleSfuServer({
       return;
     }
     if (req.uri.path.startsWith('/ws/')) {
+      // Phase 26 — a draining node refuses new WebSocket upgrades.
+      if (handle.draining) {
+        req.response.statusCode = HttpStatus.serviceUnavailable;
+        req.response.headers.contentType = ContentType.json;
+        req.response.write(jsonEncode({'error': 'draining'}));
+        req.response.close();
+        return;
+      }
       final sid = req.uri.path.substring('/ws/'.length);
       if (sid.isEmpty) {
         req.response.statusCode = HttpStatus.badRequest;
@@ -357,7 +410,35 @@ Future<IonSfuServerHandle> runIonStyleSfuServer({
     req.response.close();
   });
 
-  return IonSfuServerHandle(http, sharded, cluster);
+  // Phase 26 — optional graceful-shutdown signal handlers. First
+  // signal flips drain mode; a second signal triggers a hard close.
+  if (installSignalHandlers) {
+    var armed = false;
+    void wire(ProcessSignal sig) {
+      try {
+        sig.watch().listen((_) {
+          if (!armed) {
+            armed = true;
+            handle.drain();
+            if (!quiet) {
+              stdout.writeln('received ${sig.toString()}, draining...');
+            }
+          } else {
+            if (!quiet) {
+              stdout.writeln('received ${sig.toString()} again, closing.');
+            }
+            handle.close();
+          }
+        });
+      } catch (_) {
+        // SIGTERM is unsupported on Windows — silently ignore.
+      }
+    }
+    wire(ProcessSignal.sigint);
+    wire(ProcessSignal.sigterm);
+  }
+
+  return handle;
 }
 
 String? _bearerHeader(String? raw) {
