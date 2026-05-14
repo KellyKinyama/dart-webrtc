@@ -66,6 +66,24 @@ class ClusterCoordinator {
   /// `${sessionId}:${bridgeId}` → endpointKey for outbound shipping.
   final Map<String, String> _byBridge = {};
 
+  /// Phase 22 — in-flight upstream-reconnect attempts keyed by
+  /// `${sessionId}:${bridgeId}`. Each entry tracks the timer plus
+  /// the consecutive-failure count, used to grow the backoff.
+  final Map<String, _ReconnectAttempt> _reconnects = {};
+
+  /// Phase 22 — maximum reconnect backoff (ms). Capped to keep
+  /// recovery snappy after a transient blip.
+  static const int _reconnectMaxDelayMs = 5000;
+
+  /// Phase 22 — base backoff for the first retry; doubled on every
+  /// consecutive failure up to [_reconnectMaxDelayMs].
+  static const int _reconnectBaseDelayMs = 100;
+
+  /// Phase 22 — monotonic counters surfaced via [/cluster] and
+  /// Prometheus.
+  int upstreamReconnectAttempts = 0;
+  int upstreamReconnectsSucceeded = 0;
+
   bool _closed = false;
 
   ClusterCoordinator({
@@ -228,6 +246,11 @@ class ClusterCoordinator {
   Future<void> close() async {
     if (_closed) return;
     _closed = true;
+    // Phase 22 — cancel any pending reconnect timers.
+    for (final r in _reconnects.values) {
+      r.timer.cancel();
+    }
+    _reconnects.clear();
     _byEndpoint.clear();
     _byBridge.clear();
     await hub.close();
@@ -305,9 +328,107 @@ class ClusterCoordinator {
       // landing on the dead endpoint's callbacks.
       hub.closeEndpoint(route.host, route.port);
     }
+    // Phase 22 — if this was the upstream bridge for a still-live
+    // shard whose owner is still in the locator, schedule a
+    // re-attach with capped exponential backoff. Inbound bridges
+    // are not retried (the remote side will re-hello).
+    if (bridgeId == 'upstream' && route != null) {
+      _scheduleUpstreamReconnect(
+        shard: route.shard,
+        host: route.host,
+        port: route.port,
+        attempts: 0,
+      );
+    }
+  }
+
+  // ---- Phase 22 — upstream auto-reconnect ----
+
+  void _scheduleUpstreamReconnect({
+    required SessionShard shard,
+    required InternetAddress host,
+    required int port,
+    required int attempts,
+  }) {
+    if (_closed) return;
+    // Re-check ownership: if the locator no longer points at this
+    // host:port (e.g. owner was removed from the cluster), abort.
+    final owner = locator.ownerOf(shard.sessionId);
+    if (owner == null ||
+        owner.id == locator.selfId ||
+        owner.host != host.address ||
+        owner.relayPort != port) {
+      return;
+    }
+    final delayMs = _backoffMs(attempts);
+    final key = '${shard.sessionId}:upstream';
+    _reconnects[key]?.timer.cancel();
+    final timer = Timer(Duration(milliseconds: delayMs), () {
+      _reconnects.remove(key);
+      _attemptUpstreamReconnect(shard, host, port, attempts);
+    });
+    _reconnects[key] = _ReconnectAttempt(timer, attempts);
+  }
+
+  static int _backoffMs(int attempts) {
+    var d = _reconnectBaseDelayMs << attempts;
+    if (d <= 0 || d > _reconnectMaxDelayMs) d = _reconnectMaxDelayMs;
+    return d;
+  }
+
+  void _attemptUpstreamReconnect(
+    SessionShard shard,
+    InternetAddress host,
+    int port,
+    int attempts,
+  ) {
+    if (_closed) return;
+    // Owner may have moved between scheduling and firing.
+    final owner = locator.ownerOf(shard.sessionId);
+    if (owner == null ||
+        owner.id == locator.selfId ||
+        owner.host != host.address ||
+        owner.relayPort != port) {
+      return;
+    }
+    upstreamReconnectAttempts++;
+    _registerOutboundRoute(
+      shard: shard,
+      bridgeId: 'upstream',
+      host: host,
+      port: port,
+    );
+    shard
+        .cascadeAttach(
+      bridgeId: 'upstream',
+      role: CascadeBridgeRole.outbound,
+      remoteId: 'cluster:${locator.selfId}:${shard.sessionId}',
+    )
+        .then((_) {
+      upstreamReconnectsSucceeded++;
+      log('upstream reconnect ok for ${shard.sessionId} (attempts=${attempts + 1})');
+    }).catchError((Object e) {
+      log('upstream reconnect failed for ${shard.sessionId}: $e');
+      // Roll back the route we just installed so the next attempt
+      // re-binds cleanly. _onBridgeClosed won't fire again since
+      // the worker never accepted the attach.
+      final epKey = '${host.address}:$port';
+      _byEndpoint.remove(epKey);
+      _byBridge.remove('${shard.sessionId}:upstream');
+      hub.closeEndpoint(host, port);
+      _scheduleUpstreamReconnect(
+        shard: shard,
+        host: host,
+        port: port,
+        attempts: attempts + 1,
+      );
+    });
   }
 
   void _reapShard(String sessionId) {
+    // Phase 22 — cancel any pending reconnect for this shard.
+    final reKey = '$sessionId:upstream';
+    _reconnects.remove(reKey)?.timer.cancel();
     final dead = <String>[];
     for (final entry in _byBridge.entries) {
       if (entry.key.startsWith('$sessionId:')) dead.add(entry.key);
@@ -377,4 +498,11 @@ class ClusterCoordinator {
       }
     }();
   }
+}
+
+/// Phase 22 — bookkeeping for one in-flight upstream reconnect.
+class _ReconnectAttempt {
+  final Timer timer;
+  final int attempts;
+  _ReconnectAttempt(this.timer, this.attempts);
 }

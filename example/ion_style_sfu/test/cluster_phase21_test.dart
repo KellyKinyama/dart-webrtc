@@ -54,8 +54,7 @@ Future<void> _waitFor(
 
 void main() {
   group('Cluster bridge throughput counters (Phase 21)', () {
-    test(
-        'control TX/RX counters increment as keepalive ping/pong flows',
+    test('control TX/RX counters increment as keepalive ping/pong flows',
         () async {
       final ownerPeer = ClusterPeer.parse('127.0.0.1:18901:18902');
       final fakePeer = ClusterPeer.parse('127.0.0.1:18903:18904');
@@ -146,10 +145,10 @@ void main() {
 
       // /metrics carries the new counter families.
       final metrics = await _getText(ownerPeer.httpPort, '/metrics');
-      expect(metrics,
-          contains('ionsfu_cluster_bridge_tx_control_packets_total{'));
-      expect(metrics,
-          contains('ionsfu_cluster_bridge_rx_control_packets_total{'));
+      expect(
+          metrics, contains('ionsfu_cluster_bridge_tx_control_packets_total{'));
+      expect(
+          metrics, contains('ionsfu_cluster_bridge_rx_control_packets_total{'));
       expect(metrics, contains('ionsfu_cluster_bridge_tx_rtp_packets_total{'));
       expect(metrics, contains('ionsfu_cluster_bridge_rx_rtp_packets_total{'));
       expect(metrics, contains('ionsfu_cluster_bridge_tx_rtcp_bytes_total{'));

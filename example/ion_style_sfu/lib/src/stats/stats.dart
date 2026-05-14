@@ -282,6 +282,8 @@ String formatPrometheusCluster({
   required Map<String, Object?> hubStats,
   required List<Map<String, Object?>> bridges,
   String? selfId,
+  int upstreamReconnectAttempts = 0,
+  int upstreamReconnectsSucceeded = 0,
 }) {
   final out = StringBuffer();
 
@@ -325,6 +327,16 @@ String formatPrometheusCluster({
 
   gauge('ionsfu_cluster_bridges', 'Number of live cascade bridges.',
       bridges.length);
+
+  // Phase 22 — upstream auto-reconnect activity.
+  counter(
+      'ionsfu_cluster_upstream_reconnect_attempts_total',
+      'Times the coordinator tried to reattach a closed upstream bridge.',
+      upstreamReconnectAttempts);
+  counter(
+      'ionsfu_cluster_upstream_reconnect_succeeded_total',
+      'Upstream-bridge reattach attempts that succeeded.',
+      upstreamReconnectsSucceeded);
 
   // Per-bridge gauges — labels: session, bridge, role, remote.
   if (bridges.isNotEmpty) {
@@ -398,22 +410,14 @@ String formatPrometheusCluster({
         'ionsfu_cluster_bridge_tx_control_bytes_total',
         'Control bytes sent toward the remote on this bridge.',
         'txControlBytes');
-    bridgeCounter(
-        'ionsfu_cluster_bridge_tx_rtp_packets_total',
-        'RTP packets sent toward the remote on this bridge.',
-        'txRtpPackets');
-    bridgeCounter(
-        'ionsfu_cluster_bridge_tx_rtp_bytes_total',
-        'RTP bytes sent toward the remote on this bridge.',
-        'txRtpBytes');
-    bridgeCounter(
-        'ionsfu_cluster_bridge_tx_rtcp_packets_total',
-        'RTCP packets sent toward the remote on this bridge.',
-        'txRtcpPackets');
-    bridgeCounter(
-        'ionsfu_cluster_bridge_tx_rtcp_bytes_total',
-        'RTCP bytes sent toward the remote on this bridge.',
-        'txRtcpBytes');
+    bridgeCounter('ionsfu_cluster_bridge_tx_rtp_packets_total',
+        'RTP packets sent toward the remote on this bridge.', 'txRtpPackets');
+    bridgeCounter('ionsfu_cluster_bridge_tx_rtp_bytes_total',
+        'RTP bytes sent toward the remote on this bridge.', 'txRtpBytes');
+    bridgeCounter('ionsfu_cluster_bridge_tx_rtcp_packets_total',
+        'RTCP packets sent toward the remote on this bridge.', 'txRtcpPackets');
+    bridgeCounter('ionsfu_cluster_bridge_tx_rtcp_bytes_total',
+        'RTCP bytes sent toward the remote on this bridge.', 'txRtcpBytes');
     bridgeCounter(
         'ionsfu_cluster_bridge_rx_control_packets_total',
         'Control frames received from the remote on this bridge.',
@@ -422,22 +426,16 @@ String formatPrometheusCluster({
         'ionsfu_cluster_bridge_rx_control_bytes_total',
         'Control bytes received from the remote on this bridge.',
         'rxControlBytes');
-    bridgeCounter(
-        'ionsfu_cluster_bridge_rx_rtp_packets_total',
-        'RTP packets received from the remote on this bridge.',
-        'rxRtpPackets');
-    bridgeCounter(
-        'ionsfu_cluster_bridge_rx_rtp_bytes_total',
-        'RTP bytes received from the remote on this bridge.',
-        'rxRtpBytes');
+    bridgeCounter('ionsfu_cluster_bridge_rx_rtp_packets_total',
+        'RTP packets received from the remote on this bridge.', 'rxRtpPackets');
+    bridgeCounter('ionsfu_cluster_bridge_rx_rtp_bytes_total',
+        'RTP bytes received from the remote on this bridge.', 'rxRtpBytes');
     bridgeCounter(
         'ionsfu_cluster_bridge_rx_rtcp_packets_total',
         'RTCP packets received from the remote on this bridge.',
         'rxRtcpPackets');
-    bridgeCounter(
-        'ionsfu_cluster_bridge_rx_rtcp_bytes_total',
-        'RTCP bytes received from the remote on this bridge.',
-        'rxRtcpBytes');
+    bridgeCounter('ionsfu_cluster_bridge_rx_rtcp_bytes_total',
+        'RTCP bytes received from the remote on this bridge.', 'rxRtcpBytes');
   }
 
   return out.toString();

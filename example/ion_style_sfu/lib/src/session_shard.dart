@@ -820,6 +820,11 @@ class _ShardWorker {
     final bridgeId = p['bridgeId'] as String;
     final b = bridges.remove(bridgeId);
     if (b == null) return;
+    // Phase 22 — emit `bridgeClosed` so main can reclaim the route
+    // and (for upstream bridges) trigger an auto-reconnect. The
+    // RelayPeer.onClosed handler is a no-op now because we already
+    // removed the bridge above.
+    _emitEvent('bridgeClosed', {'bridgeId': bridgeId});
     await b.close();
   }
 

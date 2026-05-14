@@ -145,6 +145,7 @@ Future<IonSfuServerHandle> runIonStyleSfuServer({
       sharded: sharded,
       hub: hub,
       locator: locator,
+      log: quiet ? (_) {} : null,
     );
     if (!quiet) {
       stdout.writeln(
@@ -195,6 +196,8 @@ Future<IonSfuServerHandle> runIonStyleSfuServer({
               hubStats: hub.stats,
               bridges: bridges,
               selfId: selfClusterId,
+              upstreamReconnectAttempts: cluster.upstreamReconnectAttempts,
+              upstreamReconnectsSucceeded: cluster.upstreamReconnectsSucceeded,
             ));
           } catch (_) {
             // best-effort — never fail /metrics on cluster snapshot
@@ -236,7 +239,8 @@ Future<IonSfuServerHandle> runIonStyleSfuServer({
         req.response.close();
         return;
       }
-      cluster.detailedSnapshot().then((bridges) {
+      final c = cluster;
+      c.detailedSnapshot().then((bridges) {
         req.response
           ..statusCode = HttpStatus.ok
           ..headers.contentType = ContentType.json
@@ -253,6 +257,11 @@ Future<IonSfuServerHandle> runIonStyleSfuServer({
                 },
             ],
             'relay': hub?.stats,
+            // Phase 22 — upstream-cascade auto-reconnect counters.
+            'reconnect': {
+              'attempts': c.upstreamReconnectAttempts,
+              'succeeded': c.upstreamReconnectsSucceeded,
+            },
             'bridges': bridges,
           }));
         req.response.close();
