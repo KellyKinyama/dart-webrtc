@@ -361,6 +361,26 @@ String formatPrometheusCluster({
       out.writeln(
           'ionsfu_cluster_bridge_relayed_receivers$lbl ${b['relayedReceivers'] ?? 0}');
     }
+    // Phase 20 — relay RTT measured from keepalive ping/pong.
+    // Emitted only for bridges where a pong has been observed.
+    final rttBridges = bridges.where((b) => b['lastRttMs'] != null).toList();
+    if (rttBridges.isNotEmpty) {
+      out.writeln('# HELP ionsfu_cluster_bridge_rtt_ms '
+          'Most-recent relay round-trip time (ms) measured from the '
+          'keepalive ping/pong.');
+      out.writeln('# TYPE ionsfu_cluster_bridge_rtt_ms gauge');
+      for (final b in rttBridges) {
+        out.writeln(
+            'ionsfu_cluster_bridge_rtt_ms${_bridgeLabels(b)} ${b['lastRttMs']}');
+      }
+      out.writeln('# HELP ionsfu_cluster_bridge_rtt_ewma_ms '
+          'EWMA (alpha=0.25) of the relay round-trip time (ms).');
+      out.writeln('# TYPE ionsfu_cluster_bridge_rtt_ewma_ms gauge');
+      for (final b in rttBridges) {
+        out.writeln(
+            'ionsfu_cluster_bridge_rtt_ewma_ms${_bridgeLabels(b)} ${b['rttEwmaMs']}');
+      }
+    }
   }
 
   return out.toString();

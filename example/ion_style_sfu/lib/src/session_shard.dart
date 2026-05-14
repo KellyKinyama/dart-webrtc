@@ -832,7 +832,38 @@ class _ShardWorker {
     final b = bridges[bridgeId];
     if (b == null) return;
     b.lastInboundAtMs = DateTime.now().millisecondsSinceEpoch;
+    // Phase 20 — peek at control frames so we can resolve pong
+    // replies to the keepalive pings we sent and update RTT before
+    // handing the frame off to the RelayPeer (which treats pong as
+    // a no-op).
+    if (kind == CascadeRelayKind.control) {
+      _maybeRecordPongRtt(b, bytes);
+    }
     b.transport.receive(kind, bytes);
+  }
+
+  /// Phase 20 — if [bytes] decodes to `{type: pong, nonce: N}` and N
+  /// matches an outstanding keepalive ping, record the round-trip
+  /// time on the bridge.
+  void _maybeRecordPongRtt(_CascadeBridge b, Uint8List bytes) {
+    Object? decoded;
+    try {
+      decoded = utf8JsonDecode(bytes);
+    } catch (_) {
+      return;
+    }
+    if (decoded is! Map) return;
+    if (decoded['type'] != RelayMsgType.pong) return;
+    final nonce = decoded['nonce'];
+    if (nonce is! int) return;
+    final sentAt = b.pendingPings.remove(nonce);
+    if (sentAt == null) return;
+    final rtt = DateTime.now().millisecondsSinceEpoch - sentAt;
+    if (rtt < 0) return;
+    b.lastRttMs = rtt;
+    final prev = b.rttEwmaMs;
+    // Standard EWMA, alpha = 0.25 — same shape as TCP's SRTT.
+    b.rttEwmaMs = (prev == null) ? rtt.toDouble() : (prev * 0.75 + rtt * 0.25);
   }
 
   List<Map<String, Object?>> _bridgeStats() {
@@ -850,6 +881,11 @@ class _ShardWorker {
           'createdAtMs': b.createdAtMs,
           'lastInboundAtMs': b.lastInboundAtMs,
           'idleMs': now - b.lastInboundAtMs,
+          // Phase 20 — relay RTT (ms) measured from keepalive
+          // ping/pong. Null until the first pong arrives.
+          'lastRttMs': b.lastRttMs,
+          'rttEwmaMs': b.rttEwmaMs,
+          'pendingPings': b.pendingPings.length,
         }
     ];
   }
@@ -904,14 +940,26 @@ class _ShardWorker {
 
   void _emitKeepalivePings() {
     if (closed || bridges.isEmpty) return;
+    final now = DateTime.now().millisecondsSinceEpoch;
     for (final b in bridges.values) {
       if (!b.relay.established) continue;
+      final nonce = ++_keepaliveNonce;
       try {
         b.transport.sendControl({
           'type': RelayMsgType.ping,
-          'nonce': ++_keepaliveNonce,
+          'nonce': nonce,
         });
-      } catch (_) {}
+      } catch (_) {
+        continue;
+      }
+      // Phase 20 — remember when we sent each ping so we can compute
+      // RTT when the pong arrives. Cap the outstanding map so a
+      // wedged peer can't grow it without bound.
+      b.pendingPings[nonce] = now;
+      if (b.pendingPings.length > 64) {
+        final oldest = b.pendingPings.keys.first;
+        b.pendingPings.remove(oldest);
+      }
     }
   }
 
@@ -1030,6 +1078,16 @@ class _CascadeBridge {
   /// via [_ShardWorker._bridgeStats].
   final int createdAtMs = DateTime.now().millisecondsSinceEpoch;
   int lastInboundAtMs = DateTime.now().millisecondsSinceEpoch;
+
+  /// Phase 20 — outstanding keepalive pings: nonce → sentAtMs.
+  /// Filled by [_ShardWorker._emitKeepalivePings] and drained by
+  /// pong arrivals in [_ShardWorker._maybeRecordPongRtt].
+  final Map<int, int> pendingPings = {};
+
+  /// Phase 20 — most-recent and EWMA round-trip time (ms) measured
+  /// from the keepalive ping/pong. Null until the first pong.
+  int? lastRttMs;
+  double? rttEwmaMs;
 
   _CascadeBridge({
     required this.bridgeId,

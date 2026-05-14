@@ -202,6 +202,10 @@ class ClusterCoordinator {
           'createdAtMs': s['createdAtMs'],
           'lastInboundAtMs': s['lastInboundAtMs'],
           'idleMs': s['idleMs'],
+          // Phase 20 — relay RTT measured from keepalive ping/pong.
+          'lastRttMs': s['lastRttMs'],
+          'rttEwmaMs': s['rttEwmaMs'],
+          'pendingPings': s['pendingPings'],
         },
       });
     }
