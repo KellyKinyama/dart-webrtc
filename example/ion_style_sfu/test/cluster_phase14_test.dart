@@ -134,7 +134,8 @@ void main() {
         final h = await _getJson(ownerPeer.httpPort, '/healthz');
         final bridges = (h['cascadeBridges'] as List).cast<Map>();
         return bridges.any(
-          (b) => b['sessionId'] == sid &&
+          (b) =>
+              b['sessionId'] == sid &&
               (b['bridgeId'] as String).startsWith('inbound:'),
         );
       });
@@ -147,7 +148,8 @@ void main() {
         final h = await _getJson(ownerPeer.httpPort, '/healthz');
         final bridges = (h['cascadeBridges'] as List).cast<Map>();
         return !bridges.any(
-          (b) => b['sessionId'] == sid &&
+          (b) =>
+              b['sessionId'] == sid &&
               (b['bridgeId'] as String).startsWith('inbound:'),
         );
       });
@@ -165,8 +167,7 @@ void main() {
       }
     });
 
-    test('full-mesh fan-out: A announces, B sees the relayed stream',
-        () async {
+    test('full-mesh fan-out: A announces, B sees the relayed stream', () async {
       // Add a second fake remote (B) on a third UDP port.
       final fakeBPeer = ClusterPeer.parse('127.0.0.1:18205:18206');
       // Owner has to know about B as well so the locator agrees on

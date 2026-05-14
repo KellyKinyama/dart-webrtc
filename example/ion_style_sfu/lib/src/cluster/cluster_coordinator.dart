@@ -90,6 +90,7 @@ class ClusterCoordinator {
         upstreamSfuId: owner.id,
         upstreamHost: owner.host,
         upstreamPort: owner.relayPort,
+        bridgeIdleTimeoutMs: base.bridgeIdleTimeoutMs,
       );
     };
     // Wire up the upstream endpoint as soon as the shard is born.
@@ -145,6 +146,63 @@ class ClusterCoordinator {
         remoteHost: r.host.address,
         remotePort: r.port,
       ));
+    }
+    return out;
+  }
+
+  /// Phase 15 — detailed snapshot. Combines the coordinator's route
+  /// view (host:port) with each worker's per-bridge stats (RTP
+  /// counters, established flag, last inbound timestamp). Async
+  /// because it RPCs into every shard with a live bridge.
+  Future<List<Map<String, Object?>>> detailedSnapshot() async {
+    if (_byEndpoint.isEmpty) return const [];
+    final bySession = <String, _BridgeRoute>{};
+    final routes = <_BridgeRoute>[];
+    final shards = <SessionShard>{};
+    for (final r in _byEndpoint.values) {
+      routes.add(r);
+      bySession['${r.shard.sessionId}:${r.bridgeId}'] = r;
+      shards.add(r.shard);
+    }
+    // One RPC per shard, in parallel.
+    final perShard = await Future.wait(
+      shards.map((s) => s.cascadeBridgeStats().then(
+            (stats) => MapEntry(s.sessionId, stats),
+            onError: (Object _) =>
+                MapEntry<String, List<Map<String, Object?>>>(s.sessionId, []),
+          )),
+    );
+    final statByKey = <String, Map<String, Object?>>{};
+    for (final entry in perShard) {
+      for (final s in entry.value) {
+        final bid = s['bridgeId'] as String?;
+        if (bid == null) continue;
+        statByKey['${entry.key}:$bid'] = s;
+      }
+    }
+    final out = <Map<String, Object?>>[];
+    for (final r in routes) {
+      final key = '${r.shard.sessionId}:${r.bridgeId}';
+      final s = statByKey[key];
+      out.add({
+        'sessionId': r.shard.sessionId,
+        'bridgeId': r.bridgeId,
+        'role': (r.bridgeId == 'upstream'
+                ? CascadeBridgeRole.outbound
+                : CascadeBridgeRole.inbound)
+            .name,
+        'remote': '${r.host.address}:${r.port}',
+        if (s != null) ...{
+          'remoteId': s['remoteId'],
+          'established': s['established'],
+          'exports': s['exports'],
+          'relayedReceivers': s['relayedReceivers'],
+          'inboundRtpPackets': s['inboundRtpPackets'],
+          'createdAtMs': s['createdAtMs'],
+          'lastInboundAtMs': s['lastInboundAtMs'],
+          'idleMs': s['idleMs'],
+        },
+      });
     }
     return out;
   }

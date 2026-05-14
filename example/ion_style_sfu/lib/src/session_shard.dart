@@ -74,6 +74,14 @@ class ShardConfig {
   /// Phase 12 — owner SFU's relay UDP port.
   final int? upstreamPort;
 
+  /// Phase 15 — when non-null, the worker scans its cascade bridges
+  /// every few seconds and closes any whose last inbound activity
+  /// (control / RTP / RTCP) is older than this many milliseconds.
+  /// `null` (default) disables the reaper. Closure runs through the
+  /// usual `bridgeClosed` event path so the coordinator reclaims the
+  /// hub endpoint exactly as it would for a remote `bye`.
+  final int? bridgeIdleTimeoutMs;
+
   const ShardConfig({
     required this.sessionId,
     required this.bindAddress,
@@ -86,6 +94,7 @@ class ShardConfig {
     this.upstreamSfuId,
     this.upstreamHost,
     this.upstreamPort,
+    this.bridgeIdleTimeoutMs,
   });
 }
 
@@ -493,6 +502,11 @@ class _ShardWorker {
   final Map<String, _CascadeBridge> bridges = {};
   bool closed = false;
 
+  /// Phase 15 \u2014 periodic idle-bridge sweeper. Created on demand
+  /// when the first bridge is attached if [ShardConfig.bridgeIdleTimeoutMs]
+  /// is non-null.
+  Timer? _bridgeReaper;
+
   _ShardWorker(this.config, this.replies, this.inbox);
 
   Session? get _session {
@@ -689,6 +703,8 @@ class _ShardWorker {
   Future<void> _shutdown(ShardCloseReason reason, [String? message]) async {
     if (closed) return;
     closed = true;
+    _bridgeReaper?.cancel();
+    _bridgeReaper = null;
     try {
       for (final b in bridges.values.toList()) {
         await b.close();
@@ -780,6 +796,7 @@ class _ShardWorker {
       });
     }
     relay.start();
+    _ensureBridgeReaper();
   }
 
   Future<void> _bridgeDetach(Map<String, Object?> p) async {
@@ -797,19 +814,25 @@ class _ShardWorker {
         raw is Uint8List ? raw : Uint8List.fromList((raw as List).cast<int>());
     final b = bridges[bridgeId];
     if (b == null) return;
+    b.lastInboundAtMs = DateTime.now().millisecondsSinceEpoch;
     b.transport.receive(kind, bytes);
   }
 
   List<Map<String, Object?>> _bridgeStats() {
+    final now = DateTime.now().millisecondsSinceEpoch;
     return [
       for (final b in bridges.values)
         {
           'bridgeId': b.bridgeId,
           'role': b.role.index,
+          'remoteId': b.relay.remoteId,
           'exports': b.exports.length,
           'inboundRtpPackets': b.inboundRtpPackets,
           'relayedReceivers': b.relay.relayedReceivers.length,
           'established': b.relay.established,
+          'createdAtMs': b.createdAtMs,
+          'lastInboundAtMs': b.lastInboundAtMs,
+          'idleMs': now - b.lastInboundAtMs,
         }
     ];
   }
@@ -821,6 +844,34 @@ class _ShardWorker {
       'kind': kind.index,
       'bytes': bytes,
     });
+  }
+
+  /// Phase 15 — schedule the idle-bridge sweeper if configured and
+  /// not already running.
+  void _ensureBridgeReaper() {
+    final timeoutMs = config.bridgeIdleTimeoutMs;
+    if (timeoutMs == null || timeoutMs <= 0) return;
+    if (_bridgeReaper != null) return;
+    // Sweep at ~1/4 of the timeout so worst-case lateness ≤ timeout/4.
+    final sweepMs = (timeoutMs ~/ 4).clamp(250, 5000);
+    _bridgeReaper = Timer.periodic(
+      Duration(milliseconds: sweepMs),
+      (_) => _reapIdleBridges(timeoutMs),
+    );
+  }
+
+  void _reapIdleBridges(int timeoutMs) {
+    if (closed || bridges.isEmpty) return;
+    final now = DateTime.now().millisecondsSinceEpoch;
+    final stale = <_CascadeBridge>[];
+    for (final b in bridges.values) {
+      if (now - b.lastInboundAtMs > timeoutMs) stale.add(b);
+    }
+    for (final b in stale) {
+      // close() drives RelayPeer.onClosed → our onClosed handler
+      // removes [b] from [bridges] and emits the bridgeClosed event.
+      b.close();
+    }
   }
 
   static List<SdpCodec> _materialiseCodecs(List<ShardCodec> tags) {
@@ -931,6 +982,13 @@ class _CascadeBridge {
   /// SFU forwarded). Useful for end-to-end media tests.
   int inboundRtpPackets = 0;
   bool _established = false;
+
+  /// Phase 15 — wall-clock (ms since epoch) when this bridge was
+  /// attached, and when the last inbound frame (control/RTP/RTCP)
+  /// arrived. Used by the worker's idle-bridge reaper and exposed
+  /// via [_ShardWorker._bridgeStats].
+  final int createdAtMs = DateTime.now().millisecondsSinceEpoch;
+  int lastInboundAtMs = DateTime.now().millisecondsSinceEpoch;
 
   _CascadeBridge({
     required this.bridgeId,

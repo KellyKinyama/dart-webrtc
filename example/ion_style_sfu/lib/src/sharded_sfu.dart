@@ -27,6 +27,9 @@ class ShardConfigTemplate {
   final int portsPerShard;
   final bool quiet;
 
+  /// Phase 15 — propagated as [ShardConfig.bridgeIdleTimeoutMs].
+  final int? bridgeIdleTimeoutMs;
+
   const ShardConfigTemplate({
     required this.bindAddress,
     required this.rtpBasePort,
@@ -35,6 +38,7 @@ class ShardConfigTemplate {
     this.audioCodecs = const [ShardCodec.pcmu],
     this.portsPerShard = 64,
     this.quiet = false,
+    this.bridgeIdleTimeoutMs,
   });
 }
 
@@ -90,6 +94,7 @@ class ShardedSfu {
       videoCodecs: template.videoCodecs,
       audioCodecs: template.audioCodecs,
       quiet: template.quiet,
+      bridgeIdleTimeoutMs: template.bridgeIdleTimeoutMs,
     );
     final cfg = configure?.call(base) ?? base;
     final f = SessionShard.spawn(cfg).then((shard) {

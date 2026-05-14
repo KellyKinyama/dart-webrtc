@@ -60,6 +60,12 @@ Future<IonSfuServerHandle> runIonStyleSfuServer({
   String? selfClusterId,
   int? relayPort,
   String? relaySecret,
+  // Phase 15 — when non-null, every shard's worker periodically
+  // closes cascade bridges that haven't seen any inbound traffic for
+  // this many milliseconds. Surfaces as a `bridgeClosed` event so the
+  // coordinator reclaims the UDP hub endpoint exactly as it would for
+  // a remote `bye`.
+  int? bridgeIdleTimeoutMs,
 }) async {
   final bindAddr = InternetAddress(ip);
   final advertisedIp = announceIp ??
@@ -72,6 +78,7 @@ Future<IonSfuServerHandle> runIonStyleSfuServer({
     rtpBasePort: rtpBase,
     announceAddress: advertisedIp,
     quiet: quiet,
+    bridgeIdleTimeoutMs: bridgeIdleTimeoutMs,
   ));
 
   // Optional cluster wiring — hub + locator now; coordinator is
@@ -199,6 +206,40 @@ Future<IonSfuServerHandle> runIonStyleSfuServer({
           },
         }));
       req.response.close();
+      return;
+    }
+    if (req.uri.path == '/cluster') {
+      if (cluster == null) {
+        req.response.statusCode = HttpStatus.notFound;
+        req.response.headers.contentType = ContentType.json;
+        req.response.write(jsonEncode({'error': 'not in cluster mode'}));
+        req.response.close();
+        return;
+      }
+      cluster.detailedSnapshot().then((bridges) {
+        req.response
+          ..statusCode = HttpStatus.ok
+          ..headers.contentType = ContentType.json
+          ..write(jsonEncode({
+            'self': selfClusterId,
+            'peers': [
+              for (final p in clusterPeers)
+                {
+                  'id': p.id,
+                  'host': p.host,
+                  'httpPort': p.httpPort,
+                  'relayPort': p.relayPort,
+                  'self': p.id == selfClusterId,
+                },
+            ],
+            'bridges': bridges,
+          }));
+        req.response.close();
+      }).catchError((Object e) {
+        req.response.statusCode = HttpStatus.internalServerError;
+        req.response.write('cluster snapshot error: $e');
+        req.response.close();
+      });
       return;
     }
     if (req.uri.path == '/locate') {
