@@ -98,7 +98,8 @@ void main() {
       expect(next.outTs, 18001);
     });
 
-    test('switch back to a previously-seen layer recomputes a fresh '
+    test(
+        'switch back to a previously-seen layer recomputes a fresh '
         'offset (does not reuse stale baseline)', () {
       final r = SimulcastRewriter(
         rewrittenPrimarySsrc: 0x11111111,
@@ -187,8 +188,7 @@ void main() {
       expect(res.dropped, isTrue);
     });
 
-    test('setCurrentLayer reports change and increments layerSwitches',
-        () {
+    test('setCurrentLayer reports change and increments layerSwitches', () {
       final r = SimulcastRewriter(
         rewrittenPrimarySsrc: 1,
         rewrittenRtxSsrc: null,

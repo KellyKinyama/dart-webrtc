@@ -85,13 +85,21 @@ class Router {
       _byId[id] = receiver;
       // Index every layer's primary + RTX SSRC so simulcast packets
       // route to the same receiver regardless of which layer they're
-      // on.
+      // on. RID-discovery streams have placeholder SSRC=0 here; the
+      // real SSRCs are bound on first packet via [Receiver.onSsrcLearned].
       for (final ssrc in s.allPrimarySsrcs) {
-        _byPrimarySsrc[ssrc] = receiver;
+        if (ssrc != 0) _byPrimarySsrc[ssrc] = receiver;
       }
       for (final ssrc in s.allRtxSsrcs) {
-        _byRtxSsrc[ssrc] = receiver;
+        if (ssrc != 0) _byRtxSsrc[ssrc] = receiver;
       }
+      receiver.onSsrcLearned = (ssrc, layer, {required bool isRtx}) {
+        if (isRtx) {
+          _byRtxSsrc[ssrc] = receiver;
+        } else {
+          _byPrimarySsrc[ssrc] = receiver;
+        }
+      };
       session.publish(this, receiver);
     }
   }
@@ -104,9 +112,34 @@ class Router {
   void routeRtp(Uint8List rtp) {
     if (_closed || rtp.length < 12) return;
     final ssrc = (rtp[8] << 24) | (rtp[9] << 16) | (rtp[10] << 8) | rtp[11];
-    final receiver = receiverForSsrc(ssrc);
-    if (receiver == null) return;
-    receiver.deliverRtp(rtp);
+    var receiver = receiverForSsrc(ssrc);
+
+    // Phase 3c — RID-extension fallback. The SSRC is unknown but one
+    // of our receivers may be a modern-Chrome simulcast track waiting
+    // for its first packet on this layer. Try each RID-discovery
+    // receiver in turn; the matching one will bind the SSRC via its
+    // [Receiver.onSsrcLearned] hook.
+    if (receiver == null) {
+      for (final r in _byId.values) {
+        if (r.stream.ridExtId == null) continue;
+        if (r.kind != _ssrcKindGuess(rtp)) {
+          // Cheap kind filter is unreliable across PTs; try anyway.
+        }
+        // deliverRtp will read the RID extension, bind the SSRC, and
+        // fan out. If the RID doesn't belong to this receiver, the
+        // call is a cheap no-op (no layer match → packet dropped).
+        r.deliverRtp(rtp);
+        // If the SSRC got bound during that call, we're done. Look it
+        // up again to also feed the gap detector below.
+        receiver = receiverForSsrc(ssrc);
+        if (receiver == r) break;
+      }
+      if (receiver == null) return;
+      // The packet was already delivered inside the loop above;
+      // continue to gap detection only.
+    } else {
+      receiver.deliverRtp(rtp);
+    }
 
     // Run gap detection per primary SSRC (RTX retransmissions are
     // expected to arrive out of order, so only key off primary
@@ -119,6 +152,18 @@ class Router {
         onUpstreamFeedback!(buildNack(1, ssrc, missing));
       }
     }
+  }
+
+  /// Best-effort kind guess by RTP payload type ranges. Cheap, not
+  /// authoritative — only used to nudge the RID-discovery loop.
+  MediaKind _ssrcKindGuess(Uint8List rtp) {
+    final pt = rtp[1] & 0x7f;
+    // Common dynamic audio PTs cluster at 96..111 in practice but
+    // overlap video, so default to video.
+    if (pt == 0 || pt == 8 || pt == 9 || (pt >= 109 && pt <= 111)) {
+      return MediaKind.audio;
+    }
+    return MediaKind.video;
   }
 
   /// Forward an inbound publisher RTCP compound packet to every

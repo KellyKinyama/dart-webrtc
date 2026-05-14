@@ -29,6 +29,18 @@ class ProducerStream {
   /// `<peerId>-<kind>-<mid>`.
   final String msidTrack;
 
+  /// extmap id of `urn:ietf:params:rtp-hdrext:sdes:rtp-stream-id`, or
+  /// null if the publisher didn't negotiate it. Required for routing
+  /// modern (Chrome ≥ M71) simulcast where the publisher omits the
+  /// `a=ssrc-group:SIM` group and only the RID header extension
+  /// identifies the encoding layer.
+  final int? ridExtId;
+
+  /// extmap id of `urn:ietf:params:rtp-hdrext:sdes:repaired-rtp-stream-id`,
+  /// or null. Identifies the layer that an RTX packet retransmits when
+  /// SSRCs are not pre-announced.
+  final int? repairedRidExtId;
+
   ProducerStream._({
     required this.kind,
     required this.mid,
@@ -36,6 +48,8 @@ class ProducerStream {
     required this.cname,
     required this.msidStream,
     required this.msidTrack,
+    this.ridExtId,
+    this.repairedRidExtId,
   }) : assert(layers.isNotEmpty, 'ProducerStream needs at least one layer');
 
   /// Single-layer factory (preserves the Phase 2 API).
@@ -67,6 +81,8 @@ class ProducerStream {
     required String cname,
     required String msidStream,
     required String msidTrack,
+    int? ridExtId,
+    int? repairedRidExtId,
   }) =>
       ProducerStream._(
         kind: kind,
@@ -75,6 +91,8 @@ class ProducerStream {
         msidStream: msidStream,
         msidTrack: msidTrack,
         layers: List.unmodifiable(layers),
+        ridExtId: ridExtId,
+        repairedRidExtId: repairedRidExtId,
       );
 
   /// Highest-quality layer — the default forwarded layer, and the one

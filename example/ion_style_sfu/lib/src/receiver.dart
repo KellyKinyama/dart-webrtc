@@ -3,7 +3,8 @@
 // the list of DownTracks subscribed to it.
 //
 // Mirrors `pkg/sfu/receiver.go` (the simple, non-simulcast slice plus
-// the SIM-group simulcast extensions added in Phase 3).
+// the SIM-group simulcast extensions added in Phase 3a and the RID-
+// extension routing added in Phase 3c).
 
 import 'dart:typed_data';
 
@@ -13,6 +14,7 @@ import 'package:pure_dart_webrtc/webrtc/webrtc.dart' show MediaKind;
 import 'down_track.dart';
 import 'producer_layer.dart';
 import 'producer_stream.dart';
+import 'rtp_header.dart';
 
 class Receiver {
   /// Stable id (`<peerId>:<mid>`).
@@ -34,6 +36,16 @@ class Receiver {
   /// inbound RTX SSRC → layer.
   final Map<int, ProducerLayer> _byRtxSsrc = {};
 
+  /// rid string → layer (built from [stream.layers]).
+  final Map<String, ProducerLayer> _byRid = {};
+
+  /// Hook fired when an SSRC is bound to a layer at runtime (RID-based
+  /// simulcast). Lets the Router add the new SSRC to its routing
+  /// table so subsequent packets with the same SSRC short-circuit
+  /// straight to this Receiver without re-reading the RID extension.
+  void Function(int ssrc, ProducerLayer layer, {required bool isRtx})?
+      onSsrcLearned;
+
   final List<DownTrack> _downTracks = [];
 
   bool _closed = false;
@@ -46,12 +58,16 @@ class Receiver {
     required this.stream,
   }) {
     for (final l in stream.layers) {
-      _byPrimarySsrc[l.primarySsrc] = l;
-      if (l.rtxSsrc != null) _byRtxSsrc[l.rtxSsrc!] = l;
+      _byRid[l.rid] = l;
+      if (l.primarySsrc != 0) _byPrimarySsrc[l.primarySsrc] = l;
+      if (l.rtxSsrc != null && l.rtxSsrc != 0) {
+        _byRtxSsrc[l.rtxSsrc!] = l;
+      }
     }
   }
 
-  /// Convenience accessor — the default layer's primary SSRC.
+  /// Convenience accessor — the default layer's primary SSRC. Returns
+  /// 0 for RID-discovery streams that haven't seen any packets yet.
   int get primarySsrc => stream.primarySsrc;
 
   /// Default layer's RTX SSRC (or null).
@@ -72,13 +88,45 @@ class Receiver {
   }
 
   /// Publisher → subscribers fast-path. Resolves which simulcast layer
-  /// the inbound packet belongs to (by SSRC) and forwards to every
-  /// attached DownTrack with the layer + isRtx flag pre-resolved.
+  /// the inbound packet belongs to (by SSRC, falling back to the RID
+  /// header extension for modern Chrome simulcast where SSRCs are not
+  /// pre-announced) and forwards to every attached DownTrack with the
+  /// layer + isRtx flag pre-resolved.
   void deliverRtp(Uint8List rtp) {
     if (_closed || rtp.length < 12) return;
     final ssrc = (rtp[8] << 24) | (rtp[9] << 16) | (rtp[10] << 8) | rtp[11];
-    final primaryLayer = _byPrimarySsrc[ssrc];
-    final rtxLayer = primaryLayer == null ? _byRtxSsrc[ssrc] : null;
+    var primaryLayer = _byPrimarySsrc[ssrc];
+    var rtxLayer = primaryLayer == null ? _byRtxSsrc[ssrc] : null;
+
+    // RID-extension fallback (Phase 3c). Only consulted when the SSRC
+    // is unknown AND the publisher negotiated the RID extension. On a
+    // hit we bind the SSRC to the layer for the rest of the session.
+    if (primaryLayer == null && rtxLayer == null && stream.ridExtId != null) {
+      final exts = readRtpExtensions(rtp);
+      // Repaired-RID identifies the layer an RTX retransmits.
+      final rrid = stream.repairedRidExtId == null
+          ? null
+          : decodeRidString(exts[stream.repairedRidExtId!]);
+      if (rrid != null) {
+        final layer = _byRid[rrid];
+        if (layer != null) {
+          rtxLayer = layer;
+          _byRtxSsrc[ssrc] = layer;
+          onSsrcLearned?.call(ssrc, layer, isRtx: true);
+        }
+      } else {
+        final rid = decodeRidString(exts[stream.ridExtId!]);
+        if (rid != null) {
+          final layer = _byRid[rid];
+          if (layer != null) {
+            primaryLayer = layer;
+            _byPrimarySsrc[ssrc] = layer;
+            onSsrcLearned?.call(ssrc, layer, isRtx: false);
+          }
+        }
+      }
+    }
+
     final layer = primaryLayer ?? rtxLayer;
     if (layer == null) return;
     final isRtx = rtxLayer != null;

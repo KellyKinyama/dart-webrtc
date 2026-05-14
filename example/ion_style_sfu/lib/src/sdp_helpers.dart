@@ -7,6 +7,69 @@ import 'producer_layer.dart';
 import 'producer_stream.dart';
 import 'ssrc_allocator.dart';
 
+/// URI of `urn:ietf:params:rtp-hdrext:sdes:rtp-stream-id` (RID).
+const String _ridExtUri = 'urn:ietf:params:rtp-hdrext:sdes:rtp-stream-id';
+
+/// URI of `urn:ietf:params:rtp-hdrext:sdes:repaired-rtp-stream-id` (RRID).
+const String _repairedRidExtUri =
+    'urn:ietf:params:rtp-hdrext:sdes:repaired-rtp-stream-id';
+
+/// Resolve the extmap id for [uri] in a parsed m= section, or null when
+/// not negotiated.
+int? _extIdFor(Map m, String uri) {
+  for (final e in (m['ext'] as List?)?.cast<Map>() ?? const []) {
+    if (e['uri']?.toString() == uri) {
+      final v = e['value'];
+      if (v is int) return v;
+      if (v is String) return int.tryParse(v);
+    }
+  }
+  return null;
+}
+
+/// Extract the RIDs declared via `a=simulcast:send <list>` for the
+/// section, ordered as declared. Returns an empty list when there is
+/// no simulcast attribute or only `recv` is declared.
+///
+/// Handles the standard `a=simulcast:send q;h;f` form (parsed into
+/// `m['simulcast'] = {dir1, list1, ...}`) and the legacy draft-03
+/// `a=simulcast: send rid=q;h;f` form (parsed into
+/// `m['simulcast_03'] = {value: 'send rid=q;h;f'}`).
+List<String> _parseSimulcastSendRids(Map m) {
+  final out = <String>[];
+  void addList(String? raw) {
+    if (raw == null) return;
+    for (final tok in raw.split(';')) {
+      // Each token may be `rid` or `~rid` (paused). Strip the marker;
+      // we treat paused layers as still-known so a later resume is a
+      // no-op switch.
+      var t = tok.trim();
+      if (t.startsWith('~')) t = t.substring(1);
+      if (t.isEmpty) continue;
+      out.add(t);
+    }
+  }
+
+  final s = m['simulcast'];
+  if (s is Map) {
+    if (s['dir1'] == 'send') addList(s['list1']?.toString());
+    if (s['dir2'] == 'send') addList(s['list2']?.toString());
+  }
+  final s03 = m['simulcast_03'];
+  if (s03 is Map) {
+    final raw = s03['value']?.toString() ?? '';
+    // Format: `send rid=q;h;f` or `recv rid=...`. Only consume `send`.
+    final parts = raw.trim().split(RegExp(r'\s+'));
+    for (var i = 0; i + 1 < parts.length; i++) {
+      if (parts[i] != 'send') continue;
+      final tail = parts[i + 1];
+      if (!tail.startsWith('rid=')) continue;
+      addList(tail.substring(4));
+    }
+  }
+  return out;
+}
+
 /// Parse [offerSdp] from a publisher and extract the producer streams
 /// declared in each m= section. One [ProducerStream] per logical track:
 /// non-simulcast tracks have one layer, SIM-grouped simulcast tracks
@@ -65,6 +128,20 @@ List<ProducerStream> parsePublisherOffer({
       for (final g in simGroups) ...g.skip(1),
     };
 
+    // Modern Chrome ≥ M71 simulcast: declares
+    //   a=extmap:<id> urn:ietf:params:rtp-hdrext:sdes:rtp-stream-id
+    //   a=rid:q send … / a=rid:h send … / a=rid:f send …
+    //   a=simulcast:send q;h;f
+    // and either omits a=ssrc entirely or declares only one SSRC pair.
+    // No SIM group, no per-layer SSRCs in SDP — we discover them from
+    // the RID extension on the first packet of each layer.
+    final ridExtId = _extIdFor(m, _ridExtUri);
+    final repairedRidExtId = _extIdFor(m, _repairedRidExtUri);
+    final simulcastRids = _parseSimulcastSendRids(m);
+    final hasModernSimulcast = simGroups.isEmpty &&
+        simulcastRids.length >= 2 &&
+        ridExtId != null;
+
     String resolveStreamId(int ssrc) {
       final raw = msids[ssrc];
       if (raw == null) return peerId;
@@ -79,6 +156,37 @@ List<ProducerStream> parsePublisherOffer({
         if (parts.length > 1 && parts[1].isNotEmpty) return parts[1];
       }
       return '$peerId-$kind-$mid';
+    }
+
+    if (hasModernSimulcast) {
+      // Build N layers with placeholder SSRC=0 — Receiver fills them in
+      // as packets arrive (RID extension → layer mapping).
+      final firstPrimary =
+          m.ssrcSet.where((s) => !rtxSsrcs.contains(s)).cast<int?>().firstWhere(
+                (_) => true,
+                orElse: () => null,
+              );
+      final cname = firstPrimary != null ? (cnames[firstPrimary] ?? peerId) : peerId;
+      final streamId =
+          firstPrimary != null ? resolveStreamId(firstPrimary) : peerId;
+      final trackId = firstPrimary != null
+          ? resolveTrackId(firstPrimary)
+          : '$peerId-$kind-$mid';
+      final layers = <ProducerLayer>[
+        for (final rid in simulcastRids)
+          ProducerLayer(rid: rid, primarySsrc: 0, rtxSsrc: null),
+      ];
+      out.add(ProducerStream.simulcast(
+        kind: kind,
+        mid: mid,
+        layers: layers,
+        cname: cname,
+        msidStream: streamId,
+        msidTrack: trackId,
+        ridExtId: ridExtId,
+        repairedRidExtId: repairedRidExtId,
+      ));
+      continue; // skip the SSRC-walk loop for this m= section
     }
 
     // Walk primary SSRCs in declaration order (m.ssrcSet preserves it),
