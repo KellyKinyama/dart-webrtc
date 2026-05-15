@@ -670,8 +670,7 @@ class _IonPeerSession {
     // length, but `String.length` is the canonical wire estimate
     // for our JSON payloads (almost pure ASCII).
     if (raw.length > _maxSignalingFrameBytes) {
-      await _closeWithError(
-          WebSocketStatus.messageTooBig, 'frame too large');
+      await _closeWithError(WebSocketStatus.messageTooBig, 'frame too large');
       return;
     }
     // Sliding-window rate limit. Drops the socket on burst rather
@@ -729,8 +728,7 @@ class _IonPeerSession {
   Future<void> _onJoin(Map<String, Object?> msg) async {
     if (_shard != null) return;
     final rawUid = msg['uid'] as String?;
-    final uid = rawUid ??
-        'peer-${DateTime.now().microsecondsSinceEpoch}';
+    final uid = rawUid ?? 'peer-${DateTime.now().microsecondsSinceEpoch}';
     if (rawUid != null && !_isValidId(rawUid)) {
       _send({'type': 'error', 'reason': 'invalidUid'});
       await ws.close();

@@ -248,8 +248,8 @@ class RtcUdpTransport {
       _socket.send(request.encode(), serverHost, serverPort);
       final result = await completer.future.timeout(timeout);
       throttle.recordSuccess();
-      _srflxCache[serverKey] = _CachedSrflx(
-        result, DateTime.now().add(_srflxCacheTtl));
+      _srflxCache[serverKey] =
+          _CachedSrflx(result, DateTime.now().add(_srflxCacheTtl));
       return result;
     } on TimeoutException {
       throttle.recordFailure();
@@ -593,6 +593,7 @@ class _StunServerThrottle {
   /// 200 ms == 5 req/s, well under the documented limits of every
   /// public STUN reflector we know of.
   static const Duration _minInterval = Duration(milliseconds: 200);
+
   /// Maximum back-off after repeated timeouts (the server is almost
   /// certainly rate-limiting us; back all the way off).
   static const Duration _maxBackoff = Duration(minutes: 5);

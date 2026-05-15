@@ -284,6 +284,14 @@ class Subscriber {
         // periodic tick.
         layerSelector.activeVideoDownTracks = _videoDownTrackCount();
         layerSelector.tick();
+      } else if (fb is RrFeedback) {
+        // RFC 3550 RR — used as the loss-based fallback signal when
+        // TWCC is silent / absent. Subscriber-side fractionLost is
+        // the signal we pass to BWE; the layer selector then picks
+        // it up via [BandwidthEstimator.lastFractionLost].
+        bwe.onRr(fb);
+        layerSelector.activeVideoDownTracks = _videoDownTrackCount();
+        layerSelector.tick();
       } else if (fb is TwccFeedback) {
         final budget = _consumeBytesBudget();
         // Phase 7b — delay-based update first (uses send-time history

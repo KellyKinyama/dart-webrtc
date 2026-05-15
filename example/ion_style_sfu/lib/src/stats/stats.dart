@@ -23,6 +23,16 @@ class DownTrackStats {
   final int packetsTwccStamped;
   final int nackRetransmits;
   final int nackUpstreamRequested;
+  /// RFC 3550 §A.8 interarrival jitter as observed on the publisher
+  /// side, in milliseconds. Inherited from the [Receiver] (the same
+  /// inbound stream shared by every DownTrack mirroring it).
+  final double publisherJitterMs;
+  /// Number of upstream PLI requests this DownTrack suppressed via
+  /// the 500 ms throttle. Healthy streams sit at 0.
+  final int pliRateLimited;
+  /// Number of [setCurrentLayer] calls rejected because a previous
+  /// layer switch was still in flight.
+  final int layerSwitchRejected;
 
   const DownTrackStats({
     required this.trackId,
@@ -38,6 +48,9 @@ class DownTrackStats {
     required this.packetsTwccStamped,
     required this.nackRetransmits,
     required this.nackUpstreamRequested,
+    this.publisherJitterMs = 0.0,
+    this.pliRateLimited = 0,
+    this.layerSwitchRejected = 0,
   });
 
   Map<String, Object?> toJson() => {
@@ -54,6 +67,9 @@ class DownTrackStats {
         'packetsTwccStamped': packetsTwccStamped,
         'nackRetransmits': nackRetransmits,
         'nackUpstreamRequested': nackUpstreamRequested,
+        'publisherJitterMs': publisherJitterMs,
+        'pliRateLimited': pliRateLimited,
+        'layerSwitchRejected': layerSwitchRejected,
       };
 }
 
@@ -150,6 +166,9 @@ SfuStatsSnapshot snapshotSfu(Sfu sfu) {
             packetsTwccStamped: dt.packetsTwccStamped,
             nackRetransmits: dt.nack.retransmits,
             nackUpstreamRequested: dt.nack.upstreamRequested,
+            publisherJitterMs: receiver.jitterMs,
+            pliRateLimited: dt.pliRateLimited,
+            layerSwitchRejected: dt.layerSwitchRejected,
           ));
         }
       }
@@ -248,6 +267,25 @@ String formatPrometheus(SfuStatsSnapshot snap) {
         'NACKs forwarded upstream to the publisher (not satisfied locally).',
         'counter',
         (t) => t.nackUpstreamRequested);
+    trackFamily(
+        'ionsfu_track_pli_rate_limited_total',
+        'Upstream PLIs suppressed by the 500ms per-track throttle.',
+        'counter',
+        (t) => t.pliRateLimited);
+    trackFamily(
+        'ionsfu_track_layer_switch_rejected_total',
+        'setCurrentLayer calls rejected because a prior switch is in flight.',
+        'counter',
+        (t) => t.layerSwitchRejected);
+    // Jitter is a gauge, not a counter — family helper takes int but
+    // we want to write the float verbatim. Inline.
+    out.writeln('# HELP ionsfu_publisher_jitter_ms '
+        'Publisher-side interarrival jitter (RFC 3550 §A.8) in ms.');
+    out.writeln('# TYPE ionsfu_publisher_jitter_ms gauge');
+    for (final t in snap.tracks) {
+      out.writeln(
+          'ionsfu_publisher_jitter_ms${_trackLabels(t)} ${t.publisherJitterMs}');
+    }
   }
 
   // --- per-subscriber BWE ---

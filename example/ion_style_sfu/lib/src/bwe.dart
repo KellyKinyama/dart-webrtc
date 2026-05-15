@@ -91,6 +91,39 @@ class BandwidthEstimator {
   /// no usable samples were available.
   double lastSlope = 0.0;
 
+  /// Most-recent RR-block `fractionLost` value as a unit fraction in
+  /// [0,1]. Updated by [onRr] each time a Receiver Report arrives
+  /// from the subscriber. Surfaced for stats / Prometheus and used
+  /// by the layer selector as a fallback signal when TWCC is silent
+  /// (or absent on the answer side).
+  double lastFractionLost = 0.0;
+
+  /// Wall-clock of the last [onRr] call. Stale values shouldn't drive
+  /// adaptation — if more than [_rrFreshness] has elapsed since the
+  /// last RR, we ignore [lastFractionLost] in [tick]-style logic.
+  DateTime? lastRrAt;
+
+  /// Loss threshold above which RR triggers a multiplicative back-off
+  /// independent of TWCC. 0.10 (10%) is the threshold ion-sfu uses
+  /// in its loss-based controller; below this we trust the
+  /// throughput-only path.
+  static const double rrLossDecreaseThreshold = 0.10;
+
+  /// Loss threshold below which RR explicitly *allows* the controller
+  /// to climb back up. Strictly below the decrease threshold so the
+  /// state machine has hysteresis.
+  static const double rrLossIncreaseThreshold = 0.02;
+
+  /// Maximum age of an RR sample before it stops biasing [tick]-style
+  /// decisions. Keeps a stale 30%-loss reading from pinning the
+  /// estimate to the floor forever.
+  static const Duration _rrFreshness = Duration(seconds: 5);
+
+  /// True iff [lastRrAt] is recent enough that [lastFractionLost]
+  /// should still influence layer-selection decisions.
+  bool get hasFreshRr =>
+      lastRrAt != null && DateTime.now().difference(lastRrAt!) <= _rrFreshness;
+
   BandwidthEstimator({
     this.smoothing = 0.3,
     this.overuseSlope = 0.01,
@@ -111,6 +144,34 @@ class BandwidthEstimator {
         : (currentBps + smoothing * (r.bps - currentBps)).round();
     currentBps = next;
     lastUpdate = DateTime.now();
+  }
+
+  /// Feed a Receiver Report (RFC 3550 §6.4.2). The reporter sends
+  /// one block per source it's been receiving; this method picks
+  /// the highest-loss block (worst-case across simulcast layers /
+  /// audio + video), updates [lastFractionLost] / [lastRrAt], and
+  /// applies a multiplicative back-off if the reading is above
+  /// [rrLossDecreaseThreshold].
+  ///
+  /// Mirrors `pkg/sfu/downtrack.go#L531` in ion-sfu — RR is the
+  /// fallback adaptation signal when TWCC is unavailable / slow.
+  void onRr(RrFeedback fb) {
+    if (fb.blocks.isEmpty) return;
+    var worst = 0.0;
+    for (final b in fb.blocks) {
+      final f = b.fractionLostUnit;
+      if (f > worst) worst = f;
+    }
+    lastFractionLost = worst;
+    lastRrAt = DateTime.now();
+    if (worst >= rrLossDecreaseThreshold) {
+      // Persistent loss — throttle the estimate down toward [decreaseFactor].
+      // Skip when currentBps is still 0 (no baseline to scale).
+      if (currentBps > 0) {
+        currentBps = (currentBps * decreaseFactor).round();
+        lastUpdate = DateTime.now();
+      }
+    }
   }
 
   /// Feed a TWCC feedback packet. Estimates receive-rate from the

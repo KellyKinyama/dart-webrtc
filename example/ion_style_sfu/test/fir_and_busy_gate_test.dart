@@ -47,8 +47,8 @@ void main() {
       // Length in 32-bit words, minus 1 = 4 (i.e. 20-byte packet).
       expect((pkt[2] << 8) | pkt[3], 4);
       // Sender SSRC.
-      expect((pkt[4] << 24) | (pkt[5] << 16) | (pkt[6] << 8) | pkt[7],
-          0xAAAAAAAA);
+      expect(
+          (pkt[4] << 24) | (pkt[5] << 16) | (pkt[6] << 8) | pkt[7], 0xAAAAAAAA);
       // Media SSRC field (FIR uses per-FCI target instead, this is 0).
       expect((pkt[8] << 24) | (pkt[9] << 16) | (pkt[10] << 8) | pkt[11], 0);
       // FCI: 4B target SSRC + 1B seq + 3B reserved.
@@ -114,7 +114,8 @@ void main() {
   });
 
   group('SimulcastRewriter.switchInFlight (busy-gate)', () {
-    test('starts true (no primary forwarded yet) and clears after first'
+    test(
+        'starts true (no primary forwarded yet) and clears after first'
         ' primary on the current layer', () {
       final r = SimulcastRewriter(
         rewrittenPrimarySsrc: 0x1111,
@@ -122,8 +123,7 @@ void main() {
         currentLayer: 'f',
       );
       expect(r.switchInFlight, isTrue);
-      r.rewrite(
-          rid: 'f', isRtx: false, rtp: _rtp(seq: 100, ts: 1000, ssrc: 1));
+      r.rewrite(rid: 'f', isRtx: false, rtp: _rtp(seq: 100, ts: 1000, ssrc: 1));
       expect(r.switchInFlight, isFalse);
     });
 
@@ -133,25 +133,21 @@ void main() {
         rewrittenRtxSsrc: 0x2222,
         currentLayer: 'f',
       );
-      r.rewrite(
-          rid: 'f', isRtx: false, rtp: _rtp(seq: 1, ts: 1, ssrc: 1));
+      r.rewrite(rid: 'f', isRtx: false, rtp: _rtp(seq: 1, ts: 1, ssrc: 1));
       expect(r.switchInFlight, isFalse);
       expect(r.setCurrentLayer('q'), isTrue);
       expect(r.switchInFlight, isTrue);
-      r.rewrite(
-          rid: 'q', isRtx: false, rtp: _rtp(seq: 999, ts: 9999, ssrc: 2));
+      r.rewrite(rid: 'q', isRtx: false, rtp: _rtp(seq: 999, ts: 9999, ssrc: 2));
       expect(r.switchInFlight, isFalse);
     });
 
-    test('setCurrentLayer to the same RID is a no-op and does not re-arm',
-        () {
+    test('setCurrentLayer to the same RID is a no-op and does not re-arm', () {
       final r = SimulcastRewriter(
         rewrittenPrimarySsrc: 0x1111,
         rewrittenRtxSsrc: 0x2222,
         currentLayer: 'f',
       );
-      r.rewrite(
-          rid: 'f', isRtx: false, rtp: _rtp(seq: 1, ts: 1, ssrc: 1));
+      r.rewrite(rid: 'f', isRtx: false, rtp: _rtp(seq: 1, ts: 1, ssrc: 1));
       expect(r.switchInFlight, isFalse);
       expect(r.setCurrentLayer('f'), isFalse);
       expect(r.switchInFlight, isFalse);

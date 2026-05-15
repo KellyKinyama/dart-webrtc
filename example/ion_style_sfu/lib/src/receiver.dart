@@ -77,6 +77,44 @@ class Receiver {
 
   bool _closed = false;
 
+  // ---- RFC 3550 §A.8 interarrival jitter ----------------------------
+
+  /// Assumed RTP timestamp clock rate, used to convert local arrival
+  /// wallclock into the same units as the source's RTP timestamp.
+  /// Real WebRTC negotiates this per-codec; we approximate with the
+  /// near-universal defaults so the jitter EMA is at least in the
+  /// right ballpark for stats / RR generation.
+  late final int _jitterClockHz =
+      kind == MediaKind.audio ? 48000 : 90000;
+
+  /// Last seen primary-packet RTP timestamp; used to compute the
+  /// transit-delta `D` between consecutive primaries.
+  int? _lastRtpTs;
+
+  /// Local arrival wallclock of [_lastRtpTs], expressed in microseconds
+  /// since epoch. Distinct from a `DateTime` to avoid extra allocation
+  /// per packet on the hot path.
+  int? _lastArrivalUs;
+
+  /// Smoothed interarrival jitter, RFC 3550 §A.8 EMA factor 1/16, in
+  /// RTP timestamp units of [_jitterClockHz]. Surfaced via [jitter].
+  double _jitterUnits = 0.0;
+
+  /// Number of primary packets folded into the jitter EMA. Useful for
+  /// detecting a stream that hasn't seen enough samples yet.
+  int _jitterSamples = 0;
+
+  /// Smoothed interarrival jitter in milliseconds. Stable definition
+  /// for stats / Prometheus regardless of codec clock rate.
+  double get jitterMs => _jitterUnits * 1000.0 / _jitterClockHz;
+
+  /// Smoothed interarrival jitter in raw RTP-timestamp units of the
+  /// source's codec clock. Matches what an RFC 3550 RR would carry.
+  int get jitter => _jitterUnits.round();
+
+  /// Number of primary packets folded into the jitter EMA.
+  int get jitterSamples => _jitterSamples;
+
   Receiver({
     required this.id,
     required this.peerId,
@@ -177,6 +215,37 @@ class Receiver {
     final layer = primaryLayer ?? rtxLayer;
     if (layer == null) return;
     final isRtx = rtxLayer != null;
+
+    // RFC 3550 §A.8 — per-source interarrival jitter EMA. Computed
+    // from primary packet arrivals only (RTX retransmits are
+    // out-of-order copies of already-observed primaries; folding
+    // them in would inflate the estimate). Update happens before any
+    // fan-out so a DownTrack tap that consults [jitter] sees the
+    // latest value.
+    if (!isRtx) {
+      final nowUs = DateTime.now().microsecondsSinceEpoch;
+      final ts = rtpTimestamp(rtp);
+      final lastTs = _lastRtpTs;
+      final lastArr = _lastArrivalUs;
+      if (lastTs != null && lastArr != null) {
+        // Convert arrival delta to RTP-timestamp units, then form D
+        // = transit(j) - transit(i). Use modular arithmetic on TS
+        // because the publisher's timestamp wraps every ~13 hours
+        // (90 kHz video).
+        final arrivalDeltaUnits =
+            ((nowUs - lastArr) * _jitterClockHz / 1000000).round();
+        var tsDelta = (ts - lastTs) & 0xffffffff;
+        // Treat tsDelta as a signed 32-bit value so that backward
+        // jumps (timestamp going down) don't blow the jitter up to
+        // billions of units.
+        if (tsDelta >= 0x80000000) tsDelta -= 0x100000000;
+        final d = (arrivalDeltaUnits - tsDelta).abs().toDouble();
+        _jitterUnits += (d - _jitterUnits) / 16.0;
+        _jitterSamples++;
+      }
+      _lastRtpTs = ts;
+      _lastArrivalUs = nowUs;
+    }
 
     // Phase 4 — feed the audio-level observer for primary audio
     // packets when the extension was negotiated. RTX retransmits are

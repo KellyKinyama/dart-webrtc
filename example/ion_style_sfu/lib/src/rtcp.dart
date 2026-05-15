@@ -64,6 +64,51 @@ class FirFeedback extends RtcpFeedback {
   });
 }
 
+/// One report block out of an RFC 3550 §6.4.2 Receiver Report (PT=201).
+/// Each RR carries 0..31 of these, one per source the reporter has
+/// been receiving from. The fields we care about for SFU adaptation:
+/// [fractionLost] (0..255, 256ths of packets lost in the last
+/// reporting interval) and [jitter] (interarrival jitter in RTP
+/// timestamp units).
+class RrReportBlock {
+  final int sourceSsrc;
+  /// Q8 — divide by 256.0 to get the loss rate as a fraction in [0,1].
+  final int fractionLost;
+  /// 24-bit cumulative number of packets lost (signed in RFC 3550 but
+  /// every implementation treats it as unsigned).
+  final int cumulativeLost;
+  /// Extended highest sequence number received (16 lo + 16 cycles).
+  final int highestSeq;
+  /// Interarrival jitter in RTP timestamp units of the source's
+  /// codec clock.
+  final int jitter;
+  final int lsr;
+  final int dlsr;
+  const RrReportBlock({
+    required this.sourceSsrc,
+    required this.fractionLost,
+    required this.cumulativeLost,
+    required this.highestSeq,
+    required this.jitter,
+    required this.lsr,
+    required this.dlsr,
+  });
+  /// Loss as a fraction in [0,1].
+  double get fractionLostUnit => fractionLost / 256.0;
+}
+
+/// RFC 3550 §6.4.2 Receiver Report (PT=201).
+class RrFeedback extends RtcpFeedback {
+  /// Reporter's SSRC — same as [senderSsrc] (RR has no media-SSRC field
+  /// in the header). Kept under both names for symmetry with the other
+  /// feedback types and to make subscriber-side correlation easy.
+  final List<RrReportBlock> blocks;
+  const RrFeedback({
+    required super.senderSsrc,
+    required this.blocks,
+  }) : super(mediaSsrc: 0);
+}
+
 /// RFC draft-alvestrand-rmcat-remb — Receiver Estimated Maximum
 /// Bitrate. Carried as PSFB FMT=15 with a fixed 'REMB' magic.
 class RembFeedback extends RtcpFeedback {
@@ -132,6 +177,32 @@ Iterable<RtcpFeedback> parseFeedback(Uint8List rtcp) sync* {
     final pktLen = (lengthWords + 1) * 4;
     if (off + pktLen > rtcp.length) break;
     final fmt = first & 0x1F;
+
+    // RFC 3550 RR — has a different header layout (no media-ssrc
+    // field; report blocks pack tightly after the reporter SSRC). The
+    // count of report blocks is the bottom 5 bits of the first byte.
+    if (pt == 201 && pktLen >= 8) {
+      final senderSsrc = _u32(rtcp, off + 4);
+      final rc = first & 0x1F;
+      final blocks = <RrReportBlock>[];
+      for (var i = 0; i < rc; i++) {
+        final p = off + 8 + i * 24;
+        if (p + 24 > off + pktLen) break;
+        blocks.add(RrReportBlock(
+          sourceSsrc: _u32(rtcp, p),
+          fractionLost: rtcp[p + 4],
+          cumulativeLost:
+              (rtcp[p + 5] << 16) | (rtcp[p + 6] << 8) | rtcp[p + 7],
+          highestSeq: _u32(rtcp, p + 8),
+          jitter: _u32(rtcp, p + 12),
+          lsr: _u32(rtcp, p + 16),
+          dlsr: _u32(rtcp, p + 20),
+        ));
+      }
+      yield RrFeedback(senderSsrc: senderSsrc, blocks: blocks);
+      off += pktLen;
+      continue;
+    }
 
     if (pktLen >= 12) {
       final senderSsrc = _u32(rtcp, off + 4);
