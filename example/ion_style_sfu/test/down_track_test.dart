@@ -138,18 +138,15 @@ void main() {
       expect(h.dt.lastUpstreamPliAt, t0);
       // Within the 500 ms guard.
       expect(
-          h.dt.tryConsumePliCredit(
-              t0.add(const Duration(milliseconds: 100))),
+          h.dt.tryConsumePliCredit(t0.add(const Duration(milliseconds: 100))),
           isFalse);
       expect(
-          h.dt.tryConsumePliCredit(
-              t0.add(const Duration(milliseconds: 499))),
+          h.dt.tryConsumePliCredit(t0.add(const Duration(milliseconds: 499))),
           isFalse);
       expect(h.dt.pliRateLimited, 2);
       // Just past the guard.
       expect(
-          h.dt.tryConsumePliCredit(
-              t0.add(const Duration(milliseconds: 600))),
+          h.dt.tryConsumePliCredit(t0.add(const Duration(milliseconds: 600))),
           isTrue);
     });
 
@@ -164,8 +161,7 @@ void main() {
       expect(h.dt.layerSwitchRejected, 0);
     });
 
-    test('writeRtp: happy path forwards primary packets and counts bytes',
-        () {
+    test('writeRtp: happy path forwards primary packets and counts bytes', () {
       final h = _makeTrack();
       addTearDown(h.pc.close);
       final layer = h.dt.receiver.layers.first;
@@ -260,8 +256,8 @@ void main() {
       // both methods early-return without throwing.
       expect(h.pc.activePeer, isNull);
       expect(() => h.dt.writeRtcp(Uint8List(8)), returnsNormally);
-      expect(() => h.dt.replay([Uint8List(12), Uint8List(12)]),
-          returnsNormally);
+      expect(
+          () => h.dt.replay([Uint8List(12), Uint8List(12)]), returnsNormally);
       // Counters do not move.
       expect(h.dt.packetsForwarded, 0);
     });
