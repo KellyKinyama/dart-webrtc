@@ -185,7 +185,7 @@ void stripAudioLevel(Uint8List rtp, int extId) {
 }
 
 
-/// Phase B13 — Chrome / WebRTC `playout-delay` RTP header extension
+/// Phase B13 â€“ Chrome / WebRTC `playout-delay` RTP header extension
 /// (`http://www.webrtc.org/experiments/rtp-hdrext/playout-delay`).
 ///
 /// The payload is exactly 3 bytes carrying two 12-bit unsigned values
@@ -199,10 +199,10 @@ void stripAudioLevel(Uint8List rtp, int extId) {
 /// +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
 /// ```
 ///
-/// Both values are clamped to [0, 40_950] ms (12 bits × 10 ms each).
+/// Both values are clamped to [0, 40_950] ms (12 bits Ã— 10 ms each).
 /// Any negative input is clamped to 0; any input above the cap is
 /// clamped to the cap. Caller is responsible for ensuring `min <= max`
-/// — this helper does NOT swap them.
+/// â€“ this helper does NOT swap them.
 class PlayoutDelay {
   /// Minimum tolerable playout delay in milliseconds.
   final int minMs;
@@ -212,7 +212,7 @@ class PlayoutDelay {
 
   const PlayoutDelay(this.minMs, this.maxMs);
 
-  /// Maximum representable value (12 bits × 10 ms).
+  /// Maximum representable value (12 bits Ã— 10 ms).
   static const int maxRepresentableMs = 4095 * 10;
 
   @override
