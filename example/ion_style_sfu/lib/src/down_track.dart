@@ -148,6 +148,47 @@ class DownTrack {
   /// Number of times [setCurrentLayer] actually changed the layer.
   int get layerSwitches => _rewriter.layerSwitches;
 
+  /// True while a layer switch requested via [setCurrentLayer] is
+  /// still waiting for its first primary packet on the new layer
+  /// (the keyframe boundary). Used by the BWE / layer-selector to
+  /// avoid queuing a second switch on top of an in-flight one.
+  bool get switchInFlight => _rewriter.switchInFlight;
+
+  /// Number of [setCurrentLayer] calls that were rejected because a
+  /// previously-requested switch was still in flight. Surfaced for
+  /// observability — a healthy stream sees this counter at 0.
+  int layerSwitchRejected = 0;
+
+  /// Wall-clock of the last upstream PLI / keyframe request emitted
+  /// for this DownTrack. The subscriber-side feedback path uses this
+  /// to enforce a minimum gap (default 500 ms) so a misbehaving
+  /// viewer can't spam PLI and induce a keyframe storm at the
+  /// publisher (which costs uplink bitrate at the source AND in every
+  /// downstream SFU hop).
+  DateTime? lastUpstreamPliAt;
+
+  /// Number of upstream PLI requests suppressed by the throttle.
+  int pliRateLimited = 0;
+
+  /// Minimum gap between two upstream PLI requests for this
+  /// DownTrack. Mirrors ion-sfu's 500 ms guard
+  /// (pkg/sfu/receiver.go#L266). Public for tests / configuration.
+  static const Duration minUpstreamPliGap = Duration(milliseconds: 500);
+
+  /// Returns true and updates [lastUpstreamPliAt] iff a new upstream
+  /// PLI may be sent at [now] given the throttle. Returns false
+  /// (and increments [pliRateLimited]) when the previous PLI is too
+  /// recent. Pure helper so the throttle can be unit-tested without
+  /// spinning up a Subscriber + publisher transport.
+  bool tryConsumePliCredit(DateTime now) {
+    if (!_pliThrottleAllow(lastUpstreamPliAt, now, minUpstreamPliGap)) {
+      pliRateLimited++;
+      return false;
+    }
+    lastUpstreamPliAt = now;
+    return true;
+  }
+
   /// Switch the forwarded simulcast layer to [rid]. No-op when this
   /// track is not simulcast or when the requested layer is unknown.
   /// Returns true if the layer changed.
@@ -155,6 +196,14 @@ class DownTrack {
     if (trackType != DownTrackType.simulcast) return false;
     final exists = receiver.layers.any((l) => l.rid == rid);
     if (!exists) return false;
+    if (_rewriter.switchInFlight && _rewriter.currentLayer != rid) {
+      // A prior switch hasn't landed its first keyframe yet — forcing
+      // another switch now would leave the SN/TS offsets half-applied
+      // and the subscriber's decoder would see a glitch on every
+      // re-flip. Reject and let the selector retry on the next tick.
+      layerSwitchRejected++;
+      return false;
+    }
     return _rewriter.setCurrentLayer(rid);
   }
 
@@ -275,3 +324,19 @@ class DownTrack {
     _removeSsrcListener?.call();
   }
 }
+
+/// Pure throttle predicate, exported so the rate-limit logic itself
+/// can be unit-tested without instantiating a full DownTrack. Returns
+/// true iff [now] is at least [minGap] after [lastSentAt] (or
+/// [lastSentAt] is null \u2014 i.e. nothing sent yet).
+bool _pliThrottleAllow(DateTime? lastSentAt, DateTime now, Duration minGap) {
+  if (lastSentAt == null) return true;
+  return now.difference(lastSentAt) >= minGap;
+}
+
+/// Public re-export of [_pliThrottleAllow] under a stable name. Tests
+/// in the package consume this; production code should prefer
+/// [DownTrack.tryConsumePliCredit] which carries the per-track state.
+bool pliThrottleAllowForTest(
+        DateTime? lastSentAt, DateTime now, Duration minGap) =>
+    _pliThrottleAllow(lastSentAt, now, minGap);

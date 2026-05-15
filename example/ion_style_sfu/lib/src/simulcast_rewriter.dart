@@ -75,6 +75,13 @@ class SimulcastRewriter {
     BytePool? pool,
   }) : pool = pool ?? BytePool.instance;
 
+  /// True while a previously-requested layer switch is still
+  /// waiting for its first primary packet to arrive (the keyframe
+  /// boundary). Subscribers that flip the layer mid-switch end up
+  /// with a half-applied offset and decoder corruption, so DownTrack
+  /// uses this to gate further [setCurrentLayer] calls.
+  bool get switchInFlight => _resyncOnNext;
+
   /// Switch the forwarded layer. Returns true when [rid] differs from
   /// the prior current layer (i.e. a real switch happened).
   bool setCurrentLayer(String rid) {

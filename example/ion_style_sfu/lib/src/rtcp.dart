@@ -49,6 +49,21 @@ class PliFeedback extends RtcpFeedback {
   const PliFeedback({required super.senderSsrc, required super.mediaSsrc});
 }
 
+/// RFC 5104 §4.3.1.1 — Full Intra Request, carried as PSFB FMT=4
+/// (PT=206). Each FCI is `(ssrc:32, seqNr:8, reserved:24)` and a
+/// single packet may target multiple SSRCs. iOS / older VoIP stacks
+/// send FIR instead of PLI, so an SFU that only listens for PLI will
+/// see those clients freeze on layer switches or packet loss.
+class FirFeedback extends RtcpFeedback {
+  /// Target SSRCs that should produce a fresh keyframe.
+  final List<int> targetSsrcs;
+  const FirFeedback({
+    required super.senderSsrc,
+    required super.mediaSsrc,
+    required this.targetSsrcs,
+  });
+}
+
 /// RFC draft-alvestrand-rmcat-remb — Receiver Estimated Maximum
 /// Bitrate. Carried as PSFB FMT=15 with a fixed 'REMB' magic.
 class RembFeedback extends RtcpFeedback {
@@ -139,6 +154,19 @@ Iterable<RtcpFeedback> parseFeedback(Uint8List rtcp) sync* {
       } else if (pt == 206 && fmt == 1) {
         // PLI.
         yield PliFeedback(senderSsrc: senderSsrc, mediaSsrc: mediaSsrc);
+      } else if (pt == 206 && fmt == 4) {
+        // FIR (RFC 5104 §4.3.1.1). FCI list of (ssrc:32, seq:8, rsvd:24).
+        final targets = <int>[];
+        var p = off + 12;
+        while (p + 8 <= off + pktLen) {
+          targets.add(_u32(rtcp, p));
+          p += 8;
+        }
+        yield FirFeedback(
+          senderSsrc: senderSsrc,
+          mediaSsrc: mediaSsrc,
+          targetSsrcs: targets,
+        );
       } else if (pt == 206 && fmt == 15 && pktLen >= 24) {
         // REMB. FCI layout starting at off+12:
         //   4B magic 'R'|'E'|'M'|'B'
@@ -299,6 +327,24 @@ Uint8List buildPli(int senderSsrc, int mediaSsrc) {
   bd.setUint16(2, 2, Endian.big);
   bd.setUint32(4, senderSsrc, Endian.big);
   bd.setUint32(8, mediaSsrc, Endian.big);
+  return out;
+}
+
+/// Build a FIR packet (RFC 5104 §4.3.1.1, PSFB FMT=4) targeting one
+/// SSRC with sequence number [seqNr] (low 8 bits). Encoders use the
+/// seqNr to deduplicate retransmits of the same FIR.
+Uint8List buildFir(int senderSsrc, int targetSsrc, int seqNr) {
+  // Header (12B) + one FCI (8B) = 20B = 5 32-bit words.
+  final out = Uint8List(20);
+  final bd = ByteData.sublistView(out);
+  out[0] = 0x80 | 4; // V=2, P=0, FMT=4
+  out[1] = 206;
+  bd.setUint16(2, 4, Endian.big); // length in 32-bit words minus 1
+  bd.setUint32(4, senderSsrc, Endian.big);
+  bd.setUint32(8, 0, Endian.big); // media SSRC field unused for FIR
+  bd.setUint32(12, targetSsrc, Endian.big);
+  out[16] = seqNr & 0xFF;
+  // bytes 17-19: reserved (zero).
   return out;
 }
 

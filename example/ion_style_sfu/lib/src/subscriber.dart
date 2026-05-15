@@ -264,6 +264,17 @@ class Subscriber {
       } else if (fb is PliFeedback) {
         if (dt == null) continue;
         _sendUpstreamPli(dt);
+      } else if (fb is FirFeedback) {
+        // RFC 5104 §4.3.1.1 — some clients (notably iOS / older VoIP
+        // stacks) only emit FIR. Resolve each target SSRC against the
+        // rewritten-SSRC → DownTrack table and escalate as a PLI to the
+        // owning publisher. We translate FIR→PLI on the upstream leg
+        // because every browser-side WebRTC stack accepts PLI but the
+        // FIR receiver bit is rarely negotiated.
+        for (final target in fb.targetSsrcs) {
+          final tdt = _byRewrittenSsrc[target];
+          if (tdt != null) _sendUpstreamPli(tdt);
+        }
       } else if (fb is RembFeedback) {
         // REMB doesn't carry a media SSRC (it's a transport-wide
         // estimate). Feed it unconditionally.
@@ -304,7 +315,10 @@ class Subscriber {
     pub.transport.sendRtcp(pub.pc.activePeer!, pkt);
   }
 
+  /// Throttle constant lives on [DownTrack.minUpstreamPliGap]; the
+  /// per-DownTrack gate is enforced via [DownTrack.tryConsumePliCredit].
   void _sendUpstreamPli(DownTrack dt) {
+    if (!dt.tryConsumePliCredit(DateTime.now())) return;
     final pub = _publisherFor(dt);
     if (pub == null) return;
     final pkt = buildPli(1, dt.receiver.primarySsrc);
