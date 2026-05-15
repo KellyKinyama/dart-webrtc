@@ -128,6 +128,23 @@ class DtlsClient {
   final Completer<void> _handshakeDone = Completer<void>();
   Future<void> get done => _handshakeDone.future;
 
+  /// Guards against re-entering [connect] (which would double-bind a
+  /// socket and corrupt every state field). Set to true on the first
+  /// call, never cleared.
+  bool _connectCalled = false;
+
+  /// Set by [close] (or by a fatal handshake error) so subsequent
+  /// `sendApplicationData` / `connect` calls fail fast instead of
+  /// reading from a dead socket.
+  bool _closed = false;
+
+  /// Raw datagrams that make up the client's current outbound flight.
+  /// Cleared by [_beginFlight] and appended to by [_emit]. On a
+  /// receive timeout we resend everything in this list — RFC 6347
+  /// §4.2.4 retransmit, scoped to a single packet loss on UDP.
+  final List<Uint8List> _currentFlight = [];
+  static const int _maxFlightRetransmits = 3;
+
   /// Optional sink for non-DTLS datagrams that arrive on the socket after
   /// the handshake completes (e.g. SRTP traffic when the same UDP socket is
   /// shared with an [SRTPClient]).
@@ -136,6 +153,33 @@ class DtlsClient {
   DtlsClient(this.serverAddress, this.serverPort);
 
   Future<void> connect() async {
+    if (_connectCalled) {
+      throw StateError('DtlsClient.connect() already called');
+    }
+    _connectCalled = true;
+    if (_closed) {
+      throw StateError('DtlsClient is closed');
+    }
+    try {
+      await _runHandshake();
+      _handshakeDone.complete();
+    } catch (e, st) {
+      // Surface the failure to anyone awaiting [done] AND propagate to
+      // the caller. Without this, callers `await client.done` and hang
+      // forever when the handshake aborts mid-flight.
+      if (!_handshakeDone.isCompleted) {
+        _handshakeDone.completeError(e, st);
+      }
+      // Tear down so a leftover RawDatagramSocket / listener doesn't
+      // keep firing _onEvent against a torn-down state machine.
+      try {
+        await close();
+      } catch (_) {/* close is best-effort on failure path */}
+      rethrow;
+    }
+  }
+
+  Future<void> _runHandshake() async {
     _socket = await RawDatagramSocket.bind(InternetAddress.anyIPv4, 0);
     // Bump the receive buffer to absorb bursts of fragmented handshake
     // records on loopback. Best-effort across platforms.
@@ -228,12 +272,14 @@ class DtlsClient {
           '  expected ${_hex(expectedServerVerify)}');
     }
     print('[client] server Finished verified — handshake complete');
-    _handshakeDone.complete();
   }
 
   /// Send application data (encrypted) to the peer once the handshake has
   /// completed.
   Future<void> sendApplicationData(Uint8List data) async {
+    if (_closed) {
+      throw StateError('DtlsClient is closed');
+    }
     if (_gcm == null || _clientEpoch == 0) {
       throw StateError('handshake not complete');
     }
@@ -241,8 +287,14 @@ class DtlsClient {
   }
 
   Future<void> close() async {
-    await _sub.cancel();
-    _socket.close();
+    if (_closed) return;
+    _closed = true;
+    try {
+      await _sub.cancel();
+    } catch (_) {/* sub may not have been set if connect() failed early */}
+    try {
+      _socket.close();
+    } catch (_) {/* socket may not have been bound */}
   }
 
   /// Export RFC 5705 keying material (e.g. for SRTP key derivation).
@@ -280,6 +332,9 @@ class DtlsClient {
   // -------- Handshake message builders --------
 
   void _sendClientHello({required Uint8List cookie}) {
+    // Each ClientHello (flight 1 and flight 3) is its own outbound
+    // flight; clear the retransmit buffer.
+    _beginFlight();
     final body = BytesBuilder();
     body.add(_dtls12); // client_version
     body.add(_clientRandom); // random (32 bytes)
@@ -342,6 +397,10 @@ class DtlsClient {
   }
 
   void _sendClientKeyExchange() {
+    // Start of flight 5 (CKE + CCS + Finished). Subsequent _emit calls
+    // append to the same _currentFlight so a single retransmit resends
+    // the whole flight.
+    _beginFlight();
     // Body: opaque ECPoint, 1 byte length prefix.
     final body = BytesBuilder();
     body.addByte(_clientPublicKey.length);
@@ -427,6 +486,20 @@ class DtlsClient {
 
   // -------- Record I/O --------
 
+  /// Reset the current-flight buffer. Call right before the first
+  /// `_sendRecord`/`_sendEncryptedRecord` of a new outbound flight so
+  /// that retransmits only resend the records of the latest flight.
+  void _beginFlight() {
+    _currentFlight.clear();
+  }
+
+  /// Send [record] over the wire and remember it for possible flight
+  /// retransmit (see [_nextFrame]).
+  void _emit(Uint8List record) {
+    _currentFlight.add(record);
+    _socket.send(record, serverAddress, serverPort);
+  }
+
   void _sendRecord(int contentType, Uint8List body,
       {required bool encrypt}) async {
     final header = _buildRecordHeader(contentType, body.length);
@@ -437,7 +510,7 @@ class DtlsClient {
       final rh = _recordHeaderObject(contentType, body.length);
       record = await _gcm!.encrypt(rh, record);
     }
-    _socket.send(record, serverAddress, serverPort);
+    _emit(record);
     _clientRecordSeq++;
   }
 
@@ -446,7 +519,7 @@ class DtlsClient {
     final rh = _recordHeaderObject(contentType, body.length);
     final plaintextRecord = Uint8List.fromList([...header, ...body]);
     final encrypted = await _gcm!.encrypt(rh, plaintextRecord);
-    _socket.send(encrypted, serverAddress, serverPort);
+    _emit(encrypted);
     _clientRecordSeq++;
   }
 
@@ -513,12 +586,30 @@ class DtlsClient {
   final List<_Frame> _frames = [];
 
   Future<_Frame> _nextFrame() async {
+    var retries = 0;
     while (_frames.isEmpty) {
       while (_incoming.isEmpty) {
+        if (_closed) {
+          throw StateError('DtlsClient closed during handshake');
+        }
         _waitForData = Completer<void>();
-        await _waitForData!.future.timeout(const Duration(seconds: 5),
-            onTimeout: () =>
-                throw TimeoutException('no DTLS data from server'));
+        try {
+          await _waitForData!.future
+              .timeout(const Duration(seconds: 5), onTimeout: () {
+            throw TimeoutException('no DTLS data from server');
+          });
+        } on TimeoutException {
+          if (retries >= _maxFlightRetransmits || _currentFlight.isEmpty) {
+            rethrow;
+          }
+          retries++;
+          // ignore: avoid_print
+          print('[client] flight retransmit #$retries '
+              '(${_currentFlight.length} record(s))');
+          for (final r in _currentFlight) {
+            _socket.send(r, serverAddress, serverPort);
+          }
+        }
       }
       final dg = Uint8List.fromList(_incoming.removeAt(0));
       _splitDatagramIntoFrames(dg);

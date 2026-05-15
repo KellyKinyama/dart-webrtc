@@ -74,9 +74,28 @@ class DtlsSession {
 
   bool get isConnected => _ctx.dTLSState == DTLSState.DTLSStateConnected;
 
+  /// True once the session has aborted (alert received, transition error,
+  /// etc.). The state machine drops every subsequent record so a single
+  /// bad peer can't keep poking the handler.
+  bool get isFailed => _ctx.dTLSState == DTLSState.DTLSStateFailed;
+
+  /// Set once we've sent our flight 6 (CCS + Finished). Used to make
+  /// `_onClientFinished` idempotent: if the peer's ACK gets lost the
+  /// peer will retransmit its own Finished, and we must re-send our
+  /// flight 6 without re-firing `onConnected` or re-bumping the epoch.
+  bool _flight6Sent = false;
+
   /// Feeds an inbound UDP datagram (which may contain one or more DTLS
   /// records) into the state machine.
   Future<void> handleDatagram(Uint8List datagram) async {
+    if (isFailed) {
+      if (_verbose) {
+        // ignore: avoid_print
+        print('[dtls] datagram on failed session; dropping '
+            '(${datagram.length}B)');
+      }
+      return;
+    }
     if (_verbose) {
       // ignore: avoid_print
       print('[dtls] handleDatagram ENTER len=${datagram.length} '
@@ -144,6 +163,9 @@ class DtlsSession {
     } catch (e, st) {
       // ignore: avoid_print
       print('[dtls] handleDatagram error: $e\n$st');
+      // Mark the session failed so subsequent records don't re-enter
+      // the handlers in a half-initialized state.
+      _ctx.dTLSState = DTLSState.DTLSStateFailed;
       onError?.call(e, st);
       rethrow;
     }
@@ -152,6 +174,12 @@ class DtlsSession {
   Future<void> _dispatch(DecodeDtlsMessageResult decoded) async {
     final message = decoded.message;
     if (message == null) return; // ignored / fragmented / older epoch
+
+    // Once the session has failed, drop everything. A peer that keeps
+    // talking after we've torn down can no longer drive any state, and
+    // re-entering the handlers risks double-fire of `onConnected` or
+    // re-keying side effects.
+    if (isFailed) return;
 
     if (message is ClientHello) {
       await _onClientHello(message);
@@ -162,7 +190,27 @@ class DtlsSession {
     } else if (message is ChangeCipherSpec) {
       // No state change required: the record-layer epoch transition is
       // already handled inside DecodeDtlsMessageResult / the GCM layer.
+      // We only accept it once the cipher suite is ready, otherwise it
+      // is a protocol error from the peer.
+      if (!_ctx.isCipherSuiteInitialized) {
+        if (_verbose) {
+          // ignore: avoid_print
+          print('[dtls] CCS before keys; ignoring');
+        }
+      }
     } else if (message is ApplicationData) {
+      // RFC 6347: application_data records before the handshake completes
+      // MUST be discarded. Otherwise a buggy peer (or attacker who can
+      // craft an early plaintext) could drive `onApplicationData` before
+      // SRTP keys are bound.
+      if (!isConnected) {
+        if (_verbose) {
+          // ignore: avoid_print
+          print('[dtls] application_data before Connected; dropping '
+              '(state=${_ctx.dTLSState})');
+        }
+        return;
+      }
       _onApplicationData(message);
     } else if (message is Alert) {
       // Encrypted Alerts (epoch >= 1, e.g. close_notify after handshake)
@@ -175,17 +223,35 @@ class DtlsSession {
       if (!lvl.contains('Invalid') && !desc.contains('Invalid')) {
         // ignore: avoid_print
         print('[dtls] <- Alert level=$lvl description=$desc');
+        // A genuine fatal alert means the peer is going away. Mark the
+        // session failed so we stop driving the state machine on any
+        // straggler datagrams.
+        if (lvl.contains('Fatal')) {
+          _ctx.dTLSState = DTLSState.DTLSStateFailed;
+        }
       } else if (_verbose) {
         // ignore: avoid_print
         print('[dtls] <- (encrypted/invalid Alert suppressed)');
       }
     }
-    // Other types (Certificate, CertificateVerify, Alert) are ignored in
-    // this server profile — we don't request client auth and we don't
-    // surface alerts to user code.
+    // Other types (Certificate, CertificateVerify) are ignored in this
+    // server profile — we don't request client auth.
   }
 
   Future<void> _onClientHello(ClientHello message) async {
+    // Renegotiation is not supported. A ClientHello after the handshake
+    // completed (or after we've already sent our flight 6) is either a
+    // confused peer or a downgrade attempt. Drop silently — the right
+    // way to start over is a brand-new (host, port) flow which gets a
+    // fresh [DtlsSession] from `RtcUdpTransport`.
+    if (isConnected || _flight6Sent) {
+      if (_verbose) {
+        // ignore: avoid_print
+        print('[dtls] ClientHello after Connected; ignoring (no renego)');
+      }
+      return;
+    }
+
     _ctx.session_id = Uint8List.fromList(message.session_id);
     _ctx.compression_methods = message.compression_methods;
     _ctx.extensions = message.extensions;
@@ -199,6 +265,21 @@ class DtlsSession {
       _ctx.clientRandom = message.random;
       _ctx.flight = Flight.Flight2;
       await _writer.send(HandshakeBuilders.helloVerifyRequest(_ctx));
+      return;
+    }
+
+    // We've already produced our flight 4 for this peer (serverRandom,
+    // signature, etc. are bound to the original transcript). A second
+    // cookie-bearing ClientHello almost always means the client never
+    // received our flight 4 and is retransmitting flight 3. Re-deriving
+    // serverRandom + serverKeySignature would corrupt the transcript and
+    // make the eventual Finished verify_data check fail. Drop and let
+    // the application-layer retransmit recover (or eventually time out).
+    if (_ctx.flight == Flight.Flight4) {
+      if (_verbose) {
+        // ignore: avoid_print
+        print('[dtls] duplicate ClientHello in Flight4; dropping');
+      }
       return;
     }
 
@@ -228,6 +309,16 @@ class DtlsSession {
   }
 
   Future<void> _onClientKeyExchange(ClientKeyExchange message) async {
+    // ClientKeyExchange is only valid in flight 5 — i.e. AFTER we sent
+    // our flight 4 (ServerHelloDone). Anything earlier is the peer
+    // skipping the cookie round trip or jumping the gun.
+    if (_ctx.flight != Flight.Flight4) {
+      if (_verbose) {
+        // ignore: avoid_print
+        print('[dtls] CKE in unexpected flight=${_ctx.flight}; dropping');
+      }
+      return;
+    }
     _ctx.clientKeyExchangePublic = message.publicKey;
     if (!_ctx.isCipherSuiteInitialized) {
       await initEcdheEcdsaAes128GcmSha256(_ctx);
@@ -235,6 +326,28 @@ class DtlsSession {
   }
 
   Future<void> _onClientFinished(Finished _) async {
+    // Without keys we can't have decrypted a real Finished — it must be
+    // junk getting past the parser. Drop without changing state.
+    if (!_ctx.isCipherSuiteInitialized) {
+      if (_verbose) {
+        // ignore: avoid_print
+        print('[dtls] Finished before keys; dropping');
+      }
+      return;
+    }
+
+    // Retransmit handling: if the peer's last datagram (their flight 5
+    // Finished) was lost, they will resend. Re-send our flight 6 but
+    // do NOT bump the server epoch again or re-fire onConnected.
+    if (_flight6Sent) {
+      if (_verbose) {
+        // ignore: avoid_print
+        print('[dtls] retransmitted client Finished; ignoring '
+            '(flight 6 already sent)');
+      }
+      return;
+    }
+
     final transcript = buildHandshakeTranscript(
       _ctx,
       includeReceivedFinished: true,
@@ -245,8 +358,10 @@ class DtlsSession {
     _ctx.increaseServerEpoch();
 
     await _writer.send(HandshakeBuilders.finished(verifyData));
+    _flight6Sent = true;
 
     _ctx.dTLSState = DTLSState.DTLSStateConnected;
+    _ctx.flight = Flight.Flight6;
     onConnected?.call();
   }
 
