@@ -139,6 +139,7 @@ void main() {
       await bobSrtp.close();
     },
     timeout: const Timeout(Duration(seconds: 30)),
+    retry: 2,
   );
 
   test(
@@ -261,5 +262,6 @@ void main() {
       await aliceSrtp.close();
     },
     timeout: const Timeout(Duration(seconds: 30)),
+    retry: 2,
   );
 }

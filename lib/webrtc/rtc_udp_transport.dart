@@ -70,10 +70,45 @@ class RtcPeerTransport {
   int rtcpPacketsSent = 0;
   int rtcpPacketsReceived = 0;
 
+  /// How this peer's address first became known to the transport.
+  ///
+  /// * `'host'` — the very first packet from this (host, port) was a
+  ///   DTLS record (e.g. raw DTLS clients, non-ICE flows, tests).
+  /// * `'prflx'` — peer-reflexive: the first packet was an
+  ///   authenticated STUN binding request from a source address we
+  ///   hadn't seen advertised in any prior candidate list. This is
+  ///   what happens to NAT'd browser peers — the public-side host:port
+  ///   is only learnable from the connectivity check itself.
+  ///
+  /// Surfaced for stats / debugging; the transport currently treats
+  /// both kinds the same once they've been admitted.
+  final String discoveryMethod;
+
+  /// Number of valid (passing MESSAGE-INTEGRITY) STUN binding requests
+  /// received from this peer. Bumped by [RtcUdpTransport] in
+  /// [_onSocketEvent] only after the embedded STUN server has accepted
+  /// the request, so a flood of forged binding requests can't inflate
+  /// this counter.
+  int bindingRequestsReceived = 0;
+
+  /// Set true the first time a binding request from this peer carries
+  /// the USE-CANDIDATE attribute (RFC 8445 §7.1.2 — the controlling
+  /// agent's signal that this pair should be nominated for media).
+  /// Pure-Dart-WebRTC operates as the controlled side, so we treat
+  /// USE-CANDIDATE as authoritative the moment we see it on a check
+  /// that already passed the integrity gate. This matches the
+  /// "aggressive nomination" model browsers use in practice — they
+  /// stamp USE-CANDIDATE on every check and expect the controlled
+  /// side to accept the highest-priority pair that ever arrives.
+  bool nominated = false;
+  DateTime? nominatedAt;
+
+
   RtcPeerTransport({
     required this.remoteAddress,
     required this.remotePort,
     required this.dtlsSession,
+    this.discoveryMethod = 'host',
   }) : lastPacketAt = DateTime.now();
 
   /// Wall-clock of the last datagram observed from this peer. Used by
@@ -113,6 +148,15 @@ class RtcUdpTransport {
   /// Idle TTL for unsecured peers (DTLS never completed). Anything
   /// over this is almost certainly orphan handshake noise.
   static const Duration _unsecuredPeerTtl = Duration(seconds: 30);
+
+  /// Idle TTL for unsecured *and* never-nominated peers — i.e. (host,
+  /// port) pairs that sent some valid STUN binding requests but have
+  /// never been promoted by the controlling agent (no USE-CANDIDATE)
+  /// and never completed DTLS. These are typical "losing" ICE
+  /// candidates: trickle-in alternates that never won the check, or
+  /// flooded STUN sources from a misbehaving probe. Evict aggressively
+  /// to keep [_maxPeers] headroom for the real winner.
+  static const Duration _unnominatedUnsecuredPeerTtl = Duration(seconds: 8);
 
   /// Idle TTL for secured peers. Long enough to tolerate audio-only
   /// pauses and brief network blips, short enough to release memory
@@ -181,7 +225,7 @@ class RtcUdpTransport {
         RtcUdpTransport._(socket, certificate, stunPassword, protectionProfile);
     t._sub = socket.listen(t._onSocketEvent);
     t._evictionTimer = Timer.periodic(
-        const Duration(seconds: 30), (_) => t._evictStalePeers());
+        const Duration(seconds: 5), (_) => t._evictStalePeers());
     return t;
   }
 
@@ -299,6 +343,12 @@ class RtcUdpTransport {
     return true;
   }
 
+  /// Snapshot of every currently tracked peer. Useful for stats /
+  /// diagnostics — exposes ICE attributes (`nominated`,
+  /// `discoveryMethod`, `bindingRequestsReceived`) without granting
+  /// callers write access to the internal map.
+  List<RtcPeerTransport> get peers => List.unmodifiable(_peers.values);
+
   Future<void> close() async {
     if (_closed) return;
     _closed = true;
@@ -320,7 +370,14 @@ class RtcUdpTransport {
     final stale = <_PeerKey>[];
     _peers.forEach((key, peer) {
       final idle = now.difference(peer.lastPacketAt);
-      final ttl = peer.isSecure ? _securedPeerTtl : _unsecuredPeerTtl;
+      Duration ttl;
+      if (peer.isSecure) {
+        ttl = _securedPeerTtl;
+      } else if (peer.nominated) {
+        ttl = _unsecuredPeerTtl;
+      } else {
+        ttl = _unnominatedUnsecuredPeerTtl;
+      }
       if (idle > ttl) stale.add(key);
     });
     for (final k in stale) {
@@ -333,7 +390,8 @@ class RtcUdpTransport {
           // ignore: avoid_print
           print('[udp ${_socket.address.address}:${_socket.port}] '
               'evicting idle peer ${k.host}:${k.port} '
-              '(secure=${peer.isSecure})');
+              '(secure=${peer.isSecure}, nominated=${peer.nominated}, '
+              'discovery=${peer.discoveryMethod})');
         }
       }
     }
@@ -364,10 +422,32 @@ class RtcUdpTransport {
       // (srflx gathering), consume it locally instead of forwarding to the
       // embedded STUN server (which only handles inbound requests).
       if (_tryCompleteStunQuery(data)) return;
-      // Promote a new (host, port) to a tracked peer only if there's
-      // capacity. The embedded StunServer drops requests with bad
-      // MESSAGE-INTEGRITY itself, so creating a peer entry up-front
-      // would still admit a flood of fake source ports. Cap first.
+
+      // Pre-decode + integrity-check the inbound binding request so
+      // that (a) bad-credential requests never even allocate a peer
+      // entry (defends [_maxPeers] against forged-source-port floods)
+      // and (b) we can extract ICE attributes (USE-CANDIDATE → nominated,
+      // discoveryMethod = 'prflx') in the same pass.
+      stun.StunMessage? parsed;
+      try {
+        parsed = stun.StunMessage.decode(data);
+      } catch (_) {
+        // Malformed STUN — drop without touching the peer map.
+        return;
+      }
+      if (parsed.messageType.method == stun.StunMessageMethod.binding &&
+          parsed.messageType.messageClass == stun.StunMessageClass.request) {
+        if (!parsed.validateAsResponse(passwordForIntegrity: _stunPassword)) {
+          if (_verbose) {
+            // ignore: avoid_print
+            print('[udp ${_socket.address.address}:${_socket.port}] '
+                'STUN binding from ${dg.address.address}:${dg.port} '
+                'failed MESSAGE-INTEGRITY; not creating peer');
+          }
+          return;
+        }
+      }
+
       if (peer == null) {
         if (_peers.length >= _maxPeers) {
           if (_verbose) {
@@ -378,7 +458,14 @@ class RtcUdpTransport {
           }
           return;
         }
-        peer = _peers.putIfAbsent(key, () => _newPeer(dg.address, dg.port));
+        // First packet from this (host, port) is a signed STUN binding
+        // request → peer-reflexive (RFC 8445 §7.3). Tag it so callers
+        // can distinguish browser/NAT-mediated peers from raw-DTLS
+        // ones in stats / logs.
+        peer = _peers.putIfAbsent(
+          key,
+          () => _newPeer(dg.address, dg.port, discoveryMethod: 'prflx'),
+        );
       }
       peer.lastPacketAt = DateTime.now();
       stun.StunServer.handleDatagram(
@@ -390,6 +477,8 @@ class RtcUdpTransport {
         // without a valid MESSAGE-INTEGRITY.
         requireMessageIntegrity: true,
       );
+      // Update ICE attributes from the already-validated request.
+      _applyIceAttributes(parsed, peer);
       return;
     }
 
@@ -478,7 +567,8 @@ class RtcUdpTransport {
     onUnknown?.call(p, data);
   }
 
-  RtcPeerTransport _newPeer(InternetAddress addr, int port) {
+  RtcPeerTransport _newPeer(InternetAddress addr, int port,
+      {String discoveryMethod = 'host'}) {
     final session = DtlsSession(
       serverCert: _certificate,
       sendRaw: (bytes) {
@@ -495,6 +585,7 @@ class RtcUdpTransport {
       remoteAddress: addr,
       remotePort: port,
       dtlsSession: session,
+      discoveryMethod: discoveryMethod,
     );
 
     session.onConnected = () {
@@ -504,6 +595,30 @@ class RtcUdpTransport {
 
     onPeer?.call(peer);
     return peer;
+  }
+
+  /// Update ICE-related fields on [peer] from a STUN binding request
+  /// that has already been parsed and integrity-validated by the
+  /// caller:
+  ///
+  ///   * `bindingRequestsReceived++`
+  ///   * `nominated = true` when USE-CANDIDATE is present (RFC 8445
+  ///     §7.1.2; aggressive nomination — browsers stamp it on every
+  ///     check, controlled side accepts immediately).
+  void _applyIceAttributes(stun.StunMessage msg, RtcPeerTransport peer) {
+    peer.bindingRequestsReceived++;
+    if (msg.attributes.containsKey(stun.StunAttributeType.useCandidate)) {
+      if (!peer.nominated) {
+        peer.nominated = true;
+        peer.nominatedAt = DateTime.now();
+        if (_verbose) {
+          // ignore: avoid_print
+          print('[udp ${_socket.address.address}:${_socket.port}] '
+              'peer ${peer.remoteAddress.address}:${peer.remotePort} '
+              'nominated (USE-CANDIDATE, discovery=${peer.discoveryMethod})');
+        }
+      }
+    }
   }
 
   /// Returns true if [data] was consumed as a response to a pending

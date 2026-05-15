@@ -143,7 +143,26 @@ class DtlsClient {
   /// receive timeout we resend everything in this list — RFC 6347
   /// §4.2.4 retransmit, scoped to a single packet loss on UDP.
   final List<Uint8List> _currentFlight = [];
-  static const int _maxFlightRetransmits = 3;
+
+  /// RFC 6347 §4.2.4.1 retransmission timer parameters.
+  ///
+  /// The standard *recommends* an initial timeout of 1 s, but on a
+  /// Dart-isolate-driven server under loopback test load the very
+  /// first ECDHE handshake can take several seconds (key generation,
+  /// JIT warm-up). A premature retransmit there races the server's
+  /// first response and corrupts record parsing. We keep the
+  /// previous fixed-timer's 5 s initial value but now add proper
+  /// exponential backoff (doubling, 60 s cap) and a higher retransmit
+  /// budget so a single packet loss on a long-RTT path doesn't
+  /// terminate the handshake prematurely.
+  static const Duration _initialFlightTimeout = Duration(seconds: 5);
+  static const Duration _maxFlightTimeout = Duration(seconds: 60);
+  static const int _maxFlightRetransmits = 6;
+
+  /// Number of retransmits sent while waiting for the *current* flight
+  /// reply. Reset to 0 by [_beginFlight] so each flight has its own
+  /// backoff schedule.
+  int _flightRetries = 0;
 
   /// Optional sink for non-DTLS datagrams that arrive on the socket after
   /// the handshake completes (e.g. SRTP traffic when the same UDP socket is
@@ -491,6 +510,7 @@ class DtlsClient {
   /// that retransmits only resend the records of the latest flight.
   void _beginFlight() {
     _currentFlight.clear();
+    _flightRetries = 0;
   }
 
   /// Send [record] over the wire and remember it for possible flight
@@ -586,26 +606,36 @@ class DtlsClient {
   final List<_Frame> _frames = [];
 
   Future<_Frame> _nextFrame() async {
-    var retries = 0;
     while (_frames.isEmpty) {
       while (_incoming.isEmpty) {
         if (_closed) {
           throw StateError('DtlsClient closed during handshake');
         }
+        // RFC 6347 §4.2.4.1 — exponential backoff. Start at the
+        // initial timeout for this flight and double on each
+        // retransmission, capped at [_maxFlightTimeout].
+        final shift = _flightRetries.clamp(0, 30);
+        var waitMs = _initialFlightTimeout.inMilliseconds << shift;
+        if (waitMs <= 0 || waitMs > _maxFlightTimeout.inMilliseconds) {
+          waitMs = _maxFlightTimeout.inMilliseconds;
+        }
         _waitForData = Completer<void>();
         try {
-          await _waitForData!.future.timeout(const Duration(seconds: 5),
+          await _waitForData!.future.timeout(Duration(milliseconds: waitMs),
               onTimeout: () {
-            throw TimeoutException('no DTLS data from server');
+            throw TimeoutException(
+              'no DTLS data from server within ${waitMs}ms',
+            );
           });
         } on TimeoutException {
-          if (retries >= _maxFlightRetransmits || _currentFlight.isEmpty) {
+          if (_flightRetries >= _maxFlightRetransmits ||
+              _currentFlight.isEmpty) {
             rethrow;
           }
-          retries++;
+          _flightRetries++;
           // ignore: avoid_print
-          print('[client] flight retransmit #$retries '
-              '(${_currentFlight.length} record(s))');
+          print('[client] flight retransmit #$_flightRetries '
+              '(${_currentFlight.length} record(s), waited ${waitMs}ms)');
           for (final r in _currentFlight) {
             _socket.send(r, serverAddress, serverPort);
           }
