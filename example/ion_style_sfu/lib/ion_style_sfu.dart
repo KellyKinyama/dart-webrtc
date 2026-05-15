@@ -3,6 +3,7 @@ library;
 
 export 'src/sfu.dart';
 export 'src/session.dart';
+export 'src/session_stream_tracker.dart';
 export 'src/peer.dart';
 export 'src/publisher.dart';
 export 'src/subscriber.dart';

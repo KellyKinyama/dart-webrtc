@@ -11,6 +11,12 @@ import 'sfu.dart';
 
 typedef SessionEvent = void Function(Peer peer);
 
+/// Phase B11 — fired when a publisher learns about a new track and that
+/// track is broadcast to existing peers. Subscribers built lazily after
+/// the publish call still see this event because [Session.publish] runs
+/// before [SessionStreamTracker] forwards it.
+typedef SessionTrackEvent = void Function(Router router, Receiver receiver);
+
 /// One conferencing room. Holds the live peers and acts as the broadcast
 /// hub when a publisher gets a new track (`publish`) or when a subscriber
 /// joins (`subscribe`).
@@ -45,6 +51,11 @@ class Session {
 
   /// Fires whenever a peer leaves.
   SessionEvent? onPeerLeft;
+
+  /// Phase B11 — fires whenever a publisher [publish]es a new track
+  /// into this session. Used by `SessionStreamTracker` to keep its
+  /// snapshot of live tracks in sync without having to poll.
+  SessionTrackEvent? onTrackPublished;
 
   Session(this.id, this.sfu);
 
@@ -95,6 +106,7 @@ class Session {
       if (p.id == router.peerId) continue;
       p.subscriber?.addReceiver(receiver);
     }
+    onTrackPublished?.call(router, receiver);
   }
 
   /// Subscribe [peer] to every existing producer track. Called from

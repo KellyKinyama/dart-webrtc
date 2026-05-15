@@ -10,8 +10,7 @@ import 'package:pure_dart_webrtc_ion_style_sfu/ion_style_sfu.dart';
 import 'package:test/test.dart';
 
 void main() {
-  test('plain GET /ws/<sid> drives the WS-upgrade onError branch',
-      () async {
+  test('plain GET /ws/<sid> drives the WS-upgrade onError branch', () async {
     final h = await runIonStyleSfuServer(
       ip: '127.0.0.1',
       port: 0,
@@ -21,8 +20,7 @@ void main() {
     );
     addTearDown(h.close);
     final c = HttpClient();
-    final req =
-        await c.getUrl(Uri.parse('http://127.0.0.1:${h.port}/ws/r1'));
+    final req = await c.getUrl(Uri.parse('http://127.0.0.1:${h.port}/ws/r1'));
     // Deliberately do NOT set Upgrade/Connection headers; the
     // upgrade future inside the server rejects, hitting onError.
     final resp = await req.close();
