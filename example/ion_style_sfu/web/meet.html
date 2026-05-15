@@ -1,0 +1,1237 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>Pure Dart Meet</title>
+  <link rel="icon" href="data:,">
+  <style>
+    /* ============================== Theme ============================== */
+    :root {
+      --bg-0: #0b0e13;
+      --bg-1: #11151c;
+      --bg-2: #1a1f29;
+      --bg-3: #232936;
+      --line:  #2a3140;
+      --text:  #e7eaf0;
+      --muted: #8b94a7;
+      --accent:#5b8def;
+      --accent-2:#3a6cd6;
+      --danger:#ea4335;
+      --danger-2:#c5352a;
+      --good:  #34a853;
+      --warn:  #fbbc04;
+      --tile-bg:#000;
+      --shadow: 0 6px 24px rgba(0,0,0,.45);
+    }
+
+    * { box-sizing: border-box; }
+    html, body { height: 100%; margin: 0; }
+    body {
+      font: 14px/1.4 -apple-system, BlinkMacSystemFont, "Segoe UI",
+            Roboto, "Helvetica Neue", Arial, sans-serif;
+      color: var(--text);
+      background: var(--bg-0);
+      overflow: hidden;
+    }
+
+    button {
+      font: inherit; color: var(--text); background: var(--bg-3);
+      border: 1px solid var(--line); border-radius: 8px;
+      padding: .55em .9em; cursor: pointer; user-select: none;
+      transition: background .15s ease, transform .05s ease;
+    }
+    button:hover  { background: #2c3344; }
+    button:active { transform: translateY(1px); }
+    button[disabled] { opacity: .5; cursor: not-allowed; }
+    button.primary  { background: var(--accent); border-color: var(--accent); }
+    button.primary:hover { background: var(--accent-2); }
+    button.danger   { background: var(--danger); border-color: var(--danger); }
+    button.danger:hover { background: var(--danger-2); }
+    button.ghost    { background: transparent; }
+
+    input[type=text] {
+      font: inherit; color: var(--text); background: var(--bg-2);
+      border: 1px solid var(--line); border-radius: 8px;
+      padding: .6em .8em; width: 100%;
+    }
+    input[type=text]:focus { outline: 2px solid var(--accent); }
+
+    select {
+      font: inherit; color: var(--text); background: var(--bg-2);
+      border: 1px solid var(--line); border-radius: 8px;
+      padding: .55em .6em; width: 100%;
+    }
+
+    /* ============================== Lobby ============================== */
+    #app { width: 100%; height: 100%; display: flex; }
+
+    .lobby {
+      width: 100%; height: 100%;
+      display: grid; place-items: center;
+      background: radial-gradient(1200px 600px at 50% 0%,
+                  #16203a 0%, var(--bg-0) 60%);
+    }
+    .lobby-card {
+      width: min(960px, 96vw);
+      display: grid; grid-template-columns: 1.4fr 1fr; gap: 24px;
+      background: var(--bg-1);
+      border: 1px solid var(--line);
+      border-radius: 16px; padding: 24px;
+      box-shadow: var(--shadow);
+    }
+    @media (max-width: 760px) {
+      .lobby-card { grid-template-columns: 1fr; }
+    }
+    .preview {
+      position: relative;
+      aspect-ratio: 16/9;
+      background: var(--tile-bg);
+      border-radius: 12px; overflow: hidden;
+      display: grid; place-items: center;
+    }
+    .preview video {
+      width: 100%; height: 100%; object-fit: cover;
+      transform: scaleX(-1); /* mirror like Meet */
+    }
+    .preview .placeholder {
+      color: var(--muted); font-size: 14px;
+    }
+    .preview .preview-tools {
+      position: absolute; bottom: 12px; left: 0; right: 0;
+      display: flex; gap: 12px; justify-content: center;
+    }
+    .preview-tools .icon-btn {
+      width: 44px; height: 44px; border-radius: 50%;
+      display: grid; place-items: center;
+      background: rgba(0,0,0,.55); backdrop-filter: blur(6px);
+      border: 1px solid rgba(255,255,255,.15);
+    }
+    .preview-tools .icon-btn.off { background: var(--danger); border-color: var(--danger); }
+
+    .lobby-form { display: flex; flex-direction: column; gap: 14px; }
+    .lobby-form h1 { margin: 0 0 4px; font-size: 22px; font-weight: 600; }
+    .lobby-form .sub { color: var(--muted); margin-top: -8px; }
+    .lobby-form label {
+      font-size: 12px; color: var(--muted);
+      text-transform: uppercase; letter-spacing: .04em;
+    }
+    .lobby-form .field { display: flex; flex-direction: column; gap: 4px; }
+    .lobby-form .row { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+    .lobby-form .actions { display: flex; gap: 10px; margin-top: 6px; }
+    .lobby-form .actions .primary { flex: 1; padding: .8em; font-weight: 600; }
+
+    /* ============================== Meeting ============================== */
+    .meeting {
+      width: 100%; height: 100%;
+      display: grid; grid-template-rows: 56px 1fr 72px;
+      background: var(--bg-0);
+    }
+
+    .topbar {
+      display: flex; align-items: center; gap: 16px;
+      padding: 0 16px;
+      background: var(--bg-1); border-bottom: 1px solid var(--line);
+    }
+    .topbar .logo {
+      font-weight: 700; letter-spacing: .02em; font-size: 15px;
+    }
+    .topbar .room {
+      display: flex; align-items: center; gap: 8px;
+      color: var(--muted);
+    }
+    .topbar .room code {
+      color: var(--text); background: var(--bg-2);
+      padding: 4px 8px; border-radius: 6px; font-size: 12px;
+    }
+    .topbar .spacer { flex: 1; }
+    .topbar .clock { color: var(--muted); font-variant-numeric: tabular-nums; }
+    .topbar .status {
+      display: flex; align-items: center; gap: 6px;
+      color: var(--muted); font-size: 12px;
+    }
+    .topbar .status .dot {
+      width: 8px; height: 8px; border-radius: 50%;
+      background: var(--warn); transition: background .2s;
+    }
+    .topbar .status.ok  .dot { background: var(--good); }
+    .topbar .status.bad .dot { background: var(--danger); }
+
+    .stage {
+      display: grid;
+      grid-template-columns: 1fr;
+      overflow: hidden;
+    }
+    .stage.with-panel { grid-template-columns: 1fr 320px; }
+
+    .grid {
+      padding: 12px;
+      display: grid; gap: 10px;
+      align-content: stretch; justify-content: stretch;
+      overflow: hidden;
+    }
+    .grid[data-count="1"]                  { grid-template-columns: 1fr; }
+    .grid[data-count="2"]                  { grid-template-columns: 1fr 1fr; }
+    .grid[data-count="3"],
+    .grid[data-count="4"]                  { grid-template-columns: 1fr 1fr; grid-auto-rows: 1fr; }
+    .grid[data-count="5"],
+    .grid[data-count="6"]                  { grid-template-columns: repeat(3, 1fr); grid-auto-rows: 1fr; }
+    .grid[data-count="7"],
+    .grid[data-count="8"],
+    .grid[data-count="9"]                  { grid-template-columns: repeat(3, 1fr); grid-auto-rows: 1fr; }
+    .grid[data-count="10"],
+    .grid[data-count="11"],
+    .grid[data-count="12"],
+    .grid[data-count="13"],
+    .grid[data-count="14"],
+    .grid[data-count="15"],
+    .grid[data-count="16"]                 { grid-template-columns: repeat(4, 1fr); grid-auto-rows: 1fr; }
+
+    .tile {
+      position: relative;
+      background: var(--tile-bg);
+      border-radius: 12px; overflow: hidden;
+      display: grid; place-items: center;
+      min-height: 0; min-width: 0;
+    }
+    .tile video {
+      width: 100%; height: 100%; object-fit: cover;
+      background: var(--tile-bg);
+    }
+    .tile.self video { transform: scaleX(-1); }
+    .tile .avatar {
+      width: 96px; height: 96px; border-radius: 50%;
+      display: grid; place-items: center;
+      font-size: 36px; font-weight: 600; color: #fff;
+      background: linear-gradient(135deg, #5b8def, #8e5bef);
+      letter-spacing: .02em;
+    }
+    .tile .label {
+      position: absolute; left: 10px; bottom: 10px;
+      display: flex; align-items: center; gap: 6px;
+      padding: 4px 10px; border-radius: 999px;
+      background: rgba(0,0,0,.55); backdrop-filter: blur(6px);
+      font-size: 12px; max-width: calc(100% - 20px);
+      white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+    }
+    .tile .label .mic-off {
+      width: 14px; height: 14px;
+      display: inline-grid; place-items: center;
+      background: var(--danger); border-radius: 50%;
+    }
+    .tile .label .mic-off svg { width: 9px; height: 9px; }
+    .tile .pin {
+      position: absolute; right: 10px; top: 10px;
+      padding: 4px 8px; border-radius: 999px;
+      background: rgba(0,0,0,.55); font-size: 11px; color: var(--muted);
+      opacity: 0; transition: opacity .15s;
+    }
+    .tile:hover .pin { opacity: 1; }
+    .tile .hud {
+      position: absolute; right: 10px; bottom: 10px;
+      padding: 4px 8px; border-radius: 6px;
+      background: rgba(0,0,0,.7); color: #9bd1ff;
+      font: 11px/1.3 ui-monospace, Menlo, Consolas, monospace;
+      max-width: 60%; pointer-events: none;
+      white-space: pre;
+    }
+    .tile .hud.bad   { color: #ffb4a2; }
+    .tile .hud.warn  { color: #fbbc04; }
+    .tile .hud.good  { color: #b8f5c4; }
+
+    /* ----- side panel (participants) ----- */
+    .panel {
+      background: var(--bg-1); border-left: 1px solid var(--line);
+      display: flex; flex-direction: column; overflow: hidden;
+    }
+    .panel header {
+      padding: 12px 16px; border-bottom: 1px solid var(--line);
+      display: flex; align-items: center; gap: 8px;
+    }
+    .panel header h3 { margin: 0; font-size: 14px; font-weight: 600; }
+    .panel header .count { color: var(--muted); font-size: 12px; }
+    .panel header .close {
+      margin-left: auto; background: transparent; border: 0; color: var(--muted);
+    }
+    .panel .list { overflow-y: auto; padding: 8px; }
+    .panel .item {
+      display: flex; align-items: center; gap: 10px;
+      padding: 8px 10px; border-radius: 8px;
+    }
+    .panel .item:hover { background: var(--bg-2); }
+    .panel .item .avatar-sm {
+      width: 32px; height: 32px; border-radius: 50%;
+      display: grid; place-items: center;
+      font-size: 13px; font-weight: 600;
+      background: linear-gradient(135deg, #5b8def, #8e5bef);
+      flex: 0 0 32px;
+    }
+    .panel .item .name { flex: 1; min-width: 0;
+      white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .panel .item .me { color: var(--muted); font-size: 11px; }
+    .panel .item .mic-off-i { color: var(--danger); }
+
+    /* ============================== Toolbar ============================== */
+    .toolbar {
+      display: flex; align-items: center; gap: 10px;
+      padding: 0 16px;
+      background: var(--bg-1); border-top: 1px solid var(--line);
+    }
+    .toolbar .left, .toolbar .right {
+      display: flex; align-items: center; gap: 10px; min-width: 200px;
+    }
+    .toolbar .center {
+      flex: 1; display: flex; align-items: center; justify-content: center; gap: 10px;
+    }
+    .toolbar .right { justify-content: flex-end; }
+
+    .ctrl {
+      width: 48px; height: 48px; border-radius: 999px;
+      display: grid; place-items: center;
+      background: var(--bg-3); border: 1px solid var(--line);
+      color: var(--text);
+    }
+    .ctrl:hover { background: #2c3344; }
+    .ctrl.off  { background: var(--danger); border-color: var(--danger); color: #fff; }
+    .ctrl.leave{ width: auto; padding: 0 18px;
+                 background: var(--danger); border-color: var(--danger); color: #fff;
+                 font-weight: 600; }
+    .ctrl.leave:hover { background: var(--danger-2); }
+    .ctrl svg { width: 22px; height: 22px; }
+
+    .toolbar .meta {
+      color: var(--muted); font-size: 12px; padding-left: 6px;
+      white-space: nowrap;
+    }
+
+    /* ============================== Toasts ============================== */
+    .toasts {
+      position: fixed; left: 50%; bottom: 90px; transform: translateX(-50%);
+      display: flex; flex-direction: column; gap: 8px;
+      z-index: 50; pointer-events: none;
+    }
+    .toast {
+      background: rgba(0,0,0,.7); color: #fff;
+      padding: 8px 14px; border-radius: 999px; font-size: 13px;
+      backdrop-filter: blur(8px);
+      animation: pop .25s ease;
+    }
+    @keyframes pop {
+      from { opacity: 0; transform: translateY(8px); }
+      to   { opacity: 1; transform: translateY(0); }
+    }
+
+    /* ============================== Misc ============================== */
+    .hidden { display: none !important; }
+
+    /* Visually-hidden for screen readers only */
+    .sr { position: absolute; width: 1px; height: 1px; padding: 0;
+          margin: -1px; overflow: hidden; clip: rect(0,0,0,0);
+          white-space: nowrap; border: 0; }
+  </style>
+</head>
+<body>
+  <div id="app">
+    <!-- =================== LOBBY =================== -->
+    <section id="lobby" class="lobby">
+      <div class="lobby-card">
+        <div class="preview" id="preview">
+          <div class="placeholder" id="previewPlaceholder">
+            Camera off
+          </div>
+          <video id="previewVideo" autoplay playsinline muted class="hidden"></video>
+          <div class="preview-tools">
+            <button id="lobbyMic" class="icon-btn" title="Toggle microphone" aria-label="Toggle microphone">
+              <svg viewBox="0 0 24 24" width="20" height="20" fill="currentColor"><path d="M12 14a3 3 0 0 0 3-3V6a3 3 0 0 0-6 0v5a3 3 0 0 0 3 3zm5-3a5 5 0 0 1-10 0H5a7 7 0 0 0 6 6.92V21h2v-3.08A7 7 0 0 0 19 11h-2z"/></svg>
+            </button>
+            <button id="lobbyCam" class="icon-btn" title="Toggle camera" aria-label="Toggle camera">
+              <svg viewBox="0 0 24 24" width="20" height="20" fill="currentColor"><path d="M17 10.5V7a1 1 0 0 0-1-1H4a1 1 0 0 0-1 1v10a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1v-3.5l4 4v-11l-4 4z"/></svg>
+            </button>
+          </div>
+        </div>
+
+        <form class="lobby-form" id="lobbyForm" onsubmit="return false;">
+          <div>
+            <h1>Ready to join?</h1>
+            <div class="sub">Pure Dart SFU video meeting</div>
+          </div>
+
+          <div class="field">
+            <label for="displayName">Your name</label>
+            <input type="text" id="displayName" autocomplete="name" placeholder="e.g. Ada Lovelace">
+          </div>
+
+          <div class="row">
+            <div class="field">
+              <label for="roomId">Room</label>
+              <input type="text" id="roomId" placeholder="meeting-room">
+            </div>
+            <div class="field">
+              <label for="serverUrl">Server</label>
+              <input type="text" id="serverUrl" placeholder="ws://host:9091">
+            </div>
+          </div>
+
+          <div class="row">
+            <div class="field">
+              <label for="micSelect">Microphone</label>
+              <select id="micSelect"></select>
+            </div>
+            <div class="field">
+              <label for="camSelect">Camera</label>
+              <select id="camSelect"></select>
+            </div>
+          </div>
+
+          <div class="actions">
+            <button type="button" id="joinBtn" class="primary">Join now</button>
+          </div>
+          <div id="lobbyError" class="sub" style="color:var(--danger); min-height:1em;"></div>
+        </form>
+      </div>
+    </section>
+
+    <!-- =================== MEETING =================== -->
+    <section id="meeting" class="meeting hidden" aria-hidden="true">
+      <header class="topbar">
+        <div class="logo">Pure Dart Meet</div>
+        <div class="room">
+          <span>Room</span>
+          <code id="roomLabel">—</code>
+          <button class="ghost" id="copyLink" title="Copy invite link"
+                  style="padding:4px 8px; font-size:12px;">Copy link</button>
+        </div>
+        <div class="spacer"></div>
+        <div class="status" id="connStatus" title="Connection status">
+          <span class="dot"></span><span id="connStatusText">connecting…</span>
+        </div>
+        <div class="clock" id="clock">--:--</div>
+      </header>
+
+      <div class="stage" id="stage">
+        <div class="grid" id="grid" data-count="1"></div>
+        <aside class="panel hidden" id="panel" aria-label="Participants">
+          <header>
+            <h3>Participants</h3>
+            <span class="count" id="panelCount">0</span>
+            <button class="close" id="panelClose" aria-label="Close panel">✕</button>
+          </header>
+          <div class="list" id="panelList"></div>
+        </aside>
+      </div>
+
+      <div class="toolbar">
+        <div class="left">
+          <span class="meta" id="meterLabel">SFU stats: —</span>
+        </div>
+        <div class="center">
+          <button class="ctrl" id="micBtn" title="Mute (m)" aria-label="Toggle microphone">
+            <svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 14a3 3 0 0 0 3-3V6a3 3 0 0 0-6 0v5a3 3 0 0 0 3 3zm5-3a5 5 0 0 1-10 0H5a7 7 0 0 0 6 6.92V21h2v-3.08A7 7 0 0 0 19 11h-2z"/></svg>
+          </button>
+          <button class="ctrl" id="camBtn" title="Camera (v)" aria-label="Toggle camera">
+            <svg viewBox="0 0 24 24" fill="currentColor"><path d="M17 10.5V7a1 1 0 0 0-1-1H4a1 1 0 0 0-1 1v10a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1v-3.5l4 4v-11l-4 4z"/></svg>
+          </button>
+          <button class="ctrl" id="shareBtn" title="Share screen (s)" aria-label="Share screen">
+            <svg viewBox="0 0 24 24" fill="currentColor"><path d="M20 18c1.1 0 2-.9 2-2V6c0-1.1-.9-2-2-2H4c-1.1 0-2 .9-2 2v10c0 1.1.9 2 2 2H0v2h24v-2h-4zM4 6h16v10H4V6zm8 1.5l-4 4h2.5V15h3v-3.5H16l-4-4z"/></svg>
+          </button>
+          <button class="ctrl leave" id="leaveBtn" title="Leave call">Leave</button>
+        </div>
+        <div class="right">
+          <button class="ctrl" id="panelBtn" title="Participants (p)" aria-label="Toggle participants">
+            <svg viewBox="0 0 24 24" fill="currentColor"><path d="M16 11c1.66 0 2.99-1.34 2.99-3S17.66 5 16 5c-1.66 0-3 1.34-3 3s1.34 3 3 3zm-8 0c1.66 0 2.99-1.34 2.99-3S9.66 5 8 5C6.34 5 5 6.34 5 8s1.34 3 3 3zm0 2c-2.33 0-7 1.17-7 3.5V19h14v-2.5c0-2.33-4.67-3.5-7-3.5zm8 0c-.29 0-.62.02-.97.05 1.16.84 1.97 1.97 1.97 3.45V19h6v-2.5c0-2.33-4.67-3.5-7-3.5z"/></svg>
+          </button>
+        </div>
+      </div>
+    </section>
+
+    <div class="toasts" id="toasts" aria-live="polite"></div>
+  </div>
+
+<script>
+'use strict';
+
+/* =========================================================================
+ * Pure Dart Meet — minimal Google-Meet-shaped client for the ion-style SFU.
+ *
+ * Signaling protocol (one JSON object per WebSocket TEXT frame):
+ *   c->s  {type:"join",   sid, uid}
+ *   c->s  {type:"offer",  target:"pub", sdp}
+ *   s->c  {type:"answer", target:"pub", sdp}
+ *   s->c  {type:"offer",  target:"sub", sdp}
+ *   c->s  {type:"answer", target:"sub", sdp}
+ *   both  {type:"trickle", target:"pub|sub", candidate, sdpMid, sdpMLineIndex}
+ *   c->s  {type:"leave"}
+ *   s->c  {type:"peer-joined"|"peer-left", uid}
+ *   s->c  {type:"joined", uid, sid}
+ * =======================================================================*/
+
+const $  = (sel) => document.querySelector(sel);
+const $$ = (sel) => Array.from(document.querySelectorAll(sel));
+
+const els = {
+  lobby:        $('#lobby'),
+  meeting:      $('#meeting'),
+  preview:      $('#preview'),
+  previewVideo: $('#previewVideo'),
+  previewPlaceholder: $('#previewPlaceholder'),
+  lobbyMic:     $('#lobbyMic'),
+  lobbyCam:     $('#lobbyCam'),
+  displayName:  $('#displayName'),
+  roomId:       $('#roomId'),
+  serverUrl:    $('#serverUrl'),
+  micSelect:    $('#micSelect'),
+  camSelect:    $('#camSelect'),
+  joinBtn:      $('#joinBtn'),
+  lobbyError:   $('#lobbyError'),
+  roomLabel:    $('#roomLabel'),
+  copyLink:     $('#copyLink'),
+  connStatus:   $('#connStatus'),
+  connStatusText: $('#connStatusText'),
+  clock:        $('#clock'),
+  grid:         $('#grid'),
+  stage:        $('#stage'),
+  panel:        $('#panel'),
+  panelList:    $('#panelList'),
+  panelCount:   $('#panelCount'),
+  panelClose:   $('#panelClose'),
+  panelBtn:     $('#panelBtn'),
+  micBtn:       $('#micBtn'),
+  camBtn:       $('#camBtn'),
+  shareBtn:     $('#shareBtn'),
+  leaveBtn:     $('#leaveBtn'),
+  meterLabel:   $('#meterLabel'),
+  toasts:       $('#toasts'),
+};
+
+const state = {
+  // user-visible
+  displayName: 'Me',
+  uid: '',
+  sid: '',
+  serverUrl: '',
+
+  // lobby capture
+  lobbyStream: null,
+  micOn: true,
+  camOn: true,
+
+  // call
+  ws: null,
+  pubPc: null,
+  subPc: null,
+  localStream: null,
+  micTrack: null,
+  camTrack: null,
+  screenStream: null,
+  pendingPubCands: [],
+  pendingSubCands: [],
+
+  // tiles
+  tiles: new Map(),         // tileId ('self' or stream.id) -> {wrap, video, label}
+  remoteStreams: new Map(), // stream.id -> MediaStream
+  participants: new Map(),  // uid -> {name}
+  pubIce: 'new', subIce: 'new',
+};
+
+/* ========================== utils ========================== */
+
+function rand(n) {
+  return Math.random().toString(36).slice(2, 2 + n);
+}
+function initials(name) {
+  return (name || 'You').trim().split(/\s+/)
+    .slice(0, 2).map(s => s[0] || '').join('').toUpperCase() || 'Y';
+}
+function toast(msg, ms = 2400) {
+  const el = document.createElement('div');
+  el.className = 'toast';
+  el.textContent = msg;
+  els.toasts.appendChild(el);
+  setTimeout(() => el.remove(), ms);
+}
+function setStatus(kind, text) {
+  els.connStatus.classList.remove('ok', 'bad');
+  if (kind === 'ok')  els.connStatus.classList.add('ok');
+  if (kind === 'bad') els.connStatus.classList.add('bad');
+  els.connStatusText.textContent = text;
+}
+
+/* ========================== lobby ========================== */
+
+function readQuery() {
+  const q = new URLSearchParams(location.search);
+  const wsScheme = location.protocol === 'https:' ? 'wss:' : 'ws:';
+  els.serverUrl.value = q.get('server')
+    || `${wsScheme}//${location.hostname}:9091`;
+  els.roomId.value   = q.get('sid') || 'meeting-' + rand(4);
+  els.displayName.value = q.get('name') || '';
+  // We do NOT default uid from query: identity is per-tab to avoid the
+  // "two tabs, same uid" overwrite bug at the SFU.
+}
+
+async function listDevices() {
+  // Need a stream first to unlock device labels on most browsers.
+  let stream = null;
+  try {
+    stream = await navigator.mediaDevices.getUserMedia({ audio: true, video: true });
+  } catch (e) {
+    showLobbyError(e.message || String(e));
+    return;
+  }
+  state.lobbyStream = stream;
+  els.previewVideo.srcObject = stream;
+  els.previewVideo.classList.remove('hidden');
+  els.previewPlaceholder.classList.add('hidden');
+
+  const devs = await navigator.mediaDevices.enumerateDevices();
+  fillSelect(els.micSelect, devs.filter(d => d.kind === 'audioinput'));
+  fillSelect(els.camSelect, devs.filter(d => d.kind === 'videoinput'));
+}
+function fillSelect(sel, devs) {
+  sel.innerHTML = '';
+  for (const d of devs) {
+    const o = document.createElement('option');
+    o.value = d.deviceId;
+    o.textContent = d.label || `${d.kind} (${d.deviceId.slice(0, 6)}…)`;
+    sel.appendChild(o);
+  }
+  if (!devs.length) {
+    const o = document.createElement('option');
+    o.textContent = 'No device available';
+    sel.appendChild(o);
+    sel.disabled = true;
+  }
+}
+function applyTrackEnabled(stream, kind, on) {
+  for (const t of stream.getTracks()) {
+    if (t.kind === kind) t.enabled = on;
+  }
+}
+function showLobbyError(msg) {
+  els.lobbyError.textContent = msg;
+}
+
+els.lobbyMic.addEventListener('click', () => {
+  state.micOn = !state.micOn;
+  els.lobbyMic.classList.toggle('off', !state.micOn);
+  if (state.lobbyStream) applyTrackEnabled(state.lobbyStream, 'audio', state.micOn);
+});
+els.lobbyCam.addEventListener('click', () => {
+  state.camOn = !state.camOn;
+  els.lobbyCam.classList.toggle('off', !state.camOn);
+  if (state.lobbyStream) applyTrackEnabled(state.lobbyStream, 'video', state.camOn);
+  if (!state.camOn) {
+    els.previewVideo.classList.add('hidden');
+    els.previewPlaceholder.classList.remove('hidden');
+  } else {
+    els.previewVideo.classList.remove('hidden');
+    els.previewPlaceholder.classList.add('hidden');
+  }
+});
+
+els.joinBtn.addEventListener('click', join);
+els.displayName.addEventListener('keydown', (e) => {
+  if (e.key === 'Enter') join();
+});
+
+/* ========================== media ========================== */
+
+async function captureLocal() {
+  const audio = state.micOn ? { deviceId: els.micSelect.value || undefined } : false;
+  const video = state.camOn ? { deviceId: els.camSelect.value || undefined,
+                                width: { ideal: 1280 }, height: { ideal: 720 } } : false;
+  if (!audio && !video) {
+    // Both off — still need an empty publisher to negotiate, so capture
+    // audio muted at least.
+    const s = await navigator.mediaDevices.getUserMedia({ audio: true });
+    s.getAudioTracks().forEach(t => t.enabled = false);
+    return s;
+  }
+  return navigator.mediaDevices.getUserMedia({ audio, video });
+}
+
+/* ========================== signaling / RTC ========================== */
+
+async function join() {
+  els.joinBtn.disabled = true;
+  showLobbyError('');
+  state.displayName = (els.displayName.value || '').trim() || 'You';
+  state.sid = (els.roomId.value   || '').trim() || 'meeting-' + rand(4);
+  state.serverUrl = (els.serverUrl.value || '').trim();
+  // Per-tab uid: short random suffix + display-name slug. This avoids
+  // the SFU's silent-overwrite when two tabs share a uid in one session.
+  const slug = state.displayName.toLowerCase().replace(/[^a-z0-9]+/g, '-')
+                .replace(/^-|-$/g, '').slice(0, 16) || 'peer';
+  state.uid  = `${slug}-${rand(5)}`;
+
+  try {
+    if (!state.lobbyStream) state.lobbyStream = await captureLocal();
+    state.localStream = state.lobbyStream;
+    state.lobbyStream = null;
+    applyTrackEnabled(state.localStream, 'audio', state.micOn);
+    applyTrackEnabled(state.localStream, 'video', state.camOn);
+    state.micTrack = state.localStream.getAudioTracks()[0] || null;
+    state.camTrack = state.localStream.getVideoTracks()[0] || null;
+
+    enterMeeting();
+    await openSignaling();
+  } catch (e) {
+    showLobbyError(e.message || String(e));
+    els.joinBtn.disabled = false;
+  }
+}
+
+function enterMeeting() {
+  els.lobby.classList.add('hidden');
+  els.meeting.classList.remove('hidden');
+  els.meeting.setAttribute('aria-hidden', 'false');
+  els.roomLabel.textContent = state.sid;
+  startClock();
+  addLocalTile();
+  refreshGrid();
+  syncToolbarUI();
+  participantsAdd(state.uid, state.displayName + ' (you)');
+}
+
+async function openSignaling() {
+  const url = `${state.serverUrl}/ws/${encodeURIComponent(state.sid)}`;
+  setStatus('warn', 'connecting…');
+  const ws = new WebSocket(url);
+  state.ws = ws;
+
+  ws.addEventListener('open', () => {
+    setStatus('ok', 'connected');
+    ws.send(JSON.stringify({ type: 'join', sid: state.sid, uid: state.uid }));
+    setupPubPc();
+    setupSubPc();
+  });
+  ws.addEventListener('close', () => {
+    setStatus('bad', 'disconnected');
+    toast('Disconnected from server');
+  });
+  ws.addEventListener('error', () => {
+    setStatus('bad', 'error');
+  });
+  ws.addEventListener('message', onSignal);
+}
+
+function setupPubPc() {
+  const pc = new RTCPeerConnection();
+  state.pubPc = pc;
+  for (const t of state.localStream.getTracks()) pc.addTrack(t, state.localStream);
+  pc.onicecandidate = (e) => {
+    if (!e.candidate) return;
+    sendWs({ type: 'trickle', target: 'pub',
+             candidate: e.candidate.candidate,
+             sdpMid: e.candidate.sdpMid,
+             sdpMLineIndex: e.candidate.sdpMLineIndex });
+  };
+  pc.oniceconnectionstatechange = () => {
+    state.pubIce = pc.iceConnectionState;
+    refreshConnStatus();
+  };
+}
+function setupSubPc() {
+  const pc = new RTCPeerConnection();
+  state.subPc = pc;
+  pc.ontrack = (e) => {
+    const stream = e.streams[0];
+    const track  = e.track;
+    if (!stream || !track) return;
+    if (!state.remoteStreams.has(stream.id)) {
+      state.remoteStreams.set(stream.id, stream);
+      // Watch for late-arriving tracks (audio came first, video second
+      // in a separate negotiation step) and for full-stream teardown.
+      stream.addEventListener('addtrack', () => {
+        attachRemoteStream(stream);
+      });
+      stream.addEventListener('removetrack', () => {
+        if (stream.getTracks().length === 0) {
+          removeTile(stream.id);
+          state.remoteStreams.delete(stream.id);
+          refreshGrid();
+        } else {
+          attachRemoteStream(stream);
+        }
+      });
+    }
+    addRemoteTile(stream);
+    // Some browsers won't fire `addtrack` on the stream object when the
+    // peer connection delivers tracks one at a time on the same stream
+    // — re-attach unconditionally on every `ontrack` so the <video>
+    // sees both audio and video.
+    attachRemoteStream(stream);
+  };
+  pc.onicecandidate = (e) => {
+    if (!e.candidate) return;
+    sendWs({ type: 'trickle', target: 'sub',
+             candidate: e.candidate.candidate,
+             sdpMid: e.candidate.sdpMid,
+             sdpMLineIndex: e.candidate.sdpMLineIndex });
+  };
+  pc.oniceconnectionstatechange = () => {
+    state.subIce = pc.iceConnectionState;
+    refreshConnStatus();
+  };
+}
+
+async function onSignal(ev) {
+  let msg;
+  try { msg = JSON.parse(ev.data); } catch (_) { return; }
+  switch (msg.type) {
+    case 'joined': {
+      // Server accepted us. Time to publish.
+      const offer = await state.pubPc.createOffer();
+      await state.pubPc.setLocalDescription(offer);
+      sendWs({ type: 'offer', target: 'pub', sdp: offer.sdp });
+      break;
+    }
+    case 'answer': {
+      if (msg.target === 'pub' && state.pubPc) {
+        await state.pubPc.setRemoteDescription({ type: 'answer', sdp: msg.sdp });
+        await drainPending(state.pubPc, state.pendingPubCands);
+      }
+      break;
+    }
+    case 'offer': {
+      if (msg.target === 'sub' && state.subPc) {
+        await state.subPc.setRemoteDescription({ type: 'offer', sdp: msg.sdp });
+        const ans = await state.subPc.createAnswer();
+        await state.subPc.setLocalDescription(ans);
+        sendWs({ type: 'answer', target: 'sub', sdp: ans.sdp });
+        await drainPending(state.subPc, state.pendingSubCands);
+      }
+      break;
+    }
+    case 'trickle': {
+      const c = { candidate: msg.candidate, sdpMid: msg.sdpMid,
+                  sdpMLineIndex: msg.sdpMLineIndex };
+      const pc = msg.target === 'pub' ? state.pubPc : state.subPc;
+      const pending = msg.target === 'pub'
+        ? state.pendingPubCands : state.pendingSubCands;
+      if (!pc || !pc.remoteDescription || !pc.remoteDescription.type) {
+        pending.push(c);
+      } else {
+        try { await pc.addIceCandidate(c); } catch (e) { console.warn('addIce', e); }
+      }
+      break;
+    }
+    case 'peer-joined':
+      participantsAdd(msg.uid, msg.uid);
+      toast(`${msg.uid} joined`);
+      break;
+    case 'peer-left':
+      participantsRemove(msg.uid);
+      toast(`${msg.uid} left`);
+      break;
+    case 'error':
+      toast(`Error: ${msg.reason || 'unknown'}`);
+      break;
+  }
+}
+
+async function drainPending(pc, queue) {
+  while (queue.length) {
+    const c = queue.shift();
+    try { await pc.addIceCandidate(c); } catch (e) { console.warn('drain addIce', e); }
+  }
+}
+function sendWs(obj) {
+  const ws = state.ws;
+  if (ws && ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify(obj));
+}
+
+/* ========================== tile management ========================== */
+
+function makeTile(id, opts) {
+  const wrap = document.createElement('div');
+  wrap.className = 'tile' + (opts.self ? ' self' : '');
+  wrap.dataset.id = id;
+
+  const video = document.createElement('video');
+  video.autoplay = true; video.playsInline = true;
+  if (opts.self) video.muted = true;
+  wrap.appendChild(video);
+
+  const avatar = document.createElement('div');
+  avatar.className = 'avatar hidden';
+  avatar.textContent = initials(opts.label);
+  wrap.appendChild(avatar);
+
+  const label = document.createElement('div');
+  label.className = 'label';
+  const name = document.createElement('span');
+  name.textContent = opts.label;
+  label.appendChild(name);
+  wrap.appendChild(label);
+
+  const hud = document.createElement('div');
+  hud.className = 'hud';
+  hud.textContent = opts.self ? '' : 'waiting…';
+  if (opts.self) hud.style.display = 'none';
+  wrap.appendChild(hud);
+
+  els.grid.appendChild(wrap);
+  state.tiles.set(id, { wrap, video, avatar, label, name, hud,
+                       lastBytes: 0, lastFrames: 0, lastTs: 0 });
+  return state.tiles.get(id);
+}
+function addLocalTile() {
+  const t = makeTile('self', { self: true, label: state.displayName + ' (you)' });
+  t.video.srcObject = state.localStream;
+  updateTileVideoVisibility('self', state.camOn);
+}
+function addRemoteTile(stream) {
+  const id = stream.id;
+  let t = state.tiles.get(id);
+  if (!t) t = makeTile(id, { self: false, label: 'Participant' });
+  refreshGrid();
+  return t;
+}
+
+// Bind `stream` to the tile's <video> in a way that's friendly to
+// Chrome's autoplay policy and to two-step ontrack delivery.
+function attachRemoteStream(stream) {
+  const t = state.tiles.get(stream.id);
+  if (!t) return;
+  // Re-assign srcObject only when it changed: re-setting the same
+  // MediaStream can reset playback in some Chromium builds.
+  if (t.video.srcObject !== stream) t.video.srcObject = stream;
+  // Show the <video> whenever there's any video track at all. We
+  // intentionally do NOT use track.muted here — on Chrome receivers
+  // it flaps spuriously even while frames are decoding, and once it
+  // flips true we'd never re-show the element.
+  const hasVideo = stream.getVideoTracks().length > 0;
+  updateTileVideoVisibility(stream.id, hasVideo);
+  // Kick playback. Chrome auto-blocks unmuted media that wasn't
+  // initiated by a user gesture; surface the failure as an overlay
+  // the user can click to unblock.
+  const p = t.video.play();
+  if (p && typeof p.then === 'function') {
+    p.catch((err) => {
+      console.warn('autoplay blocked for', stream.id, err && err.name);
+      showPlayOverlay(t);
+    });
+  }
+}
+
+// Single global "Click anywhere to enable audio/video" affordance shown
+// the first time autoplay is denied. Clicking it calls .play() on every
+// remote <video>.
+function showPlayOverlay(_tile) {
+  if (document.getElementById('playOverlay')) return;
+  const ov = document.createElement('button');
+  ov.id = 'playOverlay';
+  ov.textContent = 'Click to enable remote video & audio';
+  ov.style.cssText =
+    'position:fixed; left:50%; top:50%; transform:translate(-50%,-50%);' +
+    'z-index:60; padding:14px 22px; font-size:15px; font-weight:600;' +
+    'background:var(--accent); color:#fff; border:0; border-radius:999px;' +
+    'box-shadow:0 8px 32px rgba(0,0,0,.5); cursor:pointer;';
+  ov.addEventListener('click', () => {
+    for (const t of state.tiles.values()) {
+      try { t.video.play(); } catch (_) {}
+    }
+    ov.remove();
+  });
+  document.body.appendChild(ov);
+}
+function removeTile(id) {
+  const t = state.tiles.get(id);
+  if (!t) return;
+  t.wrap.remove();
+  state.tiles.delete(id);
+}
+function updateTileVideoVisibility(id, hasVideo) {
+  const t = state.tiles.get(id);
+  if (!t) return;
+  t.video.classList.toggle('hidden', !hasVideo);
+  t.avatar.classList.toggle('hidden', hasVideo);
+}
+function setTileMicOff(id, off) {
+  const t = state.tiles.get(id);
+  if (!t) return;
+  let icon = t.label.querySelector('.mic-off');
+  if (off && !icon) {
+    icon = document.createElement('span');
+    icon.className = 'mic-off';
+    icon.innerHTML = '<svg viewBox="0 0 24 24" fill="#fff"><path d="M19 11h-1.7c0 .74-.16 1.43-.43 2.05l1.23 1.23c.56-.98.9-2.09.9-3.28zM4.27 3L3 4.27l6.01 6.01V11c0 1.66 1.33 3 2.99 3 .22 0 .44-.03.65-.08l1.66 1.66c-.71.33-1.5.52-2.31.52-2.76 0-5.3-2.1-5.3-5.1H5c0 3.41 2.72 6.23 6 6.72V21h2v-3.28c.91-.13 1.77-.45 2.55-.9L19.73 21 21 19.73 4.27 3z"/></svg>';
+    t.label.appendChild(icon);
+  } else if (!off && icon) {
+    icon.remove();
+  }
+}
+
+function refreshGrid() {
+  const n = state.tiles.size;
+  els.grid.dataset.count = String(Math.min(n, 16));
+}
+
+/* ========================== participants panel ========================== */
+
+function participantsAdd(uid, name) {
+  if (state.participants.has(uid)) return;
+  state.participants.set(uid, { name });
+  renderPanel();
+}
+function participantsRemove(uid) {
+  if (!state.participants.delete(uid)) return;
+  renderPanel();
+}
+function renderPanel() {
+  els.panelCount.textContent = String(state.participants.size);
+  els.panelList.innerHTML = '';
+  for (const [uid, p] of state.participants) {
+    const row = document.createElement('div');
+    row.className = 'item';
+    const av = document.createElement('div');
+    av.className = 'avatar-sm';
+    av.textContent = initials(p.name);
+    const nm = document.createElement('div');
+    nm.className = 'name';
+    nm.textContent = p.name;
+    row.appendChild(av);
+    row.appendChild(nm);
+    if (uid === state.uid) {
+      const me = document.createElement('span');
+      me.className = 'me';
+      me.textContent = 'you';
+      row.appendChild(me);
+    }
+    els.panelList.appendChild(row);
+  }
+}
+els.panelBtn.addEventListener('click', () => togglePanel());
+els.panelClose.addEventListener('click', () => togglePanel(false));
+function togglePanel(force) {
+  const show = (force === undefined) ? els.panel.classList.contains('hidden') : force;
+  els.panel.classList.toggle('hidden', !show);
+  els.stage.classList.toggle('with-panel', show);
+}
+
+/* ========================== toolbar ========================== */
+
+els.micBtn.addEventListener('click', () => setMic(!state.micOn));
+els.camBtn.addEventListener('click', () => setCam(!state.camOn));
+els.shareBtn.addEventListener('click', toggleShare);
+els.leaveBtn.addEventListener('click', leaveCall);
+els.copyLink.addEventListener('click', copyInvite);
+
+document.addEventListener('keydown', (e) => {
+  if (els.meeting.classList.contains('hidden')) return;
+  if (['INPUT','TEXTAREA','SELECT'].includes(document.activeElement?.tagName)) return;
+  if (e.key === 'm' || e.key === 'M') setMic(!state.micOn);
+  if (e.key === 'v' || e.key === 'V') setCam(!state.camOn);
+  if (e.key === 'p' || e.key === 'P') togglePanel();
+});
+
+function setMic(on) {
+  state.micOn = on;
+  if (state.micTrack) state.micTrack.enabled = on;
+  setTileMicOff('self', !on);
+  syncToolbarUI();
+}
+function setCam(on) {
+  state.camOn = on;
+  if (state.camTrack) state.camTrack.enabled = on;
+  updateTileVideoVisibility('self', on);
+  syncToolbarUI();
+}
+function syncToolbarUI() {
+  els.micBtn.classList.toggle('off', !state.micOn);
+  els.camBtn.classList.toggle('off', !state.camOn);
+  els.micBtn.title = state.micOn ? 'Mute (m)' : 'Unmute (m)';
+  els.camBtn.title = state.camOn ? 'Turn camera off (v)' : 'Turn camera on (v)';
+}
+
+async function toggleShare() {
+  if (state.screenStream) {
+    // Stop sharing — restore camera track.
+    state.screenStream.getTracks().forEach(t => t.stop());
+    state.screenStream = null;
+    if (state.camTrack) await replacePubVideoTrack(state.camTrack);
+    els.shareBtn.classList.remove('off');
+    return;
+  }
+  try {
+    const s = await navigator.mediaDevices.getDisplayMedia({ video: true, audio: false });
+    state.screenStream = s;
+    const track = s.getVideoTracks()[0];
+    track.addEventListener('ended', () => toggleShare());
+    await replacePubVideoTrack(track);
+    els.shareBtn.classList.add('off'); // visually highlights it's "active"
+    toast('Sharing your screen');
+  } catch (e) {
+    if (e && e.name !== 'NotAllowedError') toast('Screen share failed: ' + e.message);
+  }
+}
+async function replacePubVideoTrack(track) {
+  const sender = state.pubPc?.getSenders().find(s => s.track && s.track.kind === 'video');
+  if (sender) await sender.replaceTrack(track);
+  // Update self preview as well.
+  const t = state.tiles.get('self');
+  if (t) {
+    const fake = new MediaStream([track,
+      ...state.localStream.getAudioTracks()]);
+    t.video.srcObject = fake;
+  }
+}
+
+function copyInvite() {
+  const u = new URL(location.href);
+  u.searchParams.set('server', state.serverUrl);
+  u.searchParams.set('sid',    state.sid);
+  navigator.clipboard.writeText(u.toString()).then(
+    () => toast('Invite link copied'),
+    ()  => toast('Copy failed'),
+  );
+}
+
+function leaveCall() {
+  try { sendWs({ type: 'leave' }); } catch (_) {}
+  try { state.ws && state.ws.close(); } catch (_) {}
+  try { state.pubPc && state.pubPc.close(); } catch (_) {}
+  try { state.subPc && state.subPc.close(); } catch (_) {}
+  if (state.localStream) state.localStream.getTracks().forEach(t => t.stop());
+  if (state.screenStream) state.screenStream.getTracks().forEach(t => t.stop());
+  // Reload to reset state cleanly.
+  setTimeout(() => location.reload(), 200);
+}
+
+/* ========================== status / clock / stats ========================== */
+
+function refreshConnStatus() {
+  const states = [state.pubIce, state.subIce];
+  if (states.some(s => s === 'failed' || s === 'disconnected')) {
+    setStatus('bad', `pub:${state.pubIce} sub:${state.subIce}`);
+  } else if (states.every(s => s === 'connected' || s === 'completed')) {
+    setStatus('ok', 'live');
+  } else {
+    setStatus('warn', `pub:${state.pubIce} sub:${state.subIce}`);
+  }
+}
+
+let _clockTimer = null;
+function startClock() {
+  const tick = () => {
+    const d = new Date();
+    const hh = String(d.getHours()).padStart(2, '0');
+    const mm = String(d.getMinutes()).padStart(2, '0');
+    els.clock.textContent = `${hh}:${mm}`;
+  };
+  tick();
+  _clockTimer = setInterval(tick, 30 * 1000);
+}
+
+let _statsTimer = null;
+function startStatsPoll() {
+  if (_statsTimer) return;
+  const base = state.serverUrl.replace(/^ws/, 'http');
+  _statsTimer = setInterval(async () => {
+    try {
+      const r = await fetch(base + '/stats', { cache: 'no-store' });
+      const j = await r.json();
+      els.meterLabel.textContent =
+        `peers ${j.peers ?? 0} · downTracks ${j.downTracks ?? 0}` +
+        ` · ${(j.totalBytesForwarded ?? 0)} B fwd`;
+    } catch (_) { /* keep prior text */ }
+    pollSubPcStats();
+  }, 1500);
+}
+
+// Per-tile receive diagnostics. Walks each RTCRtpReceiver, reads its
+// own getStats() (which only contains reports for that receiver), and
+// renders a compact HUD on the matching tile. Surfaces the most common
+// black-tile causes:
+//   bytes=0      → SRTP not flowing (DTLS / decrypt / firewall)
+//   bytes↑ dec=0 → codec / depacketizer mismatch (no decodable frames)
+//   muted=true   → sender stopped or track replaced upstream
+async function pollSubPcStats() {
+  const pc = state.subPc;
+  if (!pc) return;
+  // Map each video receiver to the stream/tile that hosts it.
+  const receivers = pc.getReceivers().filter(r => r.track && r.track.kind === 'video');
+  for (const recv of receivers) {
+    const tr = recv.track;
+    let sid = null;
+    for (const [id, ms] of state.remoteStreams) {
+      if (ms.getTracks().some(x => x.id === tr.id)) { sid = id; break; }
+    }
+    if (!sid) continue;
+    const t = state.tiles.get(sid);
+    if (!t || !t.hud) continue;
+
+    let report;
+    try { report = await recv.getStats(); } catch (_) { continue; }
+    let rep = null;
+    report.forEach((r) => {
+      if (r.type === 'inbound-rtp' &&
+          (r.kind === 'video' || r.mediaType === 'video')) {
+        rep = r;
+      }
+    });
+    if (!rep) {
+      t.hud.className = 'hud warn';
+      t.hud.textContent =
+        `track ${tr.readyState}` +
+        (tr.muted ? ' · muted' : '') +
+        '\nno inbound-rtp report';
+      continue;
+    }
+    const now = performance.now();
+    const bytes  = rep.bytesReceived  || 0;
+    const frames = rep.framesDecoded  || 0;
+    const dropped= rep.framesDropped  || 0;
+    const w = rep.frameWidth || 0, h = rep.frameHeight || 0;
+    const dt = (now - (t.lastTs || now)) / 1000 || 1;
+    const kbps = (((bytes - t.lastBytes) * 8) / dt / 1000).toFixed(0);
+    const fps  = ((frames - t.lastFrames) / dt).toFixed(1);
+    t.lastBytes = bytes; t.lastFrames = frames; t.lastTs = now;
+    let cls = 'good';
+    if (bytes === 0) cls = 'bad';
+    else if (frames === 0) cls = 'warn';
+    t.hud.className = 'hud ' + cls;
+    t.hud.textContent =
+      `${kbps} kbps · ${fps} fps · ${w}x${h}\n` +
+      `bytes ${bytes} dec ${frames} drop ${dropped}` +
+      (tr.muted ? ' · MUTED' : '');
+
+    // SELF-HEAL: video is decoding but the <video> element is paused
+    // (autoplay rejection silently happened, or srcObject got reset).
+    // Re-attach + replay so we don't sit on a black tile when frames
+    // are actually arriving. Also force the video element visible
+    // whenever Chrome reports a non-zero frame size — the avatar/video
+    // toggle in attachRemoteStream() may have been wrong earlier.
+    if (w > 0 && h > 0) {
+      updateTileVideoVisibility(sid, true);
+    }
+    if (frames > (t.lastSeenDecoded || 0) &&
+        (t.video.paused || !t.video.srcObject)) {
+      const ms = state.remoteStreams.get(sid);
+      if (ms && t.video.srcObject !== ms) t.video.srcObject = ms;
+      t.video.play().catch(() => showPlayOverlay(t));
+    }
+    t.lastSeenDecoded = frames;
+  }
+}
+
+/* ========================== bootstrap ========================== */
+
+(async function main() {
+  readQuery();
+  // Polling /stats only kicks off after we know the server URL.
+  els.joinBtn.addEventListener('click', () => setTimeout(startStatsPoll, 500));
+  try {
+    await listDevices();
+  } catch (e) {
+    showLobbyError(
+      'Could not access camera/microphone. ' +
+      'On http:// origins Chrome blocks getUserMedia — open this page over ' +
+      'https://, http://localhost, or whitelist this origin in ' +
+      'chrome://flags/#unsafely-treat-insecure-origin-as-secure. ' +
+      'Underlying error: ' + (e?.message || e));
+  }
+})();
+</script>
+</body>
+</html>

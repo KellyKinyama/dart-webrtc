@@ -68,6 +68,18 @@ Serving HTTP on 0.0.0.0 port 8000 (http://0.0.0.0:8000/) ...
 
 ### 3. Open in the browser (one tab per peer)
 
+Polished Google-Meet-style UI (recommended):
+
+```text
+http://10.100.54.133:8000/meet.html?server=ws://10.100.54.133:9091&sid=room1
+http://10.100.54.133:8000/meet.html?server=ws://10.100.54.133:9091&sid=room1
+```
+
+Each tab gets a unique uid automatically (no `&uid=` in the URL), so you
+can open as many as you like without colliding at the SFU.
+
+Bare debug UI (raw `<video>` tags + log + stats panel):
+
 ```text
 http://10.100.54.133:8000/?server=ws://10.100.54.133:9091&sid=room1&uid=alice
 http://10.100.54.133:8000/?server=ws://10.100.54.133:9091&sid=room1&uid=bob

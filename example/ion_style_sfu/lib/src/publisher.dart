@@ -24,6 +24,8 @@ class Publisher {
   void Function(RTCIceConnectionState state)? onIceConnectionStateChange;
 
   bool _closed = false;
+  int _rtpCount = 0;
+  int _rtcpCount = 0;
 
   Publisher._({
     required this.peerId,
@@ -105,11 +107,26 @@ class Publisher {
 
   void _onPublisherRtp(Uint8List rtp) {
     if (_closed) return;
+    _rtpCount++;
+    if (_rtpCount == 1 || _rtpCount % 500 == 0) {
+      final ssrc = rtp.length >= 12
+          ? ((rtp[8] << 24) | (rtp[9] << 16) | (rtp[10] << 8) | rtp[11])
+              .toUnsigned(32)
+          : 0;
+      // ignore: avoid_print
+      print('[pub:$peerId] inbound RTP #$_rtpCount ssrc=0x'
+          '${ssrc.toRadixString(16).padLeft(8, '0')} len=${rtp.length}');
+    }
     router.routeRtp(rtp);
   }
 
   void _onPublisherRtcp(Uint8List rtcp) {
     if (_closed) return;
+    _rtcpCount++;
+    if (_rtcpCount == 1) {
+      // ignore: avoid_print
+      print('[pub:$peerId] inbound RTCP #1 len=${rtcp.length}');
+    }
     router.routeRtcp(rtcp);
   }
 
