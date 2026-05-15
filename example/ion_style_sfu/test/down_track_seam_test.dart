@@ -61,7 +61,8 @@ Uint8List _vidRtp({required int seq, int ts = 0, int ssrc = 2001}) {
   return out;
 }
 
-Uint8List _rtxRtp({required int seq, int ts = 0, int ssrc = 2002, int osn = 1}) {
+Uint8List _rtxRtp(
+    {required int seq, int ts = 0, int ssrc = 2002, int osn = 1}) {
   final out = Uint8List(22); // 12B header + 2B OSN + 8B payload
   out[0] = 0x80;
   out[1] = 97;
@@ -109,8 +110,7 @@ DownTrack _track({
 
 void main() {
   group('DownTrack — transportSinkForTest seam (real branch)', () {
-    test('writeRtp routes through testSend, bumps counters, releases RTX',
-        () {
+    test('writeRtp routes through testSend, bumps counters, releases RTX', () {
       final captured = <(Uint8List, bool)>[];
       final dt = _track(sink: (out, isRtx) => captured.add((out, isRtx)));
       final layer = dt.receiver.layers.first;

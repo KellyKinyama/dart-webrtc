@@ -139,6 +139,13 @@ class Subscriber {
   /// snapshot taken at the previous call. Not part of the public API.
   int consumeBytesBudgetForTest() => _consumeBytesBudget();
 
+  /// Test seam: when set, [_sendUpstreamNack] / [_sendUpstreamPli]
+  /// route the built RTCP packet through this closure instead of the
+  /// real publisher transport. Lets unit tests cover the upstream
+  /// feedback path without standing up a publisher with active DTLS.
+  /// Not part of the public API.
+  void Function(DownTrack dt, Uint8List rtcp)? upstreamRtcpSinkForTest;
+
   static Future<Subscriber> create({
     required String peerId,
     required Session session,
@@ -379,9 +386,14 @@ class Subscriber {
   }
 
   void _sendUpstreamNack(DownTrack dt, List<int> missing) {
+    final pkt = buildNack(1, dt.receiver.primarySsrc, missing);
+    final sink = upstreamRtcpSinkForTest;
+    if (sink != null) {
+      sink(dt, pkt);
+      return;
+    }
     final pub = _publisherFor(dt);
     if (pub == null) return;
-    final pkt = buildNack(1, dt.receiver.primarySsrc, missing);
     pub.transport.sendRtcp(pub.pc.activePeer!, pkt);
   }
 
@@ -389,9 +401,14 @@ class Subscriber {
   /// per-DownTrack gate is enforced via [DownTrack.tryConsumePliCredit].
   void _sendUpstreamPli(DownTrack dt) {
     if (!dt.tryConsumePliCredit(DateTime.now())) return;
+    final pkt = buildPli(1, dt.receiver.primarySsrc);
+    final sink = upstreamRtcpSinkForTest;
+    if (sink != null) {
+      sink(dt, pkt);
+      return;
+    }
     final pub = _publisherFor(dt);
     if (pub == null) return;
-    final pkt = buildPli(1, dt.receiver.primarySsrc);
     pub.transport.sendRtcp(pub.pc.activePeer!, pkt);
   }
 
