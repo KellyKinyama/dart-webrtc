@@ -315,6 +315,7 @@ class Subscriber {
         // REMB doesn't carry a media SSRC (it's a transport-wide
         // estimate). Feed it unconditionally.
         bwe.onRemb(fb);
+        _syncPacerToBwe();
         // Update active-video count and re-run layer selection
         // immediately so a sharp drop reacts without waiting for the
         // periodic tick.
@@ -326,6 +327,7 @@ class Subscriber {
         // the signal we pass to BWE; the layer selector then picks
         // it up via [BandwidthEstimator.lastFractionLost].
         bwe.onRr(fb);
+        _syncPacerToBwe();
         layerSelector.activeVideoDownTracks = _videoDownTrackCount();
         layerSelector.tick();
       } else if (fb is TwccFeedback) {
@@ -338,11 +340,30 @@ class Subscriber {
         } else {
           bwe.onTwcc(fb, budget);
         }
+        _syncPacerToBwe();
         layerSelector.activeVideoDownTracks = _videoDownTrackCount();
         layerSelector.tick();
       }
     }
   }
+
+  /// Phase B9-lite — push the latest BWE estimate into the pacer.
+  /// Clamped to [pacerMinBitrateBps] so a transient zero / very small
+  /// estimate from a fresh feedback cycle doesn't stall the egress
+  /// queue (the pacer leaks one packet per tick at bitrate=0, which
+  /// would crawl). Skips when [bwe.currentBps] is still 0 (no
+  /// feedback yet) so the 8 Mbps default rules until BWE warms up.
+  void _syncPacerToBwe() {
+    final bps = bwe.currentBps;
+    if (bps <= 0) return;
+    pacer.setBitrate(bps < pacerMinBitrateBps ? pacerMinBitrateBps : bps);
+  }
+
+  /// Lower bound applied by [_syncPacerToBwe] so the pacer never
+  /// throttles below a usable forwarding rate. 100 kbps is below any
+  /// reasonable simulcast 'q' layer but high enough to keep audio +
+  /// SR/RR traffic flowing freely.
+  static const int pacerMinBitrateBps = 100 * 1000;
 
   int _videoDownTrackCount() {
     var n = 0;
