@@ -133,6 +133,19 @@ class RtcUdpTransport {
   /// address discovered by a STUN server.
   final Map<String, Completer<stun.MappedAddress>> _pendingStunQueries = {};
 
+  /// Per-(server) throttle and per-(local,server) cache for outbound
+  /// STUN binding queries. Without this, an SFU that spawns N
+  /// `RTCPeerConnection`s with M configured STUN URLs would burst N*M
+  /// requests at the same public reflector (e.g. stun.l.google.com)
+  /// every time a client connects. That earns a rate-limit from
+  /// Google and silent dropped responses for everyone else on the
+  /// same egress IP. The cache TTL is conservative — NAT mappings
+  /// for a given local UDP socket are stable for as long as the
+  /// socket is bound, so we can reuse a result for minutes.
+  static final Map<String, _StunServerThrottle> _stunThrottles = {};
+  final Map<String, _CachedSrflx> _srflxCache = {};
+  static const Duration _srflxCacheTtl = Duration(minutes: 1);
+
   /// Fired when a brand-new peer is observed (first packet received).
   void Function(RtcPeerTransport peer)? onPeer;
 
@@ -199,6 +212,30 @@ class RtcUdpTransport {
     if (_closed) {
       throw StateError('RtcUdpTransport is closed.');
     }
+
+    final serverKey = '${serverHost.address}:$serverPort';
+
+    // 1. Per-(local-socket, server) cache. Keeps repeat gathering on the
+    //    same transport from re-querying the reflector.
+    final cached = _srflxCache[serverKey];
+    if (cached != null && cached.expiresAt.isAfter(DateTime.now())) {
+      return cached.address;
+    }
+
+    // 2. Process-wide per-server throttle. Coalesces concurrent queries
+    //    from multiple PCs and rate-limits bursts so we don't get
+    //    blacklisted by public STUN servers.
+    final throttle =
+        _stunThrottles.putIfAbsent(serverKey, _StunServerThrottle.new);
+    await throttle.acquire();
+
+    // Re-check the cache after waiting — a sibling query may have
+    // populated it while we were queued.
+    final cached2 = _srflxCache[serverKey];
+    if (cached2 != null && cached2.expiresAt.isAfter(DateTime.now())) {
+      return cached2.address;
+    }
+
     final txId = _generateTransactionId();
     final txKey = _hex(txId);
     final request = stun.StunMessage(
@@ -209,7 +246,14 @@ class RtcUdpTransport {
     _pendingStunQueries[txKey] = completer;
     try {
       _socket.send(request.encode(), serverHost, serverPort);
-      return await completer.future.timeout(timeout);
+      final result = await completer.future.timeout(timeout);
+      throttle.recordSuccess();
+      _srflxCache[serverKey] = _CachedSrflx(
+        result, DateTime.now().add(_srflxCacheTtl));
+      return result;
+    } on TimeoutException {
+      throttle.recordFailure();
+      rethrow;
     } finally {
       _pendingStunQueries.remove(txKey);
     }
@@ -525,5 +569,70 @@ class RtcUdpTransport {
     final ctx = SRTPContext(protectionProfile: _protectionProfile);
     SRTPManager().initCipherSuiteForRole(ctx, keyingMaterial, SrtpRole.server);
     peer.srtp = ctx;
+  }
+}
+
+/// Cached server-reflexive address for a (local socket, STUN server)
+/// pair, with an absolute expiry time. NAT mappings on a bound UDP
+/// socket are stable for the life of the socket on every common
+/// gateway, so a minute of caching is conservative.
+class _CachedSrflx {
+  _CachedSrflx(this.address, this.expiresAt);
+  final stun.MappedAddress address;
+  final DateTime expiresAt;
+}
+
+/// Process-wide rate limiter + circuit breaker for outbound STUN
+/// queries against a single server endpoint (e.g. `stun.l.google.com:
+/// 19302`). Public reflectors actively rate-limit and will silently
+/// black-hole responses to a noisy egress IP, which manifests as
+/// every PC's `srflx` gathering timing out at once. Slowing ourselves
+/// down keeps us in good standing.
+class _StunServerThrottle {
+  /// Minimum interval between two outbound queries to the same server.
+  /// 200 ms == 5 req/s, well under the documented limits of every
+  /// public STUN reflector we know of.
+  static const Duration _minInterval = Duration(milliseconds: 200);
+  /// Maximum back-off after repeated timeouts (the server is almost
+  /// certainly rate-limiting us; back all the way off).
+  static const Duration _maxBackoff = Duration(minutes: 5);
+
+  DateTime _nextAvailable = DateTime.fromMillisecondsSinceEpoch(0);
+  int _consecutiveFailures = 0;
+  Future<void> _tail = Future<void>.value();
+
+  /// Serializes callers and returns once it's safe to send the next
+  /// request to this server. Each acquirer extends the queue by at
+  /// least [_minInterval], so concurrent gatherings are spaced out
+  /// instead of bursting.
+  Future<void> acquire() {
+    final prev = _tail;
+    final c = Completer<void>();
+    _tail = c.future;
+    return prev.then((_) async {
+      final now = DateTime.now();
+      if (_nextAvailable.isAfter(now)) {
+        await Future<void>.delayed(_nextAvailable.difference(now));
+      }
+      _nextAvailable = DateTime.now().add(_minInterval);
+      c.complete();
+    });
+  }
+
+  void recordSuccess() {
+    _consecutiveFailures = 0;
+  }
+
+  /// Exponential back-off on failure: 1s, 2s, 4s, ..., capped.
+  void recordFailure() {
+    _consecutiveFailures++;
+    final backoffMs = (1000 << (_consecutiveFailures - 1).clamp(0, 10));
+    final backoff = Duration(milliseconds: backoffMs) > _maxBackoff
+        ? _maxBackoff
+        : Duration(milliseconds: backoffMs);
+    final until = DateTime.now().add(backoff);
+    if (until.isAfter(_nextAvailable)) {
+      _nextAvailable = until;
+    }
   }
 }
