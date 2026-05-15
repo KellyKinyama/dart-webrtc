@@ -1,0 +1,271 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Pure Dart SFU — E2EE Demo</title>
+  <link rel="icon" href="data:,">
+  <style>
+    :root {
+      --bg: #0b0e13; --panel: #11151c; --line: #2a3140;
+      --text: #e7eaf0; --muted: #8b94a7; --accent: #5b8def;
+      --good: #34a853; --bad: #ea4335; --warn: #fbbc04;
+    }
+    * { box-sizing: border-box; }
+    html, body { height: 100%; margin: 0; }
+    body {
+      background: var(--bg); color: var(--text);
+      font: 14px/1.4 -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+    }
+    header {
+      display: flex; gap: 12px; align-items: center;
+      padding: 12px 20px; border-bottom: 1px solid var(--line);
+      background: var(--panel);
+    }
+    header h1 { font-size: 16px; margin: 0; font-weight: 600; }
+    header .pill {
+      font-size: 12px; padding: 3px 8px; border-radius: 999px;
+      background: var(--bg); border: 1px solid var(--line); color: var(--muted);
+    }
+    header .pill.ok   { color: var(--good); border-color: var(--good); }
+    header .pill.bad  { color: var(--bad);  border-color: var(--bad);  }
+    header .pill.warn { color: var(--warn); border-color: var(--warn); }
+    header .spacer { flex: 1; }
+    header input, header button {
+      font: inherit; color: var(--text);
+      background: var(--bg); border: 1px solid var(--line);
+      border-radius: 6px; padding: 6px 10px;
+    }
+    header button { cursor: pointer; }
+    header button:hover { background: #1a1f29; }
+
+    main {
+      display: grid; grid-template-columns: 1fr 1fr; gap: 12px;
+      padding: 16px;
+    }
+    .tile {
+      background: #000; aspect-ratio: 16/9;
+      border: 1px solid var(--line); border-radius: 10px;
+      position: relative; overflow: hidden;
+    }
+    .tile video { width: 100%; height: 100%; object-fit: cover; }
+    .tile .label {
+      position: absolute; left: 8px; bottom: 8px;
+      background: rgba(0,0,0,.6); padding: 2px 8px;
+      border-radius: 6px; font-size: 12px;
+    }
+    #log {
+      margin: 0 16px 16px; padding: 10px;
+      background: var(--panel); border: 1px solid var(--line);
+      border-radius: 8px;
+      font: 12px/1.5 ui-monospace, Menlo, Consolas, monospace;
+      max-height: 200px; overflow-y: auto; color: var(--muted);
+    }
+    #log .ok  { color: var(--good); }
+    #log .bad { color: var(--bad); }
+  </style>
+</head>
+<body>
+
+<header>
+  <h1>Pure Dart SFU — E2EE Demo</h1>
+  <span class="pill" id="ws-pill">ws: idle</span>
+  <span class="pill" id="e2ee-pill">e2ee: off</span>
+  <span class="spacer"></span>
+  <input id="server" placeholder="ws://host:9091" size="24">
+  <input id="sid"    placeholder="room id"        size="10">
+  <input id="key"    placeholder="passphrase"     size="14">
+  <button id="join">Join</button>
+</header>
+
+<main>
+  <div class="tile"><video id="local"  autoplay muted playsinline></video><div class="label">local (encrypted on send)</div></div>
+  <div class="tile"><video id="remote" autoplay        playsinline></video><div class="label">remote (decrypted on receive)</div></div>
+</main>
+
+<pre id="log"></pre>
+
+<script type="module">
+  // -------- query-string + UI helpers --------
+  const qs = new URLSearchParams(location.search);
+  const $  = (id) => document.getElementById(id);
+  $('server').value = qs.get('server') || `ws://${location.hostname}:9091`;
+  $('sid').value    = qs.get('sid')    || 'e2ee-room';
+  $('key').value    = qs.get('key')    || 'shared-secret';
+
+  const wsPill   = $('ws-pill');
+  const e2eePill = $('e2ee-pill');
+  const setPill  = (el, cls, txt) => { el.className = `pill ${cls}`; el.textContent = txt; };
+
+  const log = (msg, cls = '') => {
+    const el = $('log');
+    const line = document.createElement('div');
+    if (cls) line.className = cls;
+    line.textContent = `[${new Date().toLocaleTimeString()}] ${msg}`;
+    el.appendChild(line);
+    el.scrollTop = el.scrollHeight;
+  };
+
+  // -------- feature checks --------
+  if (!('RTCRtpScriptTransform' in self)) {
+    log('RTCRtpScriptTransform not supported in this browser. ' +
+        'Use a recent Chromium / Safari TP / Firefox Nightly.', 'bad');
+  }
+
+  // -------- E2EE worker --------
+  const worker = new Worker('e2ee-worker.js');
+  let workerReady = false;
+  worker.addEventListener('message', (e) => {
+    if (e.data && e.data.type === 'keyReady') {
+      workerReady = true;
+      setPill(e2eePill, 'ok', 'e2ee: armed');
+      log('worker ready: AES-GCM key imported', 'ok');
+    }
+  });
+
+  // Derive a 128-bit AES key from the passphrase via SHA-256 (truncated).
+  async function deriveKey(passphrase) {
+    const data = new TextEncoder().encode(passphrase);
+    const hash = await crypto.subtle.digest('SHA-256', data);
+    return new Uint8Array(hash, 0, 16);
+  }
+
+  // -------- signaling + PCs --------
+  const state = {
+    ws: null, sid: null, uid: null,
+    pubPc: null, subPc: null, localStream: null, mimeByMid: new Map(),
+  };
+
+  function sendWs(obj) {
+    if (state.ws && state.ws.readyState === WebSocket.OPEN) {
+      state.ws.send(JSON.stringify(obj));
+    }
+  }
+
+  function attachTransforms(pc, direction) {
+    // Apply RTCRtpScriptTransform to every existing and future
+    // sender/receiver on this PC.
+    const apply = (rs, mime) => {
+      try {
+        rs.transform = new RTCRtpScriptTransform(worker, { direction, mimeType: mime });
+      } catch (err) {
+        log(`failed to attach transform: ${err}`, 'bad');
+      }
+    };
+    if (direction === 'send') {
+      for (const s of pc.getSenders()) {
+        const mime = (s.track && s.track.kind === 'audio') ? 'audio/opus' : 'video/VP8';
+        apply(s, mime);
+      }
+    } else {
+      for (const r of pc.getReceivers()) {
+        const mime = (r.track && r.track.kind === 'audio') ? 'audio/opus' : 'video/VP8';
+        apply(r, mime);
+      }
+    }
+  }
+
+  async function setupPubPc() {
+    const pc = new RTCPeerConnection();
+    state.pubPc = pc;
+    state.localStream.getTracks().forEach((t) => pc.addTrack(t, state.localStream));
+    attachTransforms(pc, 'send');
+
+    pc.onicecandidate = (e) => {
+      if (!e.candidate) return;
+      sendWs({ type: 'trickle', target: 'pub',
+               candidate: e.candidate.candidate,
+               sdpMid: e.candidate.sdpMid,
+               sdpMLineIndex: e.candidate.sdpMLineIndex });
+    };
+
+    const offer = await pc.createOffer();
+    await pc.setLocalDescription(offer);
+    sendWs({ type: 'offer', sdp: offer.sdp });
+    log('publisher offer sent');
+  }
+
+  function setupSubPc() {
+    const pc = new RTCPeerConnection();
+    state.subPc = pc;
+    pc.ontrack = (e) => {
+      const stream = e.streams[0] || new MediaStream([e.track]);
+      const v = $('remote');
+      if (v.srcObject !== stream) v.srcObject = stream;
+      // Attach decrypt transform to the new receiver.
+      try {
+        const mime = e.track.kind === 'audio' ? 'audio/opus' : 'video/VP8';
+        e.receiver.transform = new RTCRtpScriptTransform(worker, { direction: 'receive', mimeType: mime });
+        log(`receive transform attached (${e.track.kind})`);
+      } catch (err) {
+        log(`receive transform failed: ${err}`, 'bad');
+      }
+    };
+    pc.onicecandidate = (e) => {
+      if (!e.candidate) return;
+      sendWs({ type: 'trickle', target: 'sub',
+               candidate: e.candidate.candidate,
+               sdpMid: e.candidate.sdpMid,
+               sdpMLineIndex: e.candidate.sdpMLineIndex });
+    };
+  }
+
+  async function onSignal(ev) {
+    let msg;
+    try { msg = JSON.parse(ev.data); } catch { return; }
+    if (msg.type === 'answer') {
+      await state.pubPc.setRemoteDescription({ type: 'answer', sdp: msg.sdp });
+      log('publisher answer applied', 'ok');
+    } else if (msg.type === 'offer') {
+      await state.subPc.setRemoteDescription({ type: 'offer', sdp: msg.sdp });
+      const ans = await state.subPc.createAnswer();
+      await state.subPc.setLocalDescription(ans);
+      sendWs({ type: 'answer', sdp: ans.sdp });
+      log('subscriber answer sent');
+    } else if (msg.type === 'trickle') {
+      const pc = msg.target === 'pub' ? state.pubPc : state.subPc;
+      if (!pc) return;
+      try {
+        await pc.addIceCandidate({
+          candidate: msg.candidate, sdpMid: msg.sdpMid, sdpMLineIndex: msg.sdpMLineIndex,
+        });
+      } catch (err) { log(`addIceCandidate failed: ${err}`, 'bad'); }
+    }
+  }
+
+  $('join').addEventListener('click', async () => {
+    $('join').disabled = true;
+    try {
+      // 1) get camera/mic
+      state.localStream = await navigator.mediaDevices.getUserMedia({ audio: true, video: true });
+      $('local').srcObject = state.localStream;
+
+      // 2) load key into worker
+      const keyBytes = await deriveKey($('key').value);
+      worker.postMessage({ type: 'setKey', keyBytes }, [keyBytes.buffer]);
+
+      // 3) connect signaling
+      state.sid = $('sid').value;
+      state.uid = `e2ee-${Math.random().toString(36).slice(2, 8)}`;
+      const url = `${$('server').value}/ws/${state.sid}`;
+      const ws = new WebSocket(url);
+      state.ws = ws;
+      setPill(wsPill, 'warn', 'ws: connecting');
+      ws.addEventListener('open', () => {
+        setPill(wsPill, 'ok', 'ws: connected');
+        sendWs({ type: 'join', sid: state.sid, uid: state.uid });
+        setupSubPc();
+        setupPubPc();
+      });
+      ws.addEventListener('close', () => setPill(wsPill, 'bad', 'ws: closed'));
+      ws.addEventListener('error', () => setPill(wsPill, 'bad', 'ws: error'));
+      ws.addEventListener('message', onSignal);
+    } catch (err) {
+      log(`join failed: ${err}`, 'bad');
+      $('join').disabled = false;
+    }
+  });
+</script>
+
+</body>
+</html>

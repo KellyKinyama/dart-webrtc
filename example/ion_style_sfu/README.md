@@ -167,6 +167,79 @@ unit tests under [`test/`](test/) and is wired into the live SFU.
 | 8 | SSRC allocator, RTP header extension plumbing, SDP helpers | [`lib/src/ssrc_allocator.dart`](lib/src/ssrc_allocator.dart), [`lib/src/rtp_header.dart`](lib/src/rtp_header.dart), [`lib/src/sdp_helpers.dart`](lib/src/sdp_helpers.dart) | [`test/ssrc_allocator_test.dart`](test/ssrc_allocator_test.dart), [`test/rtp_extensions_test.dart`](test/rtp_extensions_test.dart), [`test/sdp_helpers_test.dart`](test/sdp_helpers_test.dart) |
 | 8.2 | Per-session isolate sharding (`SessionShard` + `ShardedSfu` with RPC over `SendPort`) | [`lib/src/session_shard.dart`](lib/src/session_shard.dart), [`lib/src/sharded_sfu.dart`](lib/src/sharded_sfu.dart) | [`test/session_shard_test.dart`](test/session_shard_test.dart) |
 | 9 | Per-DownTrack / per-Subscriber stats snapshot, JSON `/stats`, Prometheus `/metrics` | [`lib/src/stats/`](lib/src/stats/) | [`test/prometheus_test.dart`](test/prometheus_test.dart) |
+| 10 | Codec-aware keyframe gating for simulcast layer switches (VP8 / VP9 / H264) | [`lib/src/vp8.dart`](lib/src/vp8.dart), [`lib/src/vp9.dart`](lib/src/vp9.dart), [`lib/src/h264.dart`](lib/src/h264.dart) | [`test/vp8_keyframe_gate_test.dart`](test/vp8_keyframe_gate_test.dart), [`test/vp9_keyframe_gate_test.dart`](test/vp9_keyframe_gate_test.dart), [`test/h264_keyframe_gate_test.dart`](test/h264_keyframe_gate_test.dart) |
+| 11 | E2EE demo client using `RTCRtpScriptTransform` (Insertable Streams) — SFU forwards encrypted payloads transparently | [`web/e2ee.html`](web/e2ee.html), [`web/e2ee-worker.js`](web/e2ee-worker.js) | — |
+
+## Codec support
+
+The SFU is a pure RTP forwarder, so codec negotiation is just a matter
+of including the right `SdpCodec` entries in the publisher / subscriber
+codec lists. The codecs registered today (see
+[`session_shard.dart`](lib/src/session_shard.dart) `_materialiseCodecs`)
+are:
+
+| Codec | Default PT | Keyframe gate | Notes |
+|-------|------------|---------------|-------|
+| VP8   | 96  | [`isVp8Keyframe`](lib/src/vp8.dart) (RFC 7741 §4.2 + frame-header P-bit) | Default video codec; full simulcast + PictureID/TL0PICIDX rewrite. |
+| VP9   | 98  | [`isVp9Keyframe`](lib/src/vp9.dart) (RFC 8741: `B=1 ∧ P=0`, base SID when L=1) | Negotiation works end-to-end; SVC layer selection not implemented. |
+| H264  | 102 | [`isH264Keyframe`](lib/src/h264.dart) (RFC 6184: NAL types 5/6/7/8 in single, FU-A start, STAP-A walk) | fmtp `profile-level-id=42e01f;packetization-mode=1`. |
+| Opus  | 111 | — | Stereo, in-band FEC enabled by client. |
+| PCMU/PCMA | 0/8 | — | G.711 fallback for legacy clients. |
+
+The keyframe detector for the negotiated video codec is auto-wired in
+the [`DownTrack`](lib/src/down_track.dart) constructor and feeds
+[`SimulcastRewriter`](lib/src/simulcast_rewriter.dart)'s reSync gate so
+a layer switch only forwards from the next decodable frame, never a
+delta against a missing reference.
+
+To enable a non-default codec, pass it to `ShardConfig.videoCodecs`:
+
+```dart
+ShardConfig(videoCodecs: [ShardCodec.vp8, ShardCodec.vp9, ShardCodec.h264])
+```
+
+## End-to-end encryption demo (Insertable Streams)
+
+[`web/e2ee.html`](web/e2ee.html) is a minimal browser client that uses
+the standardized [`RTCRtpScriptTransform`][rtct] API to encrypt every
+encoded media frame with **AES-GCM-128** before packetization, and
+decrypt on the receive side. The shared key is derived from a URL
+passphrase via SHA-256 so two tabs with the same `?key=` can talk to
+each other.
+
+[rtct]: https://w3c.github.io/webrtc-encoded-transform/
+
+The SFU itself is **unmodified** — that's the whole point. The encoded
+payload is opaque to the server; only the codec descriptor prefix
+(10 bytes for video, 1 byte for Opus) stays in the clear so the SFU's
+keyframe detectors and SRTP header processing keep working.
+
+Wire format per frame, in [`web/e2ee-worker.js`](web/e2ee-worker.js):
+
+```text
+[ codec prefix : N bytes (cleartext)  ]
+[ ciphertext   : variable             ]
+[ auth tag     : 16 bytes (AES-GCM)   ]
+[ IV           : 12 bytes random      ]
+[ prefix len   : 1 byte               ]
+```
+
+To try it (after the SFU + static server are running per
+[`RUNNING.md`](RUNNING.md)), open two tabs:
+
+```text
+http://<lan-ip>:8000/e2ee.html?server=ws://<lan-ip>:9091&sid=e2ee-room&key=hunter2
+http://<lan-ip>:8000/e2ee.html?server=ws://<lan-ip>:9091&sid=e2ee-room&key=hunter2
+```
+
+Both should see each other's video. Change `?key=` in one tab → that
+tab's video becomes garbled in the other (decryption fails) — proving
+the SFU never touched the plaintext.
+
+> **Not production crypto.** This demo uses a fixed key with random
+> per-frame IVs; real deployments should use **SFrame (RFC 9605)** for
+> proper key rotation, replay protection, and salted IVs. Browser
+> support: Chromium 121+, Safari 17.4+, Firefox 137+.
 
 ## Architectural mapping
 

@@ -25,6 +25,8 @@ import 'receiver.dart';
 import 'rtcp_rewrite.dart';
 import 'simulcast_rewriter.dart';
 import 'vp8.dart';
+import 'vp9.dart';
+import 'h264.dart';
 import 'twcc/twcc_stamper.dart';
 
 enum DownTrackType { simple, simulcast }
@@ -151,13 +153,18 @@ class DownTrack {
           rewrittenRtxSsrc: rewrittenRtxSsrc,
           currentLayer: receiver.stream.defaultLayer.rid,
           pool: pool,
-          // Auto-wire the VP8 keyframe detector when the publisher
-          // negotiated VP8. For other codecs the gate stays off and
-          // we fall back to the legacy behavior (offset rebased on
-          // first primary regardless of frame type).
+          // Auto-wire a codec-specific keyframe detector when the
+          // publisher negotiated a codec we know how to inspect. For
+          // other codecs the gate stays off and we fall back to the
+          // legacy behavior (offset rebased on first primary
+          // regardless of frame type).
           isKeyframe: receiver.codecs.any((c) => c.name == 'VP8')
               ? isVp8Keyframe
-              : null,
+              : receiver.codecs.any((c) => c.name == 'VP9')
+                  ? isVp9Keyframe
+                  : receiver.codecs.any((c) => c.name == 'H264')
+                      ? isH264Keyframe
+                      : null,
         ) {
     nack = NackResponder(buffer: _jitter);
     // Phase 8 — build the SSRC translation map for RTCP rewriting.
