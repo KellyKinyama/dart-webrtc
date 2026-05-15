@@ -106,6 +106,17 @@ class DownTrack {
   void Function(Uint8List rtp)? rtpSink;
   void Function(Uint8List rtcp)? rtcpSink;
 
+  /// Test seam: drop-in replacement for the real-transport egress
+  /// path. When set, [writeRtp] / [replay] skip the
+  /// `subscriberPc.activePeer` / `subscriberPc.transport` lookup and
+  /// route packets through this closure instead. Lets unit tests
+  /// exercise the post-guard branches (rewrite/jitter/twcc/pacer
+  /// engagement, counter bookkeeping) without standing up a live
+  /// DTLS peer. Distinct from [rtpSink], which models the load-test
+  /// fast path that bypasses the pacer entirely. Not part of the
+  /// public API.
+  void Function(Uint8List rtp, bool isRtx)? transportSinkForTest;
+
   /// Jitter buffer of forwarded primary RTP packets, keyed by the
   /// *rewritten* sequence number. Used by [NackResponder] to satisfy
   /// subscriber retransmit requests without involving the publisher.
@@ -268,36 +279,19 @@ class DownTrack {
       }
     }
 
-    // Phase 10 — synthetic-sink fast path (load test harness). Skips
-    // the PC/peer/transport plumbing entirely.
+    // Resolve the egress mode. Order:
+    //   1. rtpSink (load-test fast path, bypasses pacer)
+    //   2. transportSinkForTest (unit-test seam, bypasses guard)
+    //   3. real transport (subscriberPc.activePeer / .transport)
     final sink = rtpSink;
-    if (sink != null) {
-      final r = _rewriter.rewrite(rid: layer.rid, isRtx: isRtx, rtp: rtp);
-      if (r.dropped) {
-        packetsDroppedWrongLayer++;
-        return;
-      }
-      final out = r.out!;
-      if (!isRtx && r.outSeq != null) {
-        _jitter.record(r.outSeq!, out);
-      }
-      final twccId = receiver.stream.twccExtId;
-      if (!isRtx && twccId != null && twccStamper != null) {
-        final seq = twccStamper!.stamp(out, twccId);
-        if (seq != null) packetsTwccStamped++;
-      }
-      sink(out);
-      packetsForwarded++;
-      bytesForwarded += out.length;
-      // RTX bytes are not retained by the jitter buffer; release
-      // them immediately so the pool reclaims the capacity.
-      if (isRtx) pool.release(out);
-      return;
+    final testSend = transportSinkForTest;
+    RtcPeerTransport? peer;
+    RtcUdpTransport? transport;
+    if (sink == null && testSend == null) {
+      peer = subscriberPc.activePeer;
+      transport = subscriberPc.transport;
+      if (peer == null || transport == null || !peer.isSecure) return;
     }
-
-    final peer = subscriberPc.activePeer;
-    final transport = subscriberPc.transport;
-    if (peer == null || transport == null || !peer.isSecure) return;
 
     final r = _rewriter.rewrite(rid: layer.rid, isRtx: isRtx, rtp: rtp);
     if (r.dropped) {
@@ -317,16 +311,24 @@ class DownTrack {
       final seq = twccStamper!.stamp(out, twccId);
       if (seq != null) packetsTwccStamped++;
     }
-    if (pacer != null) {
+    if (sink != null) {
+      sink(out);
+    } else if (pacer != null) {
       // Pacer takes ownership of the buffer; bytesForwarded is
       // accounted at enqueue time so subscriber-level BWE bookkeeping
       // (which deltas off bytesForwarded) stays correct.
       pacer!.enqueue(out, isRtx: isRtx);
+    } else if (testSend != null) {
+      testSend(out, isRtx);
     } else {
-      transport.sendRtp(peer, out);
+      transport!.sendRtp(peer!, out);
     }
     packetsForwarded++;
     bytesForwarded += out.length;
+    // Pool release: RTX buffers aren't retained by the jitter buffer.
+    // The pacer takes ownership when engaged, so release only when we
+    // bypass it (sink branch always releases on RTX; real branch /
+    // test-seam releases only when no pacer).
     if (isRtx && pacer == null) pool.release(out);
   }
 
@@ -336,9 +338,14 @@ class DownTrack {
   /// packets are walked sub-packet by sub-packet.
   void writeRtcp(Uint8List rtcp) {
     if (_closed) return;
-    final peer = subscriberPc.activePeer;
-    final transport = subscriberPc.transport;
-    if (peer == null || transport == null || !peer.isSecure) return;
+    final sink = rtcpSink;
+    RtcPeerTransport? peer;
+    RtcUdpTransport? transport;
+    if (sink == null) {
+      peer = subscriberPc.activePeer;
+      transport = subscriberPc.transport;
+      if (peer == null || transport == null || !peer.isSecure) return;
+    }
     final out = rewriteRtcpForSubscriber(
       rtcp,
       _ssrcMap,
@@ -358,7 +365,11 @@ class DownTrack {
         return null;
       },
     );
-    transport.sendRtcp(peer, out);
+    if (sink != null) {
+      sink(out);
+    } else {
+      transport!.sendRtcp(peer!, out);
+    }
   }
 
   /// Replay [packets] (already SSRC-rewritten primary packets fetched
@@ -366,14 +377,21 @@ class DownTrack {
   /// by the NACK responder.
   void replay(List<Uint8List> packets) {
     if (_closed) return;
-    final peer = subscriberPc.activePeer;
-    final transport = subscriberPc.transport;
-    if (peer == null || transport == null || !peer.isSecure) return;
+    final testSend = transportSinkForTest;
+    RtcPeerTransport? peer;
+    RtcUdpTransport? transport;
+    if (testSend == null) {
+      peer = subscriberPc.activePeer;
+      transport = subscriberPc.transport;
+      if (peer == null || transport == null || !peer.isSecure) return;
+    }
     for (final p in packets) {
       if (pacer != null) {
         pacer!.enqueue(p, isRtx: false);
+      } else if (testSend != null) {
+        testSend(p, false);
       } else {
-        transport.sendRtp(peer, p);
+        transport!.sendRtp(peer!, p);
       }
     }
   }

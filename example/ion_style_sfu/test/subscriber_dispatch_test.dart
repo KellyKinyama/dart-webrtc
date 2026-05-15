@@ -76,8 +76,7 @@ void main() {
         stream: _videoStream(),
       );
       subscriber.subscriber!.addReceiver(published);
-      rwPrimary =
-          subscriber.subscriber!.downTracks.single.rewrittenPrimarySsrc;
+      rwPrimary = subscriber.subscriber!.downTracks.single.rewrittenPrimarySsrc;
     });
 
     tearDown(() async {
