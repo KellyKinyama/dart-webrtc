@@ -28,8 +28,7 @@ void main() {
   });
 
   group('SessionShard explicit close()', () {
-    test('SessionShard.close() drives the worker close dispatch',
-        () async {
+    test('SessionShard.close() drives the worker close dispatch', () async {
       final sfu = ShardedSfu(ShardConfigTemplate(
         bindAddress: '127.0.0.1',
         rtpBasePort: 56520,
@@ -71,8 +70,8 @@ void main() {
         }
       }
       expect(
-        closes.any((e) =>
-            e.sessionId == 'idle' && e.reason == ShardCloseReason.idle),
+        closes.any(
+            (e) => e.sessionId == 'idle' && e.reason == ShardCloseReason.idle),
         isTrue,
       );
     });
