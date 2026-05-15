@@ -99,6 +99,12 @@ class Subscriber {
     transport.onRtcp = (peer, rtcp) => _onSubscriberRtcp(rtcp);
   }
 
+  /// Test seam: deliver a synthetic RTCP buffer through the same path
+  /// the UDP transport would. Lets unit tests cover the NACK / PLI /
+  /// FIR / REMB / RR / TWCC branches without standing up a full DTLS
+  /// peer. Not part of the public API.
+  void deliverRtcpForTest(Uint8List rtcp) => _onSubscriberRtcp(rtcp);
+
   static Future<Subscriber> create({
     required String peerId,
     required Session session,

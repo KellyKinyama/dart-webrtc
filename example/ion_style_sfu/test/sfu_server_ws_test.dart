@@ -206,17 +206,18 @@ void main() {
 
     test('binary frame → socket closed with unsupportedData', () async {
       final ws = await _connect(port, 'roomBin');
-      final q = _Q(ws); addTearDown(q.cancel);
+      final q = _Q(ws);
+      addTearDown(q.cancel);
       ws.add(Uint8List.fromList([0, 1, 2, 3]));
       // Wait for close.
       await ws.done.timeout(const Duration(seconds: 2));
       expect(ws.closeCode, WebSocketStatus.unsupportedData);
     });
 
-    test('oversized text frame → socket closed with messageTooBig',
-        () async {
+    test('oversized text frame → socket closed with messageTooBig', () async {
       final ws = await _connect(port, 'roomBig');
-      final q = _Q(ws); addTearDown(q.cancel);
+      final q = _Q(ws);
+      addTearDown(q.cancel);
       // 300 KB of plain text, well over the 256 KB cap.
       final huge = 'x' * (300 * 1024);
       ws.add(huge);
@@ -224,10 +225,10 @@ void main() {
       expect(ws.closeCode, WebSocketStatus.messageTooBig);
     });
 
-    test('rate-limit burst → socket closed with policyViolation',
-        () async {
+    test('rate-limit burst → socket closed with policyViolation', () async {
       final ws = await _connect(port, 'roomRate');
-      final q = _Q(ws); addTearDown(q.cancel);
+      final q = _Q(ws);
+      addTearDown(q.cancel);
       // 70 frames of unknown type — well past the 64-msg window.
       for (var i = 0; i < 80; i++) {
         ws.add(jsonEncode({'type': 'noop', 'i': i}));
@@ -269,8 +270,7 @@ void main() {
       expect(await _nextOfType(q, 'joined'), isNotNull);
     });
 
-    test('offer/answer/trickle before join are silently dropped',
-        () async {
+    test('offer/answer/trickle before join are silently dropped', () async {
       final ws = await _connect(port, 'roomEarly');
       addTearDown(() async => ws.close());
       final q = _Q(ws);
@@ -343,8 +343,3 @@ void main() {
     });
   });
 }
-
-
-
-
-
