@@ -37,6 +37,26 @@ class DownTrackStats {
   /// layer switch was still in flight.
   final int layerSwitchRejected;
 
+  /// Phase G — inbound primary RTP packets observed on the publisher
+  /// stream feeding this track. Same value across every DownTrack
+  /// that mirrors the same Receiver.
+  final int publisherPacketsReceived;
+
+  /// Phase G — inbound primary RTP bytes (header + payload).
+  final int publisherBytesReceived;
+
+  /// Phase G — inbound RFC 4588 RTX packets observed.
+  final int publisherRtxPacketsReceived;
+
+  /// Phase G — estimated packets lost between the publisher and
+  /// the SFU (sequence-gap based, decremented when out-of-order
+  /// arrivals retroactively fill a hole).
+  final int publisherPacketsLost;
+
+  /// Phase G — outbound packets discarded by the [DownTrack]'s
+  /// synthetic loss simulator. 0 in production.
+  final int packetsDroppedSimulator;
+
   const DownTrackStats({
     required this.trackId,
     required this.sessionId,
@@ -54,6 +74,11 @@ class DownTrackStats {
     this.publisherJitterMs = 0.0,
     this.pliRateLimited = 0,
     this.layerSwitchRejected = 0,
+    this.publisherPacketsReceived = 0,
+    this.publisherBytesReceived = 0,
+    this.publisherRtxPacketsReceived = 0,
+    this.publisherPacketsLost = 0,
+    this.packetsDroppedSimulator = 0,
   });
 
   Map<String, Object?> toJson() => {
@@ -73,6 +98,11 @@ class DownTrackStats {
         'publisherJitterMs': publisherJitterMs,
         'pliRateLimited': pliRateLimited,
         'layerSwitchRejected': layerSwitchRejected,
+        'publisherPacketsReceived': publisherPacketsReceived,
+        'publisherBytesReceived': publisherBytesReceived,
+        'publisherRtxPacketsReceived': publisherRtxPacketsReceived,
+        'publisherPacketsLost': publisherPacketsLost,
+        'packetsDroppedSimulator': packetsDroppedSimulator,
       };
 }
 
@@ -172,6 +202,11 @@ SfuStatsSnapshot snapshotSfu(Sfu sfu) {
             publisherJitterMs: receiver.jitterMs,
             pliRateLimited: dt.pliRateLimited,
             layerSwitchRejected: dt.layerSwitchRejected,
+            publisherPacketsReceived: receiver.packetsReceived,
+            publisherBytesReceived: receiver.bytesReceived,
+            publisherRtxPacketsReceived: receiver.rtxPacketsReceived,
+            publisherPacketsLost: receiver.packetsLost,
+            packetsDroppedSimulator: dt.packetsDroppedSimulator,
           ));
         }
       }
@@ -280,6 +315,31 @@ String formatPrometheus(SfuStatsSnapshot snap) {
         'setCurrentLayer calls rejected because a prior switch is in flight.',
         'counter',
         (t) => t.layerSwitchRejected);
+    trackFamily(
+        'ionsfu_publisher_packets_received_total',
+        'Inbound primary RTP packets observed on the publisher stream.',
+        'counter',
+        (t) => t.publisherPacketsReceived);
+    trackFamily(
+        'ionsfu_publisher_bytes_received_total',
+        'Inbound primary RTP bytes observed on the publisher stream.',
+        'counter',
+        (t) => t.publisherBytesReceived);
+    trackFamily(
+        'ionsfu_publisher_rtx_packets_received_total',
+        'Inbound RTX retransmit packets observed on the publisher stream.',
+        'counter',
+        (t) => t.publisherRtxPacketsReceived);
+    trackFamily(
+        'ionsfu_publisher_packets_lost',
+        'Estimated packets lost between publisher and SFU (sequence-gap based).',
+        'gauge',
+        (t) => t.publisherPacketsLost);
+    trackFamily(
+        'ionsfu_track_packets_dropped_simulator_total',
+        'Outbound packets discarded by the synthetic loss simulator.',
+        'counter',
+        (t) => t.packetsDroppedSimulator);
     // Jitter is a gauge, not a counter — family helper takes int but
     // we want to write the float verbatim. Inline.
     out.writeln('# HELP ionsfu_publisher_jitter_ms '

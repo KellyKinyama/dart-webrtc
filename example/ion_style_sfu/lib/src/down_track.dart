@@ -12,6 +12,7 @@
 // sequence-number space.
 
 import 'dart:typed_data';
+import 'dart:math' show Random;
 
 import 'package:pure_dart_webrtc/webrtc/webrtc.dart';
 
@@ -69,6 +70,24 @@ class DownTrack {
   /// Phase 10 — buffer pool used for the rewritten copy. Defaults to
   /// the per-isolate [BytePool.instance].
   final BytePool pool;
+
+  /// Phase G — synthetic packet-loss simulator. When set to a value
+  /// in (0, 1] the DownTrack drops each *primary* outbound packet
+  /// with this probability before handing it to the transport / sink,
+  /// independently of any real-network conditions. RTX packets are
+  /// never dropped — they're already retransmits, and dropping them
+  /// would defeat the test setup. Defaults to 0 (no synthetic loss).
+  ///
+  /// Used by chaos / loss-recovery tests; should remain 0 in prod.
+  double dropProbability = 0.0;
+
+  /// Counter incremented every time the loss simulator dropped a
+  /// packet. Surfaced via stats so tests can assert on it.
+  int packetsDroppedSimulator = 0;
+
+  /// PRNG backing [dropProbability]. Override in tests for
+  /// deterministic drops; defaults to a freshly-seeded [Random].
+  Random lossRng = Random();
 
   /// Phase 10 — optional injected sink used **instead of** the real
   /// SRTP transport. The load-test harness sets this to a counting
@@ -225,6 +244,17 @@ class DownTrack {
     if (layer.rid != _rewriter.currentLayer) {
       packetsDroppedWrongLayer++;
       return;
+    }
+
+    // Phase G — synthetic packet-loss simulator. Applied here so it
+    // affects both the load-test sink and the real transport path.
+    // RTX retransmits bypass the simulator (dropping them defeats
+    // the test setup, since they're already loss-recovery traffic).
+    if (!isRtx && dropProbability > 0.0) {
+      if (lossRng.nextDouble() < dropProbability) {
+        packetsDroppedSimulator++;
+        return;
+      }
     }
 
     // Phase 10 — synthetic-sink fast path (load test harness). Skips

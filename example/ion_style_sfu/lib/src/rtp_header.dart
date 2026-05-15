@@ -130,3 +130,56 @@ AudioLevel? decodeAudioLevel(Uint8List? bytes) {
   final b = bytes[0];
   return AudioLevel(b & 0x7f, (b & 0x80) != 0);
 }
+
+/// Zero out the audio-level byte for the extension whose id is
+/// [extId] inside [rtp], in place. Preserves the V flag (so VAD is
+/// still signalled) but blanks the loudness reading. Cheap fallback
+/// when the SFU wants to suppress loudness leakage to subscribers
+/// without renegotiating the extmap.
+///
+/// Silently no-ops when the X bit is unset, the profile is unknown,
+/// or the extension isn't present.
+void stripAudioLevel(Uint8List rtp, int extId) {
+  if (rtp.length < 12) return;
+  final cc = rtp[0] & 0x0f;
+  final x = (rtp[0] & 0x10) != 0;
+  if (!x) return;
+  final extStart = 12 + cc * 4;
+  if (extStart + 4 > rtp.length) return;
+  final profile = (rtp[extStart] << 8) | rtp[extStart + 1];
+  final lengthWords = (rtp[extStart + 2] << 8) | rtp[extStart + 3];
+  final dataStart = extStart + 4;
+  final dataEnd = dataStart + lengthWords * 4;
+  if (dataEnd > rtp.length) return;
+
+  var p = dataStart;
+  if (profile == 0xBEDE) {
+    while (p < dataEnd) {
+      final b = rtp[p++];
+      if (b == 0) continue;
+      final id = (b >> 4) & 0x0f;
+      final lenMinus1 = b & 0x0f;
+      if (id == 15) break;
+      final len = lenMinus1 + 1;
+      if (p + len > dataEnd) break;
+      if (id == extId && len >= 1) {
+        // Keep V (bit 7), zero the level.
+        rtp[p] = rtp[p] & 0x80;
+        return;
+      }
+      p += len;
+    }
+  } else if ((profile & 0xfff0) == 0x1000) {
+    while (p + 1 < dataEnd) {
+      final id = rtp[p++];
+      if (id == 0) continue;
+      final len = rtp[p++];
+      if (p + len > dataEnd) break;
+      if (id == extId && len >= 1) {
+        rtp[p] = rtp[p] & 0x80;
+        return;
+      }
+      p += len;
+    }
+  }
+}

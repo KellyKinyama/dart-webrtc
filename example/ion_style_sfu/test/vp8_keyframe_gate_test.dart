@@ -49,8 +49,8 @@ void main() {
 
     test('decodes I=1 short PictureID (7-bit, M=0)', () {
       // X=1 (0x80) | S=1 (0x10) = 0x90; ext I=1 (0x80); pic = 0x42 (M=0).
-      final d = parseVp8Descriptor(
-          Uint8List.fromList([0x90, 0x80, 0x42, 0xee]), 0);
+      final d =
+          parseVp8Descriptor(Uint8List.fromList([0x90, 0x80, 0x42, 0xee]), 0);
       expect(d, isNotNull);
       expect(d!.hasExtension, isTrue);
       expect(d.pictureId, 0x42);
@@ -79,7 +79,8 @@ void main() {
 
   group('isVp8Keyframe', () {
     test('true for S=1, PID=0, frame[0] P-bit=0', () {
-      final pkt = _rtpWithVp8(seq: 1, ts: 0, vp8Bytes: [0x10, 0x00, 0x9d, 0x01]);
+      final pkt =
+          _rtpWithVp8(seq: 1, ts: 0, vp8Bytes: [0x10, 0x00, 0x9d, 0x01]);
       expect(isVp8Keyframe(pkt), isTrue);
     });
 
@@ -115,7 +116,8 @@ void main() {
       // Initial keyframe on 'h' establishes the baseline.
       final kf1 = _rtpWithVp8(seq: 100, ts: 1000, vp8Bytes: [0x10, 0x00]);
       var r = rw.rewrite(rid: 'h', isRtx: false, rtp: kf1);
-      expect(r.dropped, isFalse, reason: 'first keyframe must establish offset');
+      expect(r.dropped, isFalse,
+          reason: 'first keyframe must establish offset');
 
       // A few delta frames pass through normally.
       final delta = _rtpWithVp8(seq: 101, ts: 1100, vp8Bytes: [0x10, 0x01]);

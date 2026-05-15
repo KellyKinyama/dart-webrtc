@@ -114,6 +114,37 @@ class Receiver {
   /// Number of primary packets folded into the jitter EMA.
   int get jitterSamples => _jitterSamples;
 
+  // ---- Phase G — publisher-side receive counters ------------------
+
+  /// Total primary RTP packets observed from the publisher (across all
+  /// simulcast layers). RTX packets are counted separately under
+  /// [rtxPacketsReceived] so they don't inflate the loss estimate.
+  int packetsReceived = 0;
+
+  /// Total primary RTP bytes (header + payload) observed.
+  int bytesReceived = 0;
+
+  /// Total RFC 4588 RTX packets observed.
+  int rtxPacketsReceived = 0;
+
+  /// Per-primary-SSRC sequence-number tracking used to estimate the
+  /// number of packets lost between the publisher and the SFU. Each
+  /// entry holds the highest seq seen (16-bit, with wrap detection).
+  final Map<int, int> _highestSeqBySsrc = {};
+
+  /// Cumulative count of packets the publisher sent but never arrived
+  /// (estimated from sequence-number gaps). Decreases when an
+  /// out-of-order packet retroactively fills a gap (clamped at 0).
+  int packetsLost = 0;
+
+  /// When [forwardAudioLevel] is false, the audio-level RTP header
+  /// extension (RFC 6464) is stripped from packets before they are
+  /// fanned out to subscribers. Defaults to true (forward as-is) for
+  /// backward compatibility; set to false on a per-receiver basis to
+  /// keep loudness data inside the SFU (privacy / silent-room mode).
+  bool forwardAudioLevel = true;
+
+
   Receiver({
     required this.id,
     required this.peerId,
@@ -215,6 +246,39 @@ class Receiver {
     if (layer == null) return;
     final isRtx = rtxLayer != null;
 
+    // Phase G — publisher-side receive counters. Track packets
+    // separately for primary vs RTX so we can estimate inbound loss
+    // off the primary SSRC's sequence-number deltas (RTX retransmits
+    // are gap-fillers — if we counted them as new arrivals we'd
+    // double-count and under-report loss).
+    if (isRtx) {
+      rtxPacketsReceived++;
+    } else {
+      packetsReceived++;
+      bytesReceived += rtp.length;
+      final ssrc =
+          (rtp[8] << 24) | (rtp[9] << 16) | (rtp[10] << 8) | rtp[11];
+      final seq = (rtp[2] << 8) | rtp[3];
+      final prev = _highestSeqBySsrc[ssrc];
+      if (prev == null) {
+        _highestSeqBySsrc[ssrc] = seq;
+      } else {
+        // Treat the 16-bit space as signed-mod so a small backward
+        // delta after a wraparound looks like a forward jump.
+        var delta = (seq - prev) & 0xffff;
+        if (delta >= 0x8000) {
+          // Out-of-order arrival — retroactively fill a gap.
+          if (packetsLost > 0) packetsLost--;
+        } else if (delta > 1) {
+          packetsLost += delta - 1;
+          _highestSeqBySsrc[ssrc] = seq;
+        } else if (delta == 1) {
+          _highestSeqBySsrc[ssrc] = seq;
+        }
+        // delta == 0 — duplicate, ignore.
+      }
+    }
+
     // RFC 3550 §A.8 — per-source interarrival jitter EMA. Computed
     // from primary packet arrivals only (RTX retransmits are
     // out-of-order copies of already-observed primaries; folding
@@ -260,6 +324,19 @@ class Receiver {
       if (lvl != null) {
         observer.observe(id, lvl.level, voice: lvl.voice);
       }
+    }
+
+    // Phase G — audio-level forwarding policy. When the receiver opts
+    // out, zero the level byte in place so subscribers see silence
+    // markers but the on-the-wire extension shape is unchanged (no
+    // need to rewrite the X-bit / extension length). Done here, after
+    // the observer call, so the SFU still gets ground-truth loudness
+    // for active-speaker detection.
+    if (!isRtx &&
+        !forwardAudioLevel &&
+        levelExtId != null &&
+        kind == MediaKind.audio) {
+      stripAudioLevel(rtp, levelExtId);
     }
 
     // Snapshot to avoid concurrent-modification if a DownTrack closes

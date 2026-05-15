@@ -209,14 +209,13 @@ class Vp8PicIdRewriter {
       }
       // Base outbound id at lastOut+1 (or copy through on the very
       // first packet ever).
-      final basePic =
-          lastOutPicId < 0 ? (desc.pictureId ?? 0) : ((lastOutPicId + 1) & 0x7fff);
-      final baseTl0 = lastOutTl0 < 0
-          ? (desc.tl0PicIdx ?? 0)
-          : ((lastOutTl0 + 1) & 0xff);
+      final basePic = lastOutPicId < 0
+          ? (desc.pictureId ?? 0)
+          : ((lastOutPicId + 1) & 0x7fff);
+      final baseTl0 =
+          lastOutTl0 < 0 ? (desc.tl0PicIdx ?? 0) : ((lastOutTl0 + 1) & 0xff);
       off = _LayerPicOffsets(
-        picOffset:
-            ((basePic - (desc.pictureId ?? 0)) & 0x7fff),
+        picOffset: ((basePic - (desc.pictureId ?? 0)) & 0x7fff),
         tl0Offset: ((baseTl0 - (desc.tl0PicIdx ?? 0)) & 0xff),
       );
       _layers[rid] = off;
