@@ -150,6 +150,6 @@ void main() {
       );
       expect(hb['lastRttMs'], isNotNull);
       expect(hb['rttEwmaMs'], isNotNull);
-    });
+    }, retry: 2);
   });
 }

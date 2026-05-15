@@ -282,6 +282,11 @@ class SessionShard {
       StreamController<ShardEvent>.broadcast();
   int _nextReqId = 1;
   bool _closed = false;
+  // Captured when the worker self-closes so [_call] / [close] can
+  // surface the actual root cause (e.g. uncaught isolate error)
+  // instead of a generic "closed" message. See _onEvent('closed').
+  ShardCloseReason? _closeReason;
+  String? _closeMessage;
 
   SessionShard._(this.sessionId, this.config, this._isolate, this._toWorker,
       this._fromWorker) {
@@ -423,10 +428,21 @@ class SessionShard {
     _isolate.kill(priority: Isolate.immediate);
     for (final c in _pending.values) {
       if (!c.isCompleted) {
-        c.completeError(StateError('SessionShard($sessionId) closed'));
+        c.completeError(StateError(_closedErrorMessage()));
       }
     }
     _pending.clear();
+  }
+
+  String _closedErrorMessage() {
+    final reason = _closeReason;
+    final msg = _closeMessage;
+    final base = 'SessionShard($sessionId) closed';
+    if (reason == null && msg == null) return base;
+    final parts = <String>[base];
+    if (reason != null) parts.add('reason=${reason.name}');
+    if (msg != null && msg.isNotEmpty) parts.add('message=$msg');
+    return parts.join(' ');
   }
 
   // ----- internals ---------------------------------------------------
@@ -488,10 +504,14 @@ class SessionShard {
           state: data['state'] as String,
         ));
       case 'closed':
+        final reason = ShardCloseReason.values[data['reason'] as int];
+        final message = data['message'] as String?;
+        _closeReason = reason;
+        _closeMessage = message;
         _events.add(ShardClosedEvent(
           sessionId: sessionId,
-          reason: ShardCloseReason.values[data['reason'] as int],
-          message: data['message'] as String?,
+          reason: reason,
+          message: message,
         ));
         _closed = true;
       case 'relayOut':
@@ -519,7 +539,7 @@ class SessionShard {
 
   Future<Object?> _call(String op, [Object? payload]) {
     if (_closed) {
-      throw StateError('SessionShard($sessionId) is closed');
+      throw StateError(_closedErrorMessage());
     }
     final id = _nextReqId++;
     final c = Completer<Object?>();

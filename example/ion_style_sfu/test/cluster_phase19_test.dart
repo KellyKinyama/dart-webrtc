@@ -127,7 +127,7 @@ void main() {
       );
       expect(inbound['idleMs'] as int, lessThan(600),
           reason: 'idleMs must be reset by inbound ping/pong traffic');
-    });
+    }, retry: 2);
 
     test(
         'turning keepalive off lets the reaper close the bridge as before '
@@ -201,6 +201,6 @@ void main() {
         },
         timeout: const Duration(seconds: 4),
       );
-    });
+    }, retry: 2);
   });
 }

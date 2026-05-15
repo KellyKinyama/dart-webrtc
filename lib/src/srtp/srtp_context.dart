@@ -137,8 +137,8 @@ class SRTPContext {
     // *before* AEAD verify so a replay flood doesn't burn CPU on
     // crypto, and the commit happens *after* a successful verify so a
     // forged packet can't poison the window.
-    final replay = _srtpInboundReplay.putIfAbsent(
-        packet.header.ssrc, _SrtpReplay.new);
+    final replay =
+        _srtpInboundReplay.putIfAbsent(packet.header.ssrc, _SrtpReplay.new);
     final index = (rocResult.roc << 16) | packet.header.sequenceNumber;
     if (!replay.check(index)) {
       srtpReplayDrops++;
