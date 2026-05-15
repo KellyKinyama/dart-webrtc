@@ -492,7 +492,10 @@ class StunMessage {
   bool validateAsResponse({required String passwordForIntegrity}) {
     final integrityAttr = attributes[StunAttributeType.messageIntegrity];
     if (integrityAttr == null || rawMessage == null) {
-      print('[stun] self-check: MESSAGE-INTEGRITY missing');
+      if (_verbose) {
+        // ignore: avoid_print
+        print('[stun] integrity check: MESSAGE-INTEGRITY missing');
+      }
       return false;
     }
     final lengthBeforeIntegrity = integrityAttr.offsetInMessage;
@@ -507,16 +510,23 @@ class StunMessage {
     );
     final calc = calculateHmacSha1(tempMessageToHash, passwordForIntegrity);
     if (!_compareBytes(calc, integrityAttr.value)) {
-      print('[stun] self-check: MESSAGE-INTEGRITY mismatch');
-      print('  expected=${hex.encode(calc)}');
-      print('  in-msg  =${hex.encode(integrityAttr.value)}');
+      if (_verbose) {
+        // ignore: avoid_print
+        print('[stun] integrity check: MESSAGE-INTEGRITY mismatch');
+      }
       return false;
     }
 
     final fpAttr = attributes[StunAttributeType.fingerprint];
     if (fpAttr == null) {
-      print('[stun] self-check: FINGERPRINT missing');
-      return false;
+      // FINGERPRINT is required by ICE (RFC 5245) but absent in some
+      // bare STUN clients. We accept the message if MESSAGE-INTEGRITY
+      // already passed; only log under WEBRTC_DEBUG.
+      if (_verbose) {
+        // ignore: avoid_print
+        print('[stun] integrity check: FINGERPRINT missing');
+      }
+      return true;
     }
     final lengthBeforeFp = fpAttr.offsetInMessage;
     final tempForCrc =
@@ -530,9 +540,10 @@ class StunMessage {
     );
     final calcCrc = calculateFingerprint(tempForCrc);
     if (!_compareBytes(calcCrc, fpAttr.value)) {
-      print('[stun] self-check: FINGERPRINT mismatch');
-      print('  expected=${hex.encode(calcCrc)}');
-      print('  in-msg  =${hex.encode(fpAttr.value)}');
+      if (_verbose) {
+        // ignore: avoid_print
+        print('[stun] integrity check: FINGERPRINT mismatch');
+      }
       return false;
     }
     return true;
@@ -745,54 +756,85 @@ class StunServer {
   //   }
   // }
 
+  /// Process one inbound STUN datagram on [socket].
+  ///
+  /// When [requireMessageIntegrity] is true, requests without a valid
+  /// MESSAGE-INTEGRITY (computed with [serverPassword]) are silently
+  /// dropped. This is the RFC 5245 / 8445 ICE mode — a WebRTC peer
+  /// would never send a connectivity check without short-term creds,
+  /// and answering an unauthenticated request would let any sender
+  /// discover their NAT mapping through us and let an off-path attacker
+  /// pollute the nominated candidate pair.
+  ///
+  /// When false (the default), the server behaves as an RFC 5389
+  /// stand-alone STUN reflector — requests without MESSAGE-INTEGRITY
+  /// are still answered. Use this for public NAT-discovery deployments
+  /// where clients don't have long-term credentials to sign with.
   static void handleDatagram(Datagram datagram,
-      {required RawDatagramSocket socket, required String serverPassword}) {
-    // print(
-    //     '\nReceived ${datagram.data.length} bytes from ${datagram.address.host}:${datagram.port}');
-
+      {required RawDatagramSocket socket,
+      required String serverPassword,
+      bool requireMessageIntegrity = false}) {
     if (!StunMessage.isStunMessage(datagram.data)) {
-      print('Not a STUN message. Ignoring.');
+      // Caller (RtcUdpTransport) already pre-filters by isStunMessage,
+      // but be safe: silently drop instead of printing on every UDP
+      // packet that ever reaches this entry point in tests / examples.
+      if (_verbose) {
+        // ignore: avoid_print
+        print('[stun] not a STUN message; dropping '
+            '(${datagram.data.length}B from '
+            '${datagram.address.address}:${datagram.port})');
+      }
       return;
     }
 
+    StunMessage request;
     try {
-      StunMessage request = StunMessage.decode(datagram.data);
-      // print('Decoded STUN Request:');
-      // print(request);
-
-      // Validate the request using configured ICE details
-      // bool isValid = request.validate(
-      //   expectedServerUfrag: serverUfrag,
-      //   expectedClientUfrag: clientUfrag,
-      //   passwordForIntegrity: serverPassword,
-      // );
-
-      // if (!isValid) {
-      //   print("STUN Request validation failed. Ignoring.");
-      //   // Optionally send an error response
-      //   return;
-      // }
-
-      if (request.messageType.method == StunMessageMethod.binding &&
-          request.messageType.messageClass == StunMessageClass.request) {
-        // Diagnostic: verify the browser's MESSAGE-INTEGRITY using our
-        // serverPassword. If this fails, the SDP ice-pwd we surfaced
-        // doesn't match the one the SFU is using to sign responses.
-        final ok =
-            request.validateAsResponse(passwordForIntegrity: serverPassword);
-        if (!ok) {
-          print('[stun] INCOMING request integrity FAILED with serverPassword '
-              '"$serverPassword" - ufrag/password mismatch with SDP.');
-        }
-        handleBindingRequest(request, datagram.address, datagram.port,
-            serverPassword: serverPassword, socket: socket);
-      } else {
-        // print(
-        //     'Received unsupported STUN message type: ${request.messageType}. Ignoring.');
+      request = StunMessage.decode(datagram.data);
+    } catch (e) {
+      // Malformed STUN messages are common on the open internet (port
+      // scanners, stale clients). Don't dump a stack trace per packet.
+      if (_verbose) {
+        // ignore: avoid_print
+        print('[stun] malformed STUN from '
+            '${datagram.address.address}:${datagram.port}: $e');
       }
+      return;
+    }
+
+    if (request.messageType.method != StunMessageMethod.binding ||
+        request.messageType.messageClass != StunMessageClass.request) {
+      // Anything other than a binding *request* is either a response we
+      // already routed elsewhere or an unsupported method.
+      if (_verbose) {
+        // ignore: avoid_print
+        print('[stun] unsupported message ${request.messageType}; dropping');
+      }
+      return;
+    }
+
+    // ICE-mode short-term credentials check. Only enforced when the
+    // caller (RtcUdpTransport) opts in.
+    if (requireMessageIntegrity) {
+      final ok =
+          request.validateAsResponse(passwordForIntegrity: serverPassword);
+      if (!ok) {
+        if (_verbose) {
+          // ignore: avoid_print
+          print('[stun] dropping request with bad/missing MESSAGE-INTEGRITY '
+              'from ${datagram.address.address}:${datagram.port}');
+        }
+        return;
+      }
+    }
+
+    try {
+      handleBindingRequest(request, datagram.address, datagram.port,
+          serverPassword: serverPassword, socket: socket);
     } catch (e, s) {
-      print('Error processing STUN message: $e');
-      print('Stack trace: $s');
+      // Encoding the response shouldn't fail; if it does, log once and
+      // move on rather than crashing the receive loop.
+      // ignore: avoid_print
+      print('[stun] error sending binding response: $e\n$s');
     }
   }
 
@@ -818,24 +860,27 @@ class StunServer {
     // MESSAGE-INTEGRITY and FINGERPRINT are added during encode, using serverPassword
     Uint8List encodedResponse = response.encode(password: serverPassword);
 
-    // Self-validation diagnostic: decode our own response and verify the
-    // MESSAGE-INTEGRITY HMAC and FINGERPRINT CRC are well-formed. If this
-    // fails, the encoder is producing a packet the browser will reject.
-    try {
-      final decoded = StunMessage.decode(encodedResponse);
-      final ok =
-          decoded.validateAsResponse(passwordForIntegrity: serverPassword);
-      if (!ok) {
-        print('[stun] SELF-CHECK FAILED for outgoing response. '
-            'len=${encodedResponse.length} bytes=${hex.encode(encodedResponse)}');
-      } else if (_verbose) {
+    if (_verbose) {
+      // Self-validation diagnostic: decode our own response and verify
+      // the MESSAGE-INTEGRITY HMAC and FINGERPRINT CRC. Only enabled
+      // under WEBRTC_DEBUG \u2014 it doubles the per-response cost.
+      try {
+        final decoded = StunMessage.decode(encodedResponse);
+        final ok =
+            decoded.validateAsResponse(passwordForIntegrity: serverPassword);
+        if (!ok) {
+          // ignore: avoid_print
+          print('[stun] SELF-CHECK FAILED for outgoing response. '
+              'len=${encodedResponse.length}');
+        } else {
+          // ignore: avoid_print
+          print('[stun] -> ${clientAddress.address}:$clientPort '
+              '${encodedResponse.length}B (self-check OK)');
+        }
+      } catch (e) {
         // ignore: avoid_print
-        print('[stun] -> ${clientAddress.address}:$clientPort '
-            '${encodedResponse.length}B (self-check OK)');
+        print('[stun] SELF-DECODE THREW for outgoing response: $e');
       }
-    } catch (e) {
-      print('[stun] SELF-DECODE THREW for outgoing response: $e\n'
-          'bytes=${hex.encode(encodedResponse)}');
     }
 
     socket.send(encodedResponse, clientAddress, clientPort);

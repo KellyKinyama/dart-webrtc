@@ -77,10 +77,10 @@ void parseStunBindingResponse(Uint8List data, Uint8List originalTransactionId) {
           data.buffer.asUint16List(attributeOffset + 2, 1)[0];
       final attributeValueOffset = attributeOffset + 4;
 
-      // if (attributeValueOffset + attributeLength > data.length) {
-      //   print('Error: Incomplete attribute value.');
-      //   break;
-      // }
+      if (attributeValueOffset + attributeLength > data.length) {
+        print('Error: Incomplete attribute value.');
+        break;
+      }
 
       final attributeValue = data.sublist(
           attributeValueOffset, attributeValueOffset + attributeLength);
@@ -147,6 +147,9 @@ void parseXorMappedAddressAttribute(Uint8List attributeValue) {
 Future<void> main() async {
   const stunServerAddress = 'stun.l.google.com';
   const stunServerPort = 19302;
+
+  // const stunServerAddress = '127.0.0.1';
+  // const stunServerPort = 3478;
 
   try {
     final socket = await RawDatagramSocket.bind(InternetAddress.anyIPv4, 0);

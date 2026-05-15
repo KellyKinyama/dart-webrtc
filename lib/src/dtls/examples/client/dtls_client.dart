@@ -594,8 +594,8 @@ class DtlsClient {
         }
         _waitForData = Completer<void>();
         try {
-          await _waitForData!.future
-              .timeout(const Duration(seconds: 5), onTimeout: () {
+          await _waitForData!.future.timeout(const Duration(seconds: 5),
+              onTimeout: () {
             throw TimeoutException('no DTLS data from server');
           });
         } on TimeoutException {

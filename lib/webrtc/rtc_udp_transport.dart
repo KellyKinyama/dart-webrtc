@@ -119,6 +119,14 @@ class RtcUdpTransport {
   /// from gone-for-good clients.
   static const Duration _securedPeerTtl = Duration(minutes: 5);
 
+  /// Hard cap on total tracked peers. Even with periodic eviction an
+  /// attacker could otherwise spam STUN binding requests from a
+  /// rotating source-port pool to fill `_peers` with `RtcPeerTransport`
+  /// + `DtlsSession` allocations. Once we hit this cap we stop
+  /// admitting new (host, port) pairs entirely; existing peers and
+  /// the eviction sweep continue to make progress.
+  static const int _maxPeers = 256;
+
   /// Outstanding outbound STUN binding requests keyed by hex(transactionId).
   /// Completed by [_onSocketEvent] when a matching success/error response
   /// arrives, so callers of [queryStunBinding] can `await` the reflexive
@@ -293,8 +301,14 @@ class RtcUdpTransport {
     if (dg == null) return;
     final data = Uint8List.fromList(dg.data);
     final key = _PeerKey(dg.address.address, dg.port);
-    final peer = _peers.putIfAbsent(key, () => _newPeer(dg.address, dg.port));
-    peer.lastPacketAt = DateTime.now();
+
+    // Look up the existing peer; do NOT auto-create yet. Auto-creation
+    // is deferred until we have a reason to trust the sender (an
+    // authenticated STUN binding request, or a DTLS/RTP/RTCP packet
+    // from a peer we already know about). This blocks an attacker who
+    // would otherwise allocate a `RtcPeerTransport` + `DtlsSession`
+    // per spoofed source port just by sending bare STUN requests.
+    var peer = _peers[key];
 
     if (stun.StunMessage.isStunMessage(data)) {
       if (_verbose) {
@@ -306,13 +320,68 @@ class RtcUdpTransport {
       // (srflx gathering), consume it locally instead of forwarding to the
       // embedded STUN server (which only handles inbound requests).
       if (_tryCompleteStunQuery(data)) return;
+      // Promote a new (host, port) to a tracked peer only if there's
+      // capacity. The embedded StunServer drops requests with bad
+      // MESSAGE-INTEGRITY itself, so creating a peer entry up-front
+      // would still admit a flood of fake source ports. Cap first.
+      if (peer == null) {
+        if (_peers.length >= _maxPeers) {
+          if (_verbose) {
+            // ignore: avoid_print
+            print('[udp ${_socket.address.address}:${_socket.port}] '
+                'peer cap ($_maxPeers) reached; dropping STUN from '
+                '${dg.address.address}:${dg.port}');
+          }
+          return;
+        }
+        peer = _peers.putIfAbsent(key, () => _newPeer(dg.address, dg.port));
+      }
+      peer.lastPacketAt = DateTime.now();
       stun.StunServer.handleDatagram(
         Datagram(data, dg.address, dg.port),
         socket: _socket,
         serverPassword: _stunPassword,
+        // ICE mode — a real WebRTC peer always signs binding requests
+        // with the short-term password from the SDP. Drop anything
+        // without a valid MESSAGE-INTEGRITY.
+        requireMessageIntegrity: true,
       );
       return;
     }
+
+    // DTLS may legitimately arrive before any STUN check (raw DTLS
+    // clients, non-ICE flows, tests). Allow eager peer creation here —
+    // still gated by the same capacity cap. SRTP/RTCP without a peer
+    // are nonsensical and stay dropped below.
+    if (peer == null && dtls.isDtlsPacket(data, 0, data.length)) {
+      if (_peers.length >= _maxPeers) {
+        if (_verbose) {
+          // ignore: avoid_print
+          print('[udp ${_socket.address.address}:${_socket.port}] '
+              'peer cap ($_maxPeers) reached; dropping DTLS from '
+              '${dg.address.address}:${dg.port}');
+        }
+        return;
+      }
+      peer = _peers.putIfAbsent(key, () => _newPeer(dg.address, dg.port));
+    }
+
+    // Past this point we require a known peer. RTP/RTCP from an unknown
+    // source port without a prior STUN check-in or DTLS handshake is
+    // dropped — there's no decryption context for such traffic anyway.
+    if (peer == null) {
+      if (_verbose) {
+        // ignore: avoid_print
+        print('[udp ${_socket.address.address}:${_socket.port}] '
+            'non-STUN ${data.length}B from unknown peer '
+            '${dg.address.address}:${dg.port}; dropping');
+      }
+      return;
+    }
+    // Capture as a non-nullable local so closures below (catchError /
+    // .then) don't lose the type promotion that the early-return gave us.
+    final p = peer;
+    p.lastPacketAt = DateTime.now();
 
     if (dtls.isDtlsPacket(data, 0, data.length)) {
       if (_verbose) {
@@ -323,7 +392,7 @@ class RtcUdpTransport {
       }
       // Feed DTLS into the per-peer session. After the handshake completes
       // the session callback wires up SRTP for this peer.
-      unawaited(peer.dtlsSession.handleDatagram(data).catchError((e, st) {
+      unawaited(p.dtlsSession.handleDatagram(data).catchError((e, st) {
         // ignore: avoid_print
         print('[dtls] handleDatagram threw: $e\n$st');
       }));
@@ -331,11 +400,11 @@ class RtcUdpTransport {
     }
 
     if (isRtcpPacket(data)) {
-      final ctx = peer.srtp;
+      final ctx = p.srtp;
       if (ctx != null && ctx.gcm != null) {
         ctx.decryptRtcpPacket(data).then((decoded) {
-          peer.rtcpPacketsReceived++;
-          onRtcp?.call(peer, decoded);
+          p.rtcpPacketsReceived++;
+          onRtcp?.call(p, decoded);
         }).catchError((Object e) {
           // Decryption failed (replay, bad tag, etc.); drop silently.
         });
@@ -344,14 +413,14 @@ class RtcUdpTransport {
     }
 
     if (isRtpPacket(data)) {
-      final ctx = peer.srtp;
+      final ctx = p.srtp;
       if (ctx != null && ctx.gcm != null) {
         try {
           final pkt = rtp.Packet.unmarshal(data);
           ctx.decryptRtpPacket(pkt).then((decoded) {
-            peer.packetsReceived++;
-            peer.bytesReceived += data.length;
-            onRtp?.call(peer, decoded);
+            p.packetsReceived++;
+            p.bytesReceived += data.length;
+            onRtp?.call(p, decoded);
           }).catchError((Object e) {
             // Drop on decrypt failure.
           });
@@ -362,7 +431,7 @@ class RtcUdpTransport {
       return;
     }
 
-    onUnknown?.call(peer, data);
+    onUnknown?.call(p, data);
   }
 
   RtcPeerTransport _newPeer(InternetAddress addr, int port) {
