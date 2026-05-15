@@ -128,8 +128,7 @@ void main() {
     test('After subscriber.close, deliverRtcpForTest is a no-op', () async {
       await subscriber.close();
       // Should not throw even though _closed is true.
-      subscriber.subscriber!
-          .deliverRtcpForTest(buildPli(0x1111, rwPrimary));
+      subscriber.subscriber!.deliverRtcpForTest(buildPli(0x1111, rwPrimary));
     });
 
     test('setPreferredLayer on the simple track still returns false', () {
