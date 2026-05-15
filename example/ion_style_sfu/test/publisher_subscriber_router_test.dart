@@ -76,8 +76,7 @@ void main() {
       await sfu.close();
     });
 
-    test('publishRelayedStream registers receiver + indexes both SSRCs',
-        () {
+    test('publishRelayedStream registers receiver + indexes both SSRCs', () {
       final r = router.publishRelayedStream(
         kind: MediaKind.video,
         stream: _videoStream(),
@@ -274,8 +273,7 @@ void main() {
       await sfu.close();
     });
 
-    test('addReceiver creates a DownTrack + schedules negotiation',
-        () async {
+    test('addReceiver creates a DownTrack + schedules negotiation', () async {
       var negotiated = 0;
       subscriber.subscriber!.onNegotiationNeeded = () => negotiated++;
       subscriber.subscriber!.addReceiver(published);
@@ -291,7 +289,8 @@ void main() {
       expect(subscriber.subscriber!.downTracks, hasLength(1));
     });
 
-    test('noAutoSubscribe makes addReceiver a no-op; addReceiverForced bypasses',
+    test(
+        'noAutoSubscribe makes addReceiver a no-op; addReceiverForced bypasses',
         () async {
       // Spin up a fresh subscriber that joins with noAutoSubscribe so
       // the session.publish call below doesn't auto-attach.
