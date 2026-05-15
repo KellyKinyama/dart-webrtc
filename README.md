@@ -3,9 +3,20 @@
 
 **dart_webrtc** (**We**b**r**TC **I**mplementation **f**or **T**he Dart language)
 
-A pure Dart implementation of WebRTC, including support for ICE, STUN, TURN, DTLS, TLS, SRTP, RTP, RTCP, and SDP.
+A pure Dart implementation of WebRTC — ICE, STUN, TURN, DTLS, TLS, SRTP, RTP, RTCP, SDP — with **no native dependencies**. Includes a full ion-style SFU (`example/ion_style_sfu/`) with sharding, clustering, simulcast, TWCC/REMB, NACK/RTX, audio observer, and Prometheus stats.
 
 > Inspired by [webrtc-nuts-and-bolts](https://github.com/adalkiran/webrtc-nuts-and-bolts)
+
+---
+
+## ✨ Highlights
+
+- **Pure Dart** end-to-end stack — no libwebrtc / libsrtp / libnice. Easy to embed and audit.
+- **Ion-style SFU** with isolate-based sharding, cluster coordinator, UDP relay transport, leaky-bucket pacer, BWE, jitter buffer, simulcast layer rewriter, and audio-level observer.
+- **516 unit tests** in the SFU package, **93–100 % line coverage** across major files.
+- **VP8 / VP9 / Opus / PCMA / PCMU**, RTX (RFC 4588), NACK, PLI, FIR, REMB, TWCC, audio level (RFC 6464), playout-delay codec.
+- Built-in **load-test harness** and synthetic loss simulator.
+- Prometheus metrics + JSON `/stats` endpoint.
 
 ---
 
@@ -33,7 +44,33 @@ Requires Dart 3.x or later.
 
 ## 💡 Examples
 
-GitHub: [examples](https://github.com/your-repo/webrtc_dart/tree/main/example)
+GitHub: [examples](https://github.com/KellyKinyama/dart-webrtc/tree/master/example)
+
+### Ion-style SFU server
+
+```bash
+dart run example/ion_style_sfu/bin/sfu_server.dart \
+  --ip 0.0.0.0 \
+  --ws-port 9091 \
+  --rtp-base 51000 \
+  --announce-ip <your-public-ip> \
+  --ice-server stun:stun.l.google.com:19302
+```
+
+Browser demo client:
+
+```bash
+cd example/ion_style_sfu/web
+python -m http.server 8000 --bind 0.0.0.0
+# open http://localhost:8000/meet.html
+```
+
+Run the SFU test suite:
+
+```bash
+cd example/ion_style_sfu
+dart test
+```
 
 
 
@@ -111,96 +148,67 @@ In your browser, click create answer
 
 ## 🎯 Roadmap
 
-### ✅ Version 1.0 Goals
+### ✅ Shipped
 
 #### Signaling & NAT traversal
-
+- [x] STUN (client + server)
 - [x] SIP
-- [x] STUN
 - [ ] TURN (UDP)
 
 #### ICE
-
 - [x] Vanilla ICE
 - [x] Trickle ICE
+- [x] ICE-Lite (client + server)
 - [ ] ICE Restart
-- [x] ICE-Lite (Client-side)
-- [ ] ICE-Lite (Server-side)
 
 #### Security
-
-- [x] DTLS
-  - [x] DTLS-SRTP
-  - [x] Curve25519
-  - [x] P-256
+- [x] DTLS 1.2 + DTLS-SRTP
+  - [x] Curve25519, P-256
+  - [x] PSK (CCM, CCM-8)
 - [ ] TLS 1.2
 
-#### Channels
-
-- [ ] DataChannel
-- [ ] MediaChannel
-  - [ ] sendonly
-  - [ ] recvonly
-  - [ ] sendrecv
-  - [ ] Multi-track
-  - [ ] RTX
-  - [ ] RED
-
-#### RTP/RTCP
-
-- [ ] RFC 3550 (RTP base)
-- [ ] RTP Payload Formats:
-  - [ ] VP8
-  - [ ] VP9
-  - [ ] H264
-  - [ ] AV1
-  - [ ] RED (RFC 2198)
-- [ ] RTCP:
-  - [ ] SR/RR
-  - [ ] PLI
-  - [ ] REMB
-  - [ ] NACK
-  - [ ] TransportWideCC
+#### RTP / RTCP
+- [x] RFC 3550 RTP base + header extensions (audio level, playout delay, abs-send-time, TWCC)
+- [x] Payload formats: VP8, VP9, Opus, PCMA, PCMU
+- [x] RTX (RFC 4588), RED scaffolding
+- [x] RTCP: SR/RR, NACK, PLI, FIR, REMB, TWCC
+- [ ] H264, AV1, SVC
 
 #### SDP / PeerConnection
+- [x] SDP parsing + generation, m-line reuse
+- [x] PeerConnection API
+- [x] Simulcast (RID + SIM SSRC group, recv + forward)
+- [x] Bandwidth estimation (sender-side TWCC + REMB)
 
-- [x] SDP parsing and generation
-  - [x] Reuse inactive m-line
-- [ ] PeerConnection API
-- [ ] Simulcast (recv only)
-- [ ] Bandwidth Estimation (sender-side)
+#### SFU (`example/ion_style_sfu/`)
+- [x] Session / Peer / Publisher / Subscriber / Router / Receiver / DownTrack
+- [x] Isolate-based session sharding (`SessionShard`, `ShardedSfu`)
+- [x] Cluster coordinator + UDP relay transport (cascade between SFUs)
+- [x] Audio observer (RFC 6464) + audio-level forwarding policy
+- [x] Leaky-bucket pacer, byte budget, NACK buffer, RTCP rewrite
+- [x] Synthetic loss simulator + load-test harness
+- [x] Prometheus stats + JSON snapshot, `/streams` aggregator (Phase B11)
+- [x] WebSocket signalling server (`runIonStyleSfuServer`)
+- [x] Multi-room cluster snapshot rehydration
 
-#### Media Recorder
-
-- [ ] OPUS
-- [ ] VP8
-- [ ] VP9
-- [ ] H264
-- [ ] AV1
-
-#### Compatibility & Interop
-
+#### Compatibility
 - [x] Chrome / Edge / Firefox
-- [ ] Pion
-- [ ] aiortc
-- [ ] sipsorcery
-- [x] webrtc-rs
-- [ ] Interop E2E testing
-
-#### Testing
-
-- [ ] Unit tests
-- [ ] Web Platform Tests
+- [x] webrtc-rs interop
+- [ ] Pion / aiortc / sipsorcery interop suite
 
 ---
 
-### 🔜 Roadmap for 2.0
+### 🔜 Roadmap
 
-- [ ] API compatible with browser RTCPeerConnection
-- [ ] Simulcast (send support)
-- [ ] TURN over TCP
-- [ ] `getStats()` support
-- [ ] Support for more cipher suites
+- [ ] VP9 SVC layer selector
+- [ ] H264 forwarding
+- [ ] Insertable streams / SFrame (E2EE)
+- [ ] Recording (OPUS / VP8 / VP9)
+- [ ] Published throughput benchmarks + Helm chart
+- [ ] DataChannel (SCTP)
+- [ ] TURN (UDP + TCP)
+- [ ] `getStats()` browser-compatible API
+- [ ] ICE Restart
 
 ---
 
