@@ -196,8 +196,7 @@ void main() {
   });
 
   group('DownTrack synthetic loss simulator', () {
-    test('drops every primary packet at probability 1.0 (RTX still flows)',
-        () {
+    test('drops every primary packet at probability 1.0 (RTX still flows)', () {
       // Build a minimal load-test-style DownTrack via the receiver +
       // a synthetic sink. We can't easily wire a full RTCPeerConnection
       // here, so we exercise the rtpSink fast path.

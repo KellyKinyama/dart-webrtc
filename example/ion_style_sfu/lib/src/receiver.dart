@@ -144,7 +144,6 @@ class Receiver {
   /// keep loudness data inside the SFU (privacy / silent-room mode).
   bool forwardAudioLevel = true;
 
-
   Receiver({
     required this.id,
     required this.peerId,
@@ -256,8 +255,7 @@ class Receiver {
     } else {
       packetsReceived++;
       bytesReceived += rtp.length;
-      final ssrc =
-          (rtp[8] << 24) | (rtp[9] << 16) | (rtp[10] << 8) | rtp[11];
+      final ssrc = (rtp[8] << 24) | (rtp[9] << 16) | (rtp[10] << 8) | rtp[11];
       final seq = (rtp[2] << 8) | rtp[3];
       final prev = _highestSeqBySsrc[ssrc];
       if (prev == null) {
