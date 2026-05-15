@@ -75,8 +75,7 @@ void main() {
       expect(shard.isClosed, isTrue);
     });
 
-    test('applySubscriberAnswer dispatches subAnswer to the worker',
-        () async {
+    test('applySubscriberAnswer dispatches subAnswer to the worker', () async {
       final sfu = ShardedSfu(template(port: 54730));
       addTearDown(sfu.close);
       final shard = await sfu.getOrCreate('s');
