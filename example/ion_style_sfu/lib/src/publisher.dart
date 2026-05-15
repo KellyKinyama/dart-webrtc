@@ -136,4 +136,14 @@ class Publisher {
     router.close();
     pc.close();
   }
+
+  /// Test seam: deliver [rtp] as if it had just arrived from the
+  /// publisher transport (after SRTP decrypt). Mirrors
+  /// [Subscriber.deliverRtcpForTest] so unit tests can exercise the
+  /// inbound media plumbing without standing up a real DTLS peer.
+  void deliverRtpForTest(Uint8List rtp) => _onPublisherRtp(rtp);
+
+  /// Test seam: deliver [rtcp] as if it had just arrived from the
+  /// publisher transport (after SRTCP decrypt).
+  void deliverRtcpForTest(Uint8List rtcp) => _onPublisherRtcp(rtcp);
 }
