@@ -153,7 +153,9 @@ void main() {
       addTearDown(pc.close);
       final router = Router(peerId: 'pubE', session: session);
       addTearDown(router.close);
-      router.bindToRemoteOffer(pc, 'v=0\r\no=- 1 2 IN IP4 0.0.0.0\r\ns=-\r\n'
+      router.bindToRemoteOffer(
+          pc,
+          'v=0\r\no=- 1 2 IN IP4 0.0.0.0\r\ns=-\r\n'
           't=0 0\r\n');
       expect(router.receivers, isEmpty);
     });
@@ -236,8 +238,7 @@ void main() {
       await sfu.close();
     });
 
-    test(
-        'returns an SDP answer and populates the router with two receivers',
+    test('returns an SDP answer and populates the router with two receivers',
         () async {
       final p = Peer(sfu);
       await p.join(sid: 'room-ao', uid: 'pubAO');

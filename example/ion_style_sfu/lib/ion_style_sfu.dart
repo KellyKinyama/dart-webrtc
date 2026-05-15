@@ -38,3 +38,4 @@ export 'src/cluster/udp_relay_transport.dart';
 export 'src/cluster/cluster_coordinator.dart';
 export 'src/cascade_event.dart';
 export 'src/load_test.dart';
+export 'src/pacer/leaky_bucket.dart';
