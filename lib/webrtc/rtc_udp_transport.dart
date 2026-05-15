@@ -103,7 +103,6 @@ class RtcPeerTransport {
   bool nominated = false;
   DateTime? nominatedAt;
 
-
   RtcPeerTransport({
     required this.remoteAddress,
     required this.remotePort,
@@ -224,8 +223,8 @@ class RtcUdpTransport {
     final t =
         RtcUdpTransport._(socket, certificate, stunPassword, protectionProfile);
     t._sub = socket.listen(t._onSocketEvent);
-    t._evictionTimer = Timer.periodic(
-        const Duration(seconds: 5), (_) => t._evictStalePeers());
+    t._evictionTimer =
+        Timer.periodic(const Duration(seconds: 5), (_) => t._evictStalePeers());
     return t;
   }
 

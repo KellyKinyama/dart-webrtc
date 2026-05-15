@@ -27,13 +27,13 @@ Uint8List _bindingRequest({required bool useCandidate, int seed = 0}) {
   final attrs = <stun.StunAttributeType, stun.StunAttribute>{
     // ICE checks always carry USERNAME; the contents don't matter for
     // this test — the embedded server only validates MESSAGE-INTEGRITY.
-    stun.StunAttributeType.username:
-        stun.StunAttribute(stun.StunAttributeType.username,
-            Uint8List.fromList('test-ufrag:remote-ufrag'.codeUnits)),
+    stun.StunAttributeType.username: stun.StunAttribute(
+        stun.StunAttributeType.username,
+        Uint8List.fromList('test-ufrag:remote-ufrag'.codeUnits)),
   };
   if (useCandidate) {
-    attrs[stun.StunAttributeType.useCandidate] = stun.StunAttribute(
-        stun.StunAttributeType.useCandidate, Uint8List(0));
+    attrs[stun.StunAttributeType.useCandidate] =
+        stun.StunAttribute(stun.StunAttributeType.useCandidate, Uint8List(0));
   }
   final msg = stun.StunMessage(
     messageType: stun.StunMessageType.bindingRequest,
@@ -93,7 +93,8 @@ void main() {
       expect(peer.bindingRequestsReceived, greaterThanOrEqualTo(2));
     });
 
-    test('binding request with bad MESSAGE-INTEGRITY does not nominate '
+    test(
+        'binding request with bad MESSAGE-INTEGRITY does not nominate '
         'the peer', () async {
       final pc = RTCPeerConnection();
       addTearDown(pc.close);
