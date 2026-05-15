@@ -105,6 +105,14 @@ class ShardConfig {
   /// individual silent bridges.
   final int? idleSessionTimeoutMs;
 
+  /// STUN / TURN URLs propagated to every Publisher / Subscriber
+  /// `RTCPeerConnection` as `RTCConfiguration.iceServers`. Today only
+  /// `stun:` URLs are honoured; each one yields a server-reflexive
+  /// (`srflx`) candidate trickled to the client over the existing
+  /// signaling channel. Strings (rather than the codec-style enum tags)
+  /// because URLs are already isolate-sendable primitives.
+  final List<String> iceServerUrls;
+
   const ShardConfig({
     required this.sessionId,
     required this.bindAddress,
@@ -121,6 +129,7 @@ class ShardConfig {
     this.bridgeKeepaliveMs,
     this.maxPeersPerSession,
     this.idleSessionTimeoutMs,
+    this.iceServerUrls = const [],
   });
 }
 
@@ -612,6 +621,7 @@ class _ShardWorker {
           : InternetAddress(config.announceAddress!),
       defaultVideoCodecs: _materialiseCodecs(config.videoCodecs),
       defaultAudioCodecs: _materialiseCodecs(config.audioCodecs),
+      iceServerUrls: config.iceServerUrls,
     ));
     inbox.listen((msg) => _onMessage(msg));
     // Phase 29 — start the idle-session reaper if configured. The

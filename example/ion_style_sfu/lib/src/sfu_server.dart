@@ -108,6 +108,11 @@ Future<IonSfuServerHandle> runIonStyleSfuServer({
   // build a [Logger] using stdout/stderr (or [Logger.silent] when
   // [quiet] is true) so the operator-visible behaviour is unchanged.
   Logger? logger,
+  // STUN / TURN URLs propagated to every Publisher / Subscriber
+  // `RTCPeerConnection` so they gather server-reflexive (`srflx`)
+  // candidates in addition to the host candidate. Empty by default;
+  // pass e.g. `['stun:stun.l.google.com:19302']` to enable.
+  Iterable<String> iceServerUrls = const [],
 }) async {
   final log = logger ?? (quiet ? Logger.silent() : Logger());
   final bindAddr = InternetAddress(ip);
@@ -126,6 +131,7 @@ Future<IonSfuServerHandle> runIonStyleSfuServer({
     maxSessions: maxSessions,
     maxPeersPerSession: maxPeersPerSession,
     idleSessionTimeoutMs: idleSessionTimeoutMs,
+    iceServerUrls: iceServerUrls.toList(growable: false),
   ));
 
   // Optional cluster wiring — hub + locator now; coordinator is

@@ -51,6 +51,13 @@ class ShardConfigTemplate {
   /// than this many milliseconds.
   final int? idleSessionTimeoutMs;
 
+  /// STUN / TURN URLs propagated to every Publisher / Subscriber
+  /// `RTCPeerConnection` as `RTCConfiguration.iceServers`. Drives
+  /// server-reflexive (`srflx`) candidate gathering on each PC; the
+  /// gathered candidates are trickled to clients via the existing
+  /// `IceCandidateEvent` → `trickle` signaling path.
+  final List<String> iceServerUrls;
+
   const ShardConfigTemplate({
     required this.bindAddress,
     required this.rtpBasePort,
@@ -64,6 +71,7 @@ class ShardConfigTemplate {
     this.maxSessions,
     this.maxPeersPerSession,
     this.idleSessionTimeoutMs,
+    this.iceServerUrls = const [],
   });
 }
 
@@ -144,6 +152,7 @@ class ShardedSfu {
       bridgeKeepaliveMs: template.bridgeKeepaliveMs,
       maxPeersPerSession: template.maxPeersPerSession,
       idleSessionTimeoutMs: template.idleSessionTimeoutMs,
+      iceServerUrls: template.iceServerUrls,
     );
     final cfg = configure?.call(base) ?? base;
     final f = SessionShard.spawn(cfg).then((shard) {

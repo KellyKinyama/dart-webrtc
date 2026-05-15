@@ -31,12 +31,21 @@ class WebRTCTransportConfig {
   final List<SdpCodec> defaultVideoCodecs;
   final List<SdpCodec> defaultAudioCodecs;
 
+  /// Optional STUN/TURN URLs propagated to every Publisher / Subscriber
+  /// `RTCPeerConnection` as `RTCConfiguration.iceServers`. Only `stun:`
+  /// URLs are honoured today (TURN allocation is not wired up yet); a
+  /// successful Binding Response from each STUN server yields one
+  /// `srflx` candidate per PC, trickled to the client through the
+  /// existing signaling path.
+  final List<String> iceServerUrls;
+
   const WebRTCTransportConfig({
     required this.bindAddress,
     required this.rtpBasePort,
     this.announceAddress,
     this.defaultVideoCodecs = const [],
     this.defaultAudioCodecs = const [],
+    this.iceServerUrls = const [],
   });
 }
 

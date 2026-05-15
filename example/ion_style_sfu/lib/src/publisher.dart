@@ -61,6 +61,9 @@ class Publisher {
   }) async {
     final cfg = session.sfu.config;
     final pc = RTCPeerConnection(RTCConfiguration(
+      iceServers: [
+        for (final url in cfg.iceServerUrls) RTCIceServer(urls: [url]),
+      ],
       defaultVideoCodecs: cfg.defaultVideoCodecs,
       defaultAudioCodecs: cfg.defaultAudioCodecs,
     ));

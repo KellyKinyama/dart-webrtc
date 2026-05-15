@@ -28,7 +28,8 @@
 //   * `getStats()` — returns counters from the bound transport.
 //
 // What is NOT wired up yet (kept as integration work):
-//   * STUN/TURN candidate gathering (only host candidates are emitted).
+//   * TURN allocation / relay candidates (only host + STUN srflx are
+//     gathered; `turn:` URLs in `iceServers` are ignored).
 //   * Trickle ICE on the *remote* side (`addIceCandidate` is accepted but
 //     not forwarded to the agent).
 //   * SCTP framing on data channels.
@@ -561,22 +562,81 @@ class RTCPeerConnection {
     // Emit one host candidate for the bound socket. Real ICE would gather
     // every interface; here we surface only what we actually bound to.
     final advertisedAddr = (_announceAddress ?? transport.address).address;
-    final cand = RTCIceCandidate(
+    final hostMid =
+        _transceivers.isNotEmpty ? (_transceivers.first.mid ?? '0') : '0';
+    final hostCand = RTCIceCandidate(
       candidate: 'candidate:1 1 udp 2113937151 $advertisedAddr '
           '${transport.port} typ host',
-      sdpMid: _transceivers.isNotEmpty ? (_transceivers.first.mid ?? '0') : '0',
+      sdpMid: hostMid,
       sdpMLineIndex: 0,
       usernameFragment: _ufrag,
     );
     _setIceGatheringState(RTCIceGatheringState.gathering);
     scheduleMicrotask(() {
       if (_closed) return;
-      onIceCandidate?.call(cand);
-      onIceCandidate?.call(null);
-      _setIceGatheringState(RTCIceGatheringState.complete);
+      onIceCandidate?.call(hostCand);
+      // Continue gathering server-reflexive candidates from the configured
+      // STUN servers; emit end-of-candidates once they all settle.
+      unawaited(_gatherStunReflexive(transport, hostMid));
     });
 
     return transport;
+  }
+
+  /// Iterate every `stun:` URL in [_config.iceServers], send a Binding
+  /// Request from the bound media socket, and emit a server-reflexive
+  /// `RTCIceCandidate` for each successful response. Always emits the
+  /// `null` end-of-candidates sentinel and advances [iceGatheringState] to
+  /// `complete` when finished, even if every query fails.
+  Future<void> _gatherStunReflexive(
+    RtcUdpTransport transport,
+    String mid,
+  ) async {
+    final servers = <_StunServerEndpoint>[];
+    for (final s in _config.iceServers) {
+      for (final url in s.urls) {
+        final ep = _StunServerEndpoint.parse(url);
+        if (ep != null) servers.add(ep);
+      }
+    }
+
+    // RFC 5245 srflx priority for component 1.
+    const typePref = 100; // srflx
+    const localPref = 65535;
+    const componentId = 1;
+    final priority = (typePref << 24) | (localPref << 8) | (256 - componentId);
+
+    var foundation = 2;
+    final futures = <Future<void>>[];
+    for (final ep in servers) {
+      futures.add(() async {
+        try {
+          final addresses = await InternetAddress.lookup(ep.host);
+          if (addresses.isEmpty) return;
+          final mapped =
+              await transport.queryStunBinding(addresses.first, ep.port);
+          if (_closed) return;
+          final relAddr = (_announceAddress ?? transport.address).address;
+          final cand = RTCIceCandidate(
+            candidate: 'candidate:${foundation++} $componentId udp $priority '
+                '${mapped.ip.address} ${mapped.port} typ srflx '
+                'raddr $relAddr rport ${transport.port}',
+            sdpMid: mid,
+            sdpMLineIndex: 0,
+            usernameFragment: _ufrag,
+          );
+          onIceCandidate?.call(cand);
+        } catch (_) {
+          // Swallow per-server errors; one bad STUN shouldn't block the
+          // rest of gathering.
+        }
+      }());
+    }
+
+    await Future.wait(futures);
+    if (_closed) return;
+    onIceCandidate?.call(null);
+    _setIceGatheringState(RTCIceGatheringState.complete);
   }
 
   /// Returns the currently bound transport, or null.
@@ -880,5 +940,51 @@ class RTCPeerConnection {
       buf.writeCharCode(alphabet.codeUnitAt(bytes[i % bytes.length] % 64));
     }
     return buf.toString();
+  }
+}
+
+/// Parsed `stun:` / `stuns:` URL used for srflx candidate gathering.
+///
+/// Accepted forms (per RFC 7064):
+///   `stun:host`          — defaults to port 3478
+///   `stun:host:port`
+///   `stuns:host[:port]`  — also recognised; transport is still UDP here
+///                          since [RtcUdpTransport] is UDP-only.
+///
+/// `turn:` / `turns:` URLs are ignored — TURN allocation is not wired up
+/// in this build.
+class _StunServerEndpoint {
+  final String host;
+  final int port;
+  const _StunServerEndpoint(this.host, this.port);
+
+  static _StunServerEndpoint? parse(String url) {
+    final colon = url.indexOf(':');
+    if (colon <= 0) return null;
+    final scheme = url.substring(0, colon).toLowerCase();
+    if (scheme != 'stun' && scheme != 'stuns') return null;
+    var rest = url.substring(colon + 1);
+    // Strip any `?transport=...` query suffix.
+    final q = rest.indexOf('?');
+    if (q >= 0) rest = rest.substring(0, q);
+    if (rest.isEmpty) return null;
+    String host;
+    int port;
+    if (rest.startsWith('[')) {
+      // IPv6 literal: [::1]:3478
+      final close = rest.indexOf(']');
+      if (close < 0) return null;
+      host = rest.substring(1, close);
+      final tail = rest.substring(close + 1);
+      port = tail.startsWith(':')
+          ? (int.tryParse(tail.substring(1)) ?? 3478)
+          : 3478;
+    } else {
+      final hp = rest.split(':');
+      host = hp[0];
+      port = hp.length > 1 ? (int.tryParse(hp[1]) ?? 3478) : 3478;
+    }
+    if (host.isEmpty) return null;
+    return _StunServerEndpoint(host, port);
   }
 }

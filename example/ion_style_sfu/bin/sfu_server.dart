@@ -17,6 +17,7 @@ Future<void> main(List<String> arguments) async {
   int? relayPort;
   String? relaySecret;
   final clusterPeers = <ClusterPeer>[];
+  final iceServerUrls = <String>[];
 
   for (var i = 0; i < arguments.length; i++) {
     switch (arguments[i]) {
@@ -57,6 +58,13 @@ Future<void> main(List<String> arguments) async {
           clusterPeers.add(ClusterPeer.parse(s));
         }
         break;
+      case '--ice-server':
+        // Repeatable; also accepts comma-separated URLs in a single value.
+        for (final raw in arguments[++i].split(',')) {
+          final url = raw.trim();
+          if (url.isNotEmpty) iceServerUrls.add(url);
+        }
+        break;
       case '-h':
       case '--help':
         stdout.writeln(_help);
@@ -73,6 +81,7 @@ Future<void> main(List<String> arguments) async {
     ip: ip,
     port: wsPort,
     rtpBase: rtpBase,
+    iceServerUrls: iceServerUrls,
     announceIp: announceIp,
     authToken: authToken,
     maxPeersPerRoom: maxPeersPerRoom,
@@ -104,6 +113,9 @@ Transport:
   --ws-port <port>        WebSocket / HTTP port (default 9090)
   --rtp-base <port>       First UDP port for media transports (default 51000)
   --announce-ip <addr>    Override the host candidate IP (NAT/wildcard binds)
+  --ice-server <url>      STUN URL for srflx gathering on Pub/Sub PCs.
+                          Repeatable; comma-separated values also accepted.
+                          E.g. --ice-server stun:stun.l.google.com:19302
 
 Production:
   --auth-token <token>    Require this bearer token on /ws/<sid>

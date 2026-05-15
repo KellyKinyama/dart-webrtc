@@ -8,6 +8,7 @@
 
 import 'dart:async';
 import 'dart:io';
+import 'dart:math';
 import 'dart:typed_data';
 
 import 'package:pure_dart_webrtc/src/dtls/dtls_message.dart' as dtls;
@@ -88,6 +89,12 @@ class RtcUdpTransport {
   StreamSubscription<RawSocketEvent>? _sub;
   bool _closed = false;
 
+  /// Outstanding outbound STUN binding requests keyed by hex(transactionId).
+  /// Completed by [_onSocketEvent] when a matching success/error response
+  /// arrives, so callers of [queryStunBinding] can `await` the reflexive
+  /// address discovered by a STUN server.
+  final Map<String, Completer<stun.MappedAddress>> _pendingStunQueries = {};
+
   /// Fired when a brand-new peer is observed (first packet received).
   void Function(RtcPeerTransport peer)? onPeer;
 
@@ -134,6 +141,57 @@ class RtcUdpTransport {
     _socket.send(data, remote, remotePort);
   }
 
+  /// Send a STUN Binding Request to [serverHost]:[serverPort] from the
+  /// bound media socket and resolve with the server-reported reflexive
+  /// address (XOR-MAPPED-ADDRESS).
+  ///
+  /// Used for ICE server-reflexive (`srflx`) candidate gathering. Because
+  /// the request is sent from the same socket that carries SRTP/DTLS, the
+  /// returned port reflects the actual NAT mapping for media — making the
+  /// candidate usable for connectivity checks.
+  ///
+  /// Throws [TimeoutException] if no response arrives within [timeout].
+  Future<stun.MappedAddress> queryStunBinding(
+    InternetAddress serverHost,
+    int serverPort, {
+    Duration timeout = const Duration(seconds: 3),
+  }) async {
+    if (_closed) {
+      throw StateError('RtcUdpTransport is closed.');
+    }
+    final txId = _generateTransactionId();
+    final txKey = _hex(txId);
+    final request = stun.StunMessage(
+      messageType: stun.StunMessageType.bindingRequest,
+      transactionId: txId,
+    );
+    final completer = Completer<stun.MappedAddress>();
+    _pendingStunQueries[txKey] = completer;
+    try {
+      _socket.send(request.encode(), serverHost, serverPort);
+      return await completer.future.timeout(timeout);
+    } finally {
+      _pendingStunQueries.remove(txKey);
+    }
+  }
+
+  static Uint8List _generateTransactionId() {
+    final r = Random.secure();
+    final out = Uint8List(stun.stunTransactionIdSize);
+    for (var i = 0; i < out.length; i++) {
+      out[i] = r.nextInt(256);
+    }
+    return out;
+  }
+
+  static String _hex(Uint8List bytes) {
+    final sb = StringBuffer();
+    for (final b in bytes) {
+      sb.write(b.toRadixString(16).padLeft(2, '0'));
+    }
+    return sb.toString();
+  }
+
   /// Encrypt and send an RTP packet to [peer]. Returns false if SRTP isn't
   /// keyed yet.
   Future<bool> sendRtp(RtcPeerTransport peer, Uint8List rtpBytes) async {
@@ -178,6 +236,10 @@ class RtcUdpTransport {
         print('[udp ${_socket.address.address}:${_socket.port}] STUN '
             '${data.length}B from ${dg.address.address}:${dg.port}');
       }
+      // If this is a response to one of our outbound binding queries
+      // (srflx gathering), consume it locally instead of forwarding to the
+      // embedded STUN server (which only handles inbound requests).
+      if (_tryCompleteStunQuery(data)) return;
       stun.StunServer.handleDatagram(
         Datagram(data, dg.address, dg.port),
         socket: _socket,
@@ -263,6 +325,47 @@ class RtcUdpTransport {
 
     onPeer?.call(peer);
     return peer;
+  }
+
+  /// Returns true if [data] was consumed as a response to a pending
+  /// outbound STUN binding query.
+  bool _tryCompleteStunQuery(Uint8List data) {
+    if (_pendingStunQueries.isEmpty) return false;
+    final stun.StunMessage msg;
+    try {
+      msg = stun.StunMessage.decode(data);
+    } catch (_) {
+      return false;
+    }
+    if (msg.messageType.method != stun.StunMessageMethod.binding) {
+      return false;
+    }
+    final cls = msg.messageType.messageClass;
+    if (cls != stun.StunMessageClass.successResponse &&
+        cls != stun.StunMessageClass.errorResponse) {
+      return false;
+    }
+    final completer = _pendingStunQueries.remove(_hex(msg.transactionId));
+    if (completer == null) return false;
+    if (cls == stun.StunMessageClass.errorResponse) {
+      completer.completeError(
+          StateError('STUN Binding Request returned error response'));
+      return true;
+    }
+    final attr = msg.attributes[stun.StunAttributeType.xorMappedAddress];
+    if (attr == null) {
+      completer.completeError(
+          StateError('STUN Binding Response missing XOR-MAPPED-ADDRESS'));
+      return true;
+    }
+    try {
+      final mapped =
+          stun.decodeXorMappedAddressAttribute(attr, msg.transactionId);
+      completer.complete(mapped);
+    } catch (e) {
+      completer.completeError(e);
+    }
+    return true;
   }
 
   void _initSrtpForPeer(RtcPeerTransport peer) {
