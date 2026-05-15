@@ -19,8 +19,7 @@ Future<HttpClientResponse> _get(
   String path, {
   Map<String, String> headers = const {},
 }) async {
-  final req =
-      await client.getUrl(Uri.parse('http://127.0.0.1:$port$path'));
+  final req = await client.getUrl(Uri.parse('http://127.0.0.1:$port$path'));
   headers.forEach(req.headers.set);
   return req.close();
 }
@@ -31,8 +30,7 @@ Future<HttpClientResponse> _post(
   String path, {
   Map<String, String> headers = const {},
 }) async {
-  final req =
-      await client.postUrl(Uri.parse('http://127.0.0.1:$port$path'));
+  final req = await client.postUrl(Uri.parse('http://127.0.0.1:$port$path'));
   headers.forEach(req.headers.set);
   return req.close();
 }
@@ -66,8 +64,7 @@ void main() {
           rtpBase: 19500,
           quiet: true,
           clusterPeers: [
-            ClusterPeer(
-                id: 'a', host: '127.0.0.1', httpPort: 1, relayPort: 2),
+            ClusterPeer(id: 'a', host: '127.0.0.1', httpPort: 1, relayPort: 2),
           ],
           relayPort: 19501,
         ),
@@ -83,8 +80,7 @@ void main() {
           rtpBase: 19510,
           quiet: true,
           clusterPeers: [
-            ClusterPeer(
-                id: 'a', host: '127.0.0.1', httpPort: 1, relayPort: 2),
+            ClusterPeer(id: 'a', host: '127.0.0.1', httpPort: 1, relayPort: 2),
           ],
           selfClusterId: 'a',
         ),
@@ -100,8 +96,7 @@ void main() {
           rtpBase: 19520,
           quiet: true,
           clusterPeers: [
-            ClusterPeer(
-                id: 'a', host: '127.0.0.1', httpPort: 1, relayPort: 2),
+            ClusterPeer(id: 'a', host: '127.0.0.1', httpPort: 1, relayPort: 2),
           ],
           selfClusterId: 'nope',
           relayPort: 19521,
