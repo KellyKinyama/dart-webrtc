@@ -138,8 +138,7 @@ void main() {
       dt.writeRtp(fLayer, false, rtp);
       expect(dt.switchInFlight, isFalse);
       // Now switching to 'q' is permitted.
-      final ok =
-          subscriber.subscriber!.setPreferredLayer(published.id, 'q');
+      final ok = subscriber.subscriber!.setPreferredLayer(published.id, 'q');
       expect(ok, isTrue);
       // Setting the layer fires _sendUpstreamPli → seam captures it.
       expect(captured.length, 1);
