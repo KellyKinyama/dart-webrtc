@@ -26,6 +26,68 @@ import 'dart:io';
 
 import 'package:pure_dart_webrtc_ion_style_sfu/ion_style_sfu.dart';
 
+/// Hard cap on a single inbound WebSocket signaling frame. SDPs in
+/// the 8-16 KB range are normal for simulcast offers; ICE trickles
+/// are tiny. 256 KB leaves head-room for ridiculous browser quirks
+/// while still blocking a client from streaming GBs into our
+/// `jsonDecode`. Frames over the cap close the socket.
+const int _maxSignalingFrameBytes = 256 * 1024;
+
+/// Sliding-window rate limit on inbound signaling messages, per WS.
+/// A real client sends one offer + a handful of trickles + one
+/// answer; even with restarts it never approaches this rate. Bursts
+/// past the cap close the socket.
+const int _maxSignalingMsgsPerWindow = 64;
+const Duration _signalingRateWindow = Duration(seconds: 5);
+
+/// Hard cap on identifiers we put into the routing maps. The shard
+/// uses these as JSON keys and as map keys, so unbounded strings are
+/// a memory-DoS vector even before they hit any media path.
+const int _maxIdLen = 128;
+
+/// Conservative WS keepalive. Dart sets up matching pong handling on
+/// both sides automatically. Without it a half-open TCP connection
+/// (laptop lid closed, hard NAT timeout) keeps the peer alive on the
+/// server forever.
+const Duration _wsPingInterval = Duration(seconds: 20);
+
+/// Returns true iff [s] is a non-empty, length-bounded ASCII id
+/// containing only `[A-Za-z0-9._:\-]`. Rejects control chars,
+/// whitespace, NULs, surrogate pairs, and path-traversal sequences.
+bool _isValidId(String s) {
+  if (s.isEmpty || s.length > _maxIdLen) return false;
+  for (var i = 0; i < s.length; i++) {
+    final c = s.codeUnitAt(i);
+    final ok = (c >= 0x30 && c <= 0x39) || // 0-9
+        (c >= 0x41 && c <= 0x5a) || // A-Z
+        (c >= 0x61 && c <= 0x7a) || // a-z
+        c == 0x2d || // -
+        c == 0x2e || // .
+        c == 0x3a || // :
+        c == 0x5f; // _
+    if (!ok) return false;
+  }
+  return true;
+}
+
+/// Constant-time comparison of two UTF-8 strings. Used for the bearer
+/// token check so an attacker can't recover the token character by
+/// character via response-time differences.
+bool _constantTimeEquals(String a, String b) {
+  final ab = utf8.encode(a);
+  final bb = utf8.encode(b);
+  // Pad the shorter side to avoid leaking the real length when the
+  // attacker submits a token of the wrong size.
+  final n = ab.length > bb.length ? ab.length : bb.length;
+  var diff = ab.length ^ bb.length;
+  for (var i = 0; i < n; i++) {
+    final x = i < ab.length ? ab[i] : 0;
+    final y = i < bb.length ? bb[i] : 0;
+    diff |= x ^ y;
+  }
+  return diff == 0;
+}
+
 /// Lifecycle handle returned by [runIonStyleSfuServer].
 class IonSfuServerHandle {
   final HttpServer http;
@@ -290,7 +352,7 @@ Future<IonSfuServerHandle> runIonStyleSfuServer({
       if (authToken != null) {
         final got = req.uri.queryParameters['token'] ??
             _bearerHeader(req.headers.value(HttpHeaders.authorizationHeader));
-        if (got != authToken) {
+        if (got == null || !_constantTimeEquals(got, authToken)) {
           req.response.statusCode = HttpStatus.unauthorized;
           req.response.close();
           return;
@@ -378,15 +440,17 @@ Future<IonSfuServerHandle> runIonStyleSfuServer({
         return;
       }
       final sid = req.uri.path.substring('/ws/'.length);
-      if (sid.isEmpty) {
+      if (sid.isEmpty || !_isValidId(Uri.decodeComponent(sid))) {
         req.response.statusCode = HttpStatus.badRequest;
+        req.response.headers.contentType = ContentType.json;
+        req.response.write(jsonEncode({'error': 'invalidSessionId'}));
         req.response.close();
         return;
       }
       if (authToken != null) {
         final got = req.uri.queryParameters['token'] ??
             _bearerHeader(req.headers.value(HttpHeaders.authorizationHeader));
-        if (got != authToken) {
+        if (got == null || !_constantTimeEquals(got, authToken)) {
           req.response.statusCode = HttpStatus.unauthorized;
           req.response.close();
           return;
@@ -405,14 +469,20 @@ Future<IonSfuServerHandle> runIonStyleSfuServer({
         return;
       }
       WebSocketTransformer.upgrade(req).then(
-        (ws) => _IonPeerSession(
-          ws: ws,
-          sharded: sharded,
-          router: routerFor(sid),
-          sid: sid,
-          quiet: quiet,
-          maxPeersPerRoom: maxPeersPerRoom,
-        ).run(),
+        (ws) {
+          // Server-driven keepalive so half-open TCP connections
+          // (closed laptop, NAT idle reset) eventually surface as
+          // an `onDone` instead of a stuck peer.
+          ws.pingInterval = _wsPingInterval;
+          return _IonPeerSession(
+            ws: ws,
+            sharded: sharded,
+            router: routerFor(sid),
+            sid: sid,
+            quiet: quiet,
+            maxPeersPerRoom: maxPeersPerRoom,
+          ).run();
+        },
         onError: (e) {
           if (!quiet) log.warn('ws upgrade error', {'error': '$e'});
         },
@@ -552,6 +622,12 @@ class _IonPeerSession {
   SessionShard? _shard;
   String? _uid;
 
+  /// Sliding-window timestamps of the last N inbound messages,
+  /// used to enforce [_maxSignalingMsgsPerWindow] /
+  /// [_signalingRateWindow]. Old entries are pruned on each
+  /// arrival so the list never grows past the cap.
+  final List<DateTime> _recentMsgs = [];
+
   _IonPeerSession({
     required this.ws,
     required this.sharded,
@@ -579,9 +655,44 @@ class _IonPeerSession {
   }
 
   Future<void> _onMessage(dynamic raw) async {
+    // Reject binary frames outright — the signaling protocol is
+    // strictly TEXT JSON.
+    if (raw is! String) {
+      if (raw is List<int>) {
+        // Some clients (and load tools) accidentally send TEXT as
+        // bytes. Don't even try to decode — just close.
+        await _closeWithError(
+            WebSocketStatus.unsupportedData, 'binary not supported');
+      }
+      return;
+    }
+    // Frame size cap. UTF-8 expansion is at worst 4x the code-unit
+    // length, but `String.length` is the canonical wire estimate
+    // for our JSON payloads (almost pure ASCII).
+    if (raw.length > _maxSignalingFrameBytes) {
+      await _closeWithError(
+          WebSocketStatus.messageTooBig, 'frame too large');
+      return;
+    }
+    // Sliding-window rate limit. Drops the socket on burst rather
+    // than just dropping the message — a real client never bursts
+    // this hard, and accepting more would let a noisy peer crowd
+    // out the shard's run loop.
+    final now = DateTime.now();
+    final cutoff = now.subtract(_signalingRateWindow);
+    _recentMsgs.removeWhere((t) => t.isBefore(cutoff));
+    if (_recentMsgs.length >= _maxSignalingMsgsPerWindow) {
+      await _closeWithError(
+          WebSocketStatus.policyViolation, 'rate limit exceeded');
+      return;
+    }
+    _recentMsgs.add(now);
+
     Map<String, Object?> msg;
     try {
-      msg = jsonDecode(raw as String) as Map<String, Object?>;
+      final decoded = jsonDecode(raw);
+      if (decoded is! Map<String, Object?>) return;
+      msg = decoded;
     } catch (_) {
       return;
     }
@@ -604,10 +715,27 @@ class _IonPeerSession {
     }
   }
 
+  Future<void> _closeWithError(int statusCode, String reason) async {
+    if (ws.readyState == WebSocket.open) {
+      try {
+        ws.add(jsonEncode({'type': 'error', 'reason': reason}));
+      } catch (_) {}
+      try {
+        await ws.close(statusCode, reason);
+      } catch (_) {}
+    }
+  }
+
   Future<void> _onJoin(Map<String, Object?> msg) async {
     if (_shard != null) return;
-    final uid = (msg['uid'] as String?) ??
+    final rawUid = msg['uid'] as String?;
+    final uid = rawUid ??
         'peer-${DateTime.now().microsecondsSinceEpoch}';
+    if (rawUid != null && !_isValidId(rawUid)) {
+      _send({'type': 'error', 'reason': 'invalidUid'});
+      await ws.close();
+      return;
+    }
     _uid = uid;
 
     if (maxPeersPerRoom > 0) {
@@ -664,29 +792,55 @@ class _IonPeerSession {
     _send({'type': 'joined', 'uid': uid, 'sid': sid});
   }
 
+  /// Generous SDP cap. Even fully-loaded simulcast offers sit well
+  /// under 32 KB; anything larger is almost certainly malformed or
+  /// hostile.
+  static const int _maxSdpBytes = 64 * 1024;
+
+  /// Cap on a single ICE candidate line. Real candidates are
+  /// typically <200 bytes; we allow a kilobyte for crazy
+  /// extensions / future-proofing.
+  static const int _maxCandidateBytes = 1024;
+
   Future<void> _onOffer(Map<String, Object?> msg) async {
+    final shard = _shard;
+    final uid = _uid;
+    if (shard == null || uid == null) return; // not joined
     final target = msg['target'] as String? ?? 'pub';
     final sdp = msg['sdp'] as String?;
-    if (sdp == null) return;
+    if (sdp == null || sdp.length > _maxSdpBytes) return;
     if (target != 'pub') return;
-    final answer = await _shard!.applyPublisherOffer(_uid!, sdp);
+    final answer = await shard.applyPublisherOffer(uid, sdp);
     _send({'type': 'answer', 'target': 'pub', 'sdp': answer});
   }
 
   Future<void> _onAnswer(Map<String, Object?> msg) async {
+    final shard = _shard;
+    final uid = _uid;
+    if (shard == null || uid == null) return; // not joined
     final target = msg['target'] as String? ?? 'sub';
     final sdp = msg['sdp'] as String?;
-    if (sdp == null) return;
+    if (sdp == null || sdp.length > _maxSdpBytes) return;
     if (target != 'sub') return;
-    await _shard!.applySubscriberAnswer(_uid!, sdp);
+    await shard.applySubscriberAnswer(uid, sdp);
   }
 
   Future<void> _onTrickle(Map<String, Object?> msg) async {
+    final shard = _shard;
+    final uid = _uid;
+    if (shard == null || uid == null) return; // not joined
     final target = msg['target'] as String? ?? 'pub';
+    if (target != 'pub' && target != 'sub') return;
     final candidate = msg['candidate'] as String?;
-    if (candidate == null) return;
-    await _shard!.trickle(
-      _uid!,
+    if (candidate == null || candidate.length > _maxCandidateBytes) return;
+    // RFC 5245: a real ICE candidate line either starts with
+    // "candidate:" or is the empty end-of-candidates marker. Drop
+    // anything else without bothering the shard.
+    if (candidate.isNotEmpty && !candidate.startsWith('candidate:')) {
+      return;
+    }
+    await shard.trickle(
+      uid,
       target,
       candidate: candidate,
       sdpMid: msg['sdpMid']?.toString(),
