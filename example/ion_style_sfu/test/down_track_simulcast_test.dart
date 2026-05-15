@@ -201,8 +201,7 @@ void main() {
       expect(h.dt.layerSwitches, 0);
     });
 
-    test('setCurrentLayer succeeds once a primary baselines the rewriter',
-        () {
+    test('setCurrentLayer succeeds once a primary baselines the rewriter', () {
       final h = _makeSimTrack();
       addTearDown(h.pc.close);
       final hLayer = h.dt.receiver.layers.last; // 'h' is current
@@ -217,8 +216,7 @@ void main() {
       expect(h.dt.switchInFlight, isTrue);
     });
 
-    test('setCurrentLayer to the SAME currentLayer returns false (no-op)',
-        () {
+    test('setCurrentLayer to the SAME currentLayer returns false (no-op)', () {
       final h = _makeSimTrack();
       addTearDown(h.pc.close);
       // Baseline first so the in-flight guard doesn't fire.
@@ -231,8 +229,7 @@ void main() {
   });
 
   group('DownTrack TWCC stamping in the sink path', () {
-    test('packet WITH the twcc ext slot is stamped (counter increments)',
-        () {
+    test('packet WITH the twcc ext slot is stamped (counter increments)', () {
       final stamper = TwccStamper();
       final h = _makeSimTrack(stamper: stamper, twccExtId: 3);
       addTearDown(h.pc.close);
