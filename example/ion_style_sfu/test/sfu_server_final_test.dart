@@ -27,8 +27,7 @@ void main() {
     addTearDown(h.close);
     // Sanity: /healthz reports cluster mode.
     final c = HttpClient();
-    final req =
-        await c.getUrl(Uri.parse('http://127.0.0.1:${h.port}/healthz'));
+    final req = await c.getUrl(Uri.parse('http://127.0.0.1:${h.port}/healthz'));
     final resp = await req.close();
     final body = await resp.transform(utf8.decoder).join();
     c.close(force: true);
@@ -76,8 +75,9 @@ void main() {
     await h.sharded.closeShard('r1');
 
     // Drain remaining frames; the close should land within ~1s.
-    while (await it.moveNext().timeout(const Duration(seconds: 2),
-        onTimeout: () => false)) {
+    while (await it
+        .moveNext()
+        .timeout(const Duration(seconds: 2), onTimeout: () => false)) {
       // discard
     }
     expect(ws.readyState, anyOf(WebSocket.closed, WebSocket.closing));
