@@ -83,6 +83,16 @@ class RtcPeerTransport {
   DateTime lastPacketAt;
 
   bool get isSecure => srtp != null;
+
+  /// Drop any SRTP keying material this peer was holding. Idempotent.
+  /// Called when the owning [RtcUdpTransport] evicts the peer or when
+  /// the transport itself is torn down, so the GCM keys don't sit in
+  /// memory after we stop talking to the peer.
+  void disposeSrtp() {
+    final ctx = srtp;
+    srtp = null;
+    ctx?.close();
+  }
 }
 
 /// Single-socket UDP transport for a WebRTC server endpoint.
@@ -149,8 +159,8 @@ class RtcUdpTransport {
     final t =
         RtcUdpTransport._(socket, certificate, stunPassword, protectionProfile);
     t._sub = socket.listen(t._onSocketEvent);
-    t._evictionTimer =
-        Timer.periodic(const Duration(seconds: 30), (_) => t._evictStalePeers());
+    t._evictionTimer = Timer.periodic(
+        const Duration(seconds: 30), (_) => t._evictStalePeers());
     return t;
   }
 
@@ -243,6 +253,12 @@ class RtcUdpTransport {
     _evictionTimer?.cancel();
     _evictionTimer = null;
     await _sub?.cancel();
+    // Drop SRTP keys for every peer; if the caller releases its
+    // reference next we don't want stale GCM state lingering.
+    for (final p in _peers.values) {
+      p.disposeSrtp();
+    }
+    _peers.clear();
     _socket.close();
   }
 
@@ -257,11 +273,16 @@ class RtcUdpTransport {
     });
     for (final k in stale) {
       final peer = _peers.remove(k);
-      if (peer != null && _verbose) {
-        // ignore: avoid_print
-        print('[udp ${_socket.address.address}:${_socket.port}] '
-            'evicting idle peer ${k.host}:${k.port} '
-            '(secure=${peer.isSecure})');
+      if (peer != null) {
+        // Drop SRTP keying material so it doesn't sit in memory after
+        // we've decided we're done with this peer.
+        peer.disposeSrtp();
+        if (_verbose) {
+          // ignore: avoid_print
+          print('[udp ${_socket.address.address}:${_socket.port}] '
+              'evicting idle peer ${k.host}:${k.port} '
+              '(secure=${peer.isSecure})');
+        }
       }
     }
   }
@@ -414,6 +435,20 @@ class RtcUdpTransport {
   }
 
   void _initSrtpForPeer(RtcPeerTransport peer) {
+    // Defensive: an already-keyed peer means DTLS fired onConnected
+    // twice (e.g. a duplicate Finished slipped past the new server-side
+    // _flight6Sent guard). Re-deriving keys would silently swap the
+    // ciphers under the running RTP loop and break authentication on
+    // every subsequent packet. Keep the original keys.
+    if (peer.srtp != null) {
+      if (_verbose) {
+        // ignore: avoid_print
+        print('[udp ${_socket.address.address}:${_socket.port}] '
+            'SRTP already initialized for '
+            '${peer.remoteAddress.address}:${peer.remotePort}; skipping');
+      }
+      return;
+    }
     final keyLen = _protectionProfile.keyLength();
     final saltLen = _protectionProfile.saltLength();
     final keyingMaterial =

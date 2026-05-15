@@ -32,12 +32,58 @@ class SRTPContext {
   /// Per-SSRC outbound SRTCP index counter (31-bit, monotonically increasing).
   final Map<int, int> _srtcpOutIndex = {};
 
+  /// Per-SSRC inbound SRTCP replay protection: highest index already
+  /// authenticated, plus a 64-entry sliding bitmap of indices below it.
+  /// SRTCP indices are 31 bits, monotonically increasing within a
+  /// session; replays MUST be rejected (RFC 3711 §3.3.2).
+  final Map<int, _SrtcpReplay> _srtcpInboundReplay = {};
+
+  /// 2^48 packet limit (per the AES-GCM SRTP profile, RFC 7714 §17). At
+  /// this point the master key MUST be re-derived. We don't currently
+  /// support rekeying — instead encrypt fails fast so the application
+  /// learns about it instead of silently producing weak ciphertext.
+  static const int _maxOutboundPackets = (1 << 48) - 1;
+
+  /// 2^31 SRTCP index limit. Wrapping silently would shadow earlier
+  /// packets in our replay window and break authentication on the
+  /// other side; throw instead.
+  static const int _maxSrtcpIndex = 0x7FFFFFFF;
+
+  /// Total RTP packets encrypted with the current outbound key.
+  int _outboundRtpCount = 0;
+
+  /// True once [close] has been called. After that every encrypt /
+  /// decrypt fast-fails: the GCM ciphers are zeroized and any further
+  /// use would either crash or, worse, produce garbage that looks
+  /// almost-valid.
+  bool _closed = false;
+
+  bool get isClosed => _closed;
+
+  /// Total number of RTP packets we've successfully encrypted with the
+  /// current outbound key. Surfaced for stats / rekey-thresholds.
+  int get outboundRtpPacketCount => _outboundRtpCount;
+
   SRTPContext({
     // required this.addr,
     // required this.conn,
     required this.protectionProfile,
   })  : srtpSsrcStates = {},
         srtpSsrcStatesEncryption = {}; // Initialize new map
+
+  /// Tear down this context. Drops the GCM ciphers (so any caller who
+  /// still holds a reference fast-fails with a clear error) and clears
+  /// per-SSRC state. Idempotent.
+  void close() {
+    if (_closed) return;
+    _closed = true;
+    inboundGcm = null;
+    outboundGcm = null;
+    srtpSsrcStates.clear();
+    srtpSsrcStatesEncryption.clear();
+    _srtcpOutIndex.clear();
+    _srtcpInboundReplay.clear();
+  }
 
   // For decryption
   SsrcState _getSrtpSsrcState(int ssrc) {
@@ -60,6 +106,9 @@ class SRTPContext {
   }
 
   Future<Uint8List> decryptRtpPacket(Packet packet) async {
+    if (_closed) {
+      throw StateError('SRTPContext is closed');
+    }
     final cipher = inboundGcm;
     if (cipher == null) {
       throw Exception("GCM cipher not initialized for SRTPContext (inbound)");
@@ -78,30 +127,45 @@ class SRTPContext {
   }
 
   Future<Uint8List> encryptRtpPacket(Packet packet) async {
+    if (_closed) {
+      throw StateError('SRTPContext is closed');
+    }
     final cipher = outboundGcm;
     if (cipher == null) {
       throw Exception("GCM cipher not initialized for SRTPContext (outbound)");
+    }
+    if (_outboundRtpCount >= _maxOutboundPackets) {
+      throw StateError(
+          'SRTP outbound packet limit (2^48) reached \u2014 rekey required');
     }
 
     final SsrcStateEncryption s =
         _getSrtpSsrcStateForEncryption(packet.header.ssrc);
 
-    // Update the ROC and sequence number for encryption
-    // This logic ensures a monotonically increasing 48-bit index.
+    // Update the ROC and sequence number for encryption.
+    // RTP sequence numbers are strictly monotonically increasing for a
+    // given SSRC. Only treat a *strictly smaller* incoming seq as a
+    // wrap-around. An equal seq is a duplicate / misuse and bumping
+    // the ROC there would corrupt the IV and produce ciphertext the
+    // peer can't authenticate.
     if (s.lastSequenceNumber != -1 &&
-        packet.header.sequenceNumber <= s.lastSequenceNumber) {
-      // Sequence number has wrapped around (or reset unexpectedly), increment ROC
+        packet.header.sequenceNumber < s.lastSequenceNumber) {
+      // Sequence number wrapped around (mod 2^16); bump ROC.
       s.roc++;
     }
     s.lastSequenceNumber = packet.header.sequenceNumber;
 
     final Uint8List result = await cipher.encrypt(packet, s.roc);
+    _outboundRtpCount++;
     return result;
   }
 
   /// Encrypt a full RTCP packet [rtcp] using the outbound cipher. The
   /// per-SSRC SRTCP index is allocated automatically.
   Future<Uint8List> encryptRtcpPacket(Uint8List rtcp) async {
+    if (_closed) {
+      throw StateError('SRTPContext is closed');
+    }
     final cipher = outboundGcm;
     if (cipher == null) {
       throw Exception('GCM cipher not initialized for SRTPContext (outbound)');
@@ -110,18 +174,91 @@ class SRTPContext {
       throw Exception('RTCP packet too short');
     }
     final ssrc = ByteData.sublistView(rtcp, 4, 8).getUint32(0, Endian.big);
-    final next = ((_srtcpOutIndex[ssrc] ?? 0) + 1) & 0x7FFFFFFF;
+    final next = (_srtcpOutIndex[ssrc] ?? 0) + 1;
+    if (next > _maxSrtcpIndex) {
+      throw StateError(
+          'SRTCP index space exhausted for ssrc=0x${ssrc.toRadixString(16)} '
+          '\u2014 rekey required');
+    }
     _srtcpOutIndex[ssrc] = next;
     return cipher.encryptRtcp(rtcp, next);
   }
 
   /// Decrypt a full SRTCP packet [srtcp] using the inbound cipher.
   Future<Uint8List> decryptRtcpPacket(Uint8List srtcp) async {
+    if (_closed) {
+      throw StateError('SRTPContext is closed');
+    }
     final cipher = inboundGcm;
     if (cipher == null) {
       throw Exception('GCM cipher not initialized for SRTPContext (inbound)');
     }
-    return cipher.decryptRtcp(srtcp);
+    if (srtcp.length < 12) {
+      throw Exception('SRTCP packet too short');
+    }
+    // Replay protection: the SRTCP index is the trailing 31 bits of the
+    // last 4 bytes of the packet (the SRTCP_INDEX_E trailer per RFC
+    // 3711 §3.4 / RFC 7714). Reject duplicates BEFORE touching the GCM
+    // cipher so an attacker can't force us to perform expensive AEAD
+    // work on every replayed packet.
+    final ssrc = ByteData.sublistView(srtcp, 4, 8).getUint32(0, Endian.big);
+    final trailerOffset = srtcp.length - 4;
+    final eIndex = ByteData.sublistView(srtcp, trailerOffset, srtcp.length)
+        .getUint32(0, Endian.big);
+    final index = eIndex & _maxSrtcpIndex;
+    final replay = _srtcpInboundReplay.putIfAbsent(ssrc, _SrtcpReplay.new);
+    if (!replay.check(index)) {
+      throw StateError(
+          'SRTCP replay: ssrc=0x${ssrc.toRadixString(16)} index=$index');
+    }
+    final out = await cipher.decryptRtcp(srtcp);
+    replay.commit(index);
+    return out;
+  }
+}
+
+/// Sliding-window replay protection for SRTCP indices on a single SSRC.
+/// `_top` is the highest index we've authenticated so far; `_bitmap` is
+/// a 64-bit window of indices in `(_top - 64, _top]` already seen.
+class _SrtcpReplay {
+  static const int _windowSize = 64;
+  int _top = 0;
+  int _bitmap = 0; // bit i set => index (_top - i) already seen
+  bool _initialized = false;
+
+  /// Returns true if [index] has not yet been seen and may be processed.
+  /// Does NOT commit; call [commit] once the AEAD verify succeeds.
+  bool check(int index) {
+    if (!_initialized) return true;
+    if (index > _top) return true;
+    final diff = _top - index;
+    if (diff >= _windowSize) return false; // too old
+    return (_bitmap & (1 << diff)) == 0;
+  }
+
+  /// Mark [index] as seen. Must only be called after [check] returned
+  /// true and the packet successfully authenticated.
+  void commit(int index) {
+    if (!_initialized) {
+      _initialized = true;
+      _top = index;
+      _bitmap = 1; // bit 0 set => _top itself seen
+      return;
+    }
+    if (index > _top) {
+      final shift = index - _top;
+      if (shift >= _windowSize) {
+        _bitmap = 1;
+      } else {
+        _bitmap = ((_bitmap << shift) | 1) & ((1 << _windowSize) - 1);
+      }
+      _top = index;
+    } else {
+      final diff = _top - index;
+      if (diff < _windowSize) {
+        _bitmap |= 1 << diff;
+      }
+    }
   }
 }
 
