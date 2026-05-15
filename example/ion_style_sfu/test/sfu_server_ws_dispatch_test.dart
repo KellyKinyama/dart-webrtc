@@ -84,8 +84,7 @@ void main() {
       await Future<void>.delayed(const Duration(milliseconds: 200));
     });
 
-    test('answer with bogus SDP routes to applySubscriberAnswer',
-        () async {
+    test('answer with bogus SDP routes to applySubscriberAnswer', () async {
       final ws = await _connect(handle.port, 'r2');
       final it = StreamIterator(ws);
       addTearDown(() async {
@@ -144,8 +143,9 @@ void main() {
 
       ws.add(jsonEncode({'type': 'leave'}));
       // Drain; expect the stream to end.
-      while (await it.moveNext().timeout(const Duration(seconds: 2),
-          onTimeout: () => false)) {
+      while (await it
+          .moveNext()
+          .timeout(const Duration(seconds: 2), onTimeout: () => false)) {
         // discard
       }
       expect(ws.readyState, anyOf(WebSocket.closed, WebSocket.closing));
