@@ -24,8 +24,20 @@ void main() {
     test('percentiles cross every bucket boundary', () {
       final h = LatencyHistogram();
       // One sample in each bucket including overflow (>100000us).
-      const buckets = [25, 75, 150, 300, 800, 1500, 3000, 7000, 15000, 30000,
-        80000, 200000];
+      const buckets = [
+        25,
+        75,
+        150,
+        300,
+        800,
+        1500,
+        3000,
+        7000,
+        15000,
+        30000,
+        80000,
+        200000
+      ];
       for (final v in buckets) {
         h.record(v);
       }

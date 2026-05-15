@@ -251,7 +251,7 @@ class ShardedSfu {
   /// suitable for [formatPrometheus].
   Future<SfuStatsSnapshot> aggregateSnapshot() async {
     final j = await aggregateSnapshotJson();
-    return _snapshotFromJson(j);
+    return snapshotFromJson(j);
   }
 
   Future<void> close() async {
@@ -291,7 +291,10 @@ class ShardedSfu {
 
 /// Rehydrate the JSON shape produced by [snapshotSfu] / aggregation
 /// into a [SfuStatsSnapshot] so [formatPrometheus] can render it.
-SfuStatsSnapshot _snapshotFromJson(Map<String, Object?> j) {
+///
+/// Public so tests can drive the rehydration loops directly without
+/// having to spin up a real Sfu + DownTrack.
+SfuStatsSnapshot snapshotFromJson(Map<String, Object?> j) {
   final tracks = <DownTrackStats>[];
   for (final raw in (j['tracks'] as List? ?? const [])) {
     final t = (raw as Map).cast<String, Object?>();
