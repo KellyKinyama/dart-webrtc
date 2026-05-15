@@ -56,8 +56,7 @@ void main() {
       await sfu.close();
     });
 
-    test('snapshotSfu populates DownTrackStats for each subscriber track',
-        () {
+    test('snapshotSfu populates DownTrackStats for each subscriber track', () {
       final published = publisher.publisher!.router.publishRelayedStream(
         kind: MediaKind.video,
         stream: _videoStream(),
@@ -101,7 +100,8 @@ void main() {
       expect(body, contains('ionsfu_publisher_packets_received_total'));
     });
 
-    test('snapshotSfu reflects two subscribers on the same publisher', () async {
+    test('snapshotSfu reflects two subscribers on the same publisher',
+        () async {
       final published = publisher.publisher!.router.publishRelayedStream(
         kind: MediaKind.video,
         stream: _videoStream(primary: 0xDA0011, rtx: 0xDA0012),

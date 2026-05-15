@@ -196,5 +196,34 @@ void main() {
       dt.writeRtcp(rr);
       expect(captured.length, 1);
     });
+
+    test('writeRtcp on an SR fires tsOffsetFor for the matching layer', () {
+      final captured = <Uint8List>[];
+      final dt = _track(rtcpSink: captured.add);
+      // Baseline the rewriter so currentLayerOffset() is non-null.
+      final layer = dt.receiver.layers.first;
+      dt.writeRtp(layer, false, _vidRtp(seq: 1, ssrc: layer.primarySsrc));
+      // Build an SR for the publisher's primary SSRC (2001 from the
+      // offer). rewriteRtcpForSubscriber walks the SR, hits the SSRC
+      // map, and invokes tsOffsetFor → matches the current layer →
+      // returns off.tsOffset.
+      final sr = Uint8List(28);
+      sr[0] = 0x80; // V=2, RC=0
+      sr[1] = 200; // PT=SR
+      sr[2] = 0;
+      sr[3] = 6; // length=7-1
+      // sender SSRC = publisher primary
+      sr[4] = (layer.primarySsrc >> 24) & 0xff;
+      sr[5] = (layer.primarySsrc >> 16) & 0xff;
+      sr[6] = (layer.primarySsrc >> 8) & 0xff;
+      sr[7] = layer.primarySsrc & 0xff;
+      // ntpHi/ntpLo/rtpTs/pktCount/octetCount left zero is fine.
+      dt.writeRtcp(sr);
+      expect(captured.length, 1);
+      // Sender SSRC was rewritten to the subscriber-side primary.
+      final out = captured.single;
+      final outSsrc = (out[4] << 24) | (out[5] << 16) | (out[6] << 8) | out[7];
+      expect(outSsrc, dt.rewrittenPrimarySsrc);
+    });
   });
 }

@@ -128,5 +128,25 @@ void main() {
       // No assert on bwe.currentBps — byteBudget is 0 so the early
       // return inside onTwcc fires; the dispatch branch ran though.
     });
+
+    test('TwccFeedback delivery (stamper non-empty → delay-based path)', () {
+      // Pre-stamp two outbound seqs via reserve() so totalStamped > 0
+      // and dispatch picks bwe.onTwccDelay instead of bwe.onTwcc.
+      final s = subscriber.subscriber!.twccStamper;
+      final seq0 = s.reserve(sizeBytes: 200);
+      final seq1 = s.reserve(sizeBytes: 200);
+      expect(s.totalStamped, 2);
+      // Build a TWCC referencing those exact seqs.
+      final twcc = buildTwcc(
+        senderSsrc: 0x1111,
+        mediaSsrc: rwPrimary,
+        fbPktCount: 1,
+        arrivals: [(seq0, 0), (seq1, 5000)],
+      );
+      expect(twcc, isNotNull);
+      subscriber.subscriber!.deliverRtcpForTest(twcc!);
+      // Delay path was reached. (No specific bwe assertion — just
+      // ensures the branch ran without throwing.)
+    });
   });
 }
