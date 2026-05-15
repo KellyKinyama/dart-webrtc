@@ -59,6 +59,17 @@ class SimulcastRewriter {
   /// to the per-isolate [BytePool.instance]; tests/benches may override.
   final BytePool pool;
 
+  /// Optional codec-specific keyframe detector. When set and a layer
+  /// switch is in flight, the rewriter drops every primary packet on
+  /// the new layer until [isKeyframe] returns true — this prevents
+  /// the decoder from receiving a partial GOP that references frames
+  /// it never saw.
+  final bool Function(Uint8List rtp)? isKeyframe;
+
+  /// Counter incremented every time the keyframe gate dropped a
+  /// non-keyframe primary while waiting for the resync boundary.
+  int gateDropped = 0;
+
   final Map<String, _LayerOffset> _layerOffsets = {};
   bool _resyncOnNext = true;
 
@@ -73,6 +84,7 @@ class SimulcastRewriter {
     required this.rewrittenRtxSsrc,
     required this.currentLayer,
     BytePool? pool,
+    this.isKeyframe,
   }) : pool = pool ?? BytePool.instance;
 
   /// True while a previously-requested layer switch is still
@@ -122,6 +134,16 @@ class SimulcastRewriter {
 
     var off = _layerOffsets[rid];
     if (!isRtx && (off == null || _resyncOnNext)) {
+      // reSync keyframe gate — if a codec-specific keyframe detector
+      // was supplied, refuse to baseline this layer until a keyframe
+      // lands. Drops any leading delta frames so the decoder sees a
+      // clean GOP boundary on layer switch.
+      final det = isKeyframe;
+      if (det != null && !det(rtp)) {
+        gateDropped++;
+        return const RewriteResult(
+            out: null, outSeq: null, outTs: null, isRtx: false);
+      }
       final baseSeq = _haveLastOut ? ((_lastOutSeq + 1) & 0xffff) : inSeq;
       final baseTs = _haveLastOut ? ((_lastOutTs + 1) & 0xffffffff) : inTs;
       off = _LayerOffset(

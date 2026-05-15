@@ -71,8 +71,7 @@ void main() {
     expect(r.jitter, 0);
     expect(r.jitterSamples, 0);
     r.deliverRtp(_videoRtp(ssrc: 2001, seq: 1, ts: 1000));
-    expect(r.jitterSamples, 0,
-        reason: 'one sample is not enough to compute D');
+    expect(r.jitterSamples, 0, reason: 'one sample is not enough to compute D');
     expect(r.jitter, 0);
   });
 

@@ -84,8 +84,7 @@ class Receiver {
   /// Real WebRTC negotiates this per-codec; we approximate with the
   /// near-universal defaults so the jitter EMA is at least in the
   /// right ballpark for stats / RR generation.
-  late final int _jitterClockHz =
-      kind == MediaKind.audio ? 48000 : 90000;
+  late final int _jitterClockHz = kind == MediaKind.audio ? 48000 : 90000;
 
   /// Last seen primary-packet RTP timestamp; used to compute the
   /// transit-delta `D` between consecutive primaries.

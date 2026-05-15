@@ -66,10 +66,7 @@ void main() {
     });
 
     test('coexists with NACK / PLI in a compound RTCP buffer', () {
-      final rr = _rr(
-          reporterSsrc: 1,
-          sourceSsrc: 2,
-          fractionLost: 0);
+      final rr = _rr(reporterSsrc: 1, sourceSsrc: 2, fractionLost: 0);
       final pli = buildPli(1, 2);
       final compound = Uint8List(rr.length + pli.length)
         ..setRange(0, rr.length, rr)

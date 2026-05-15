@@ -72,13 +72,17 @@ class FirFeedback extends RtcpFeedback {
 /// timestamp units).
 class RrReportBlock {
   final int sourceSsrc;
+
   /// Q8 — divide by 256.0 to get the loss rate as a fraction in [0,1].
   final int fractionLost;
+
   /// 24-bit cumulative number of packets lost (signed in RFC 3550 but
   /// every implementation treats it as unsigned).
   final int cumulativeLost;
+
   /// Extended highest sequence number received (16 lo + 16 cycles).
   final int highestSeq;
+
   /// Interarrival jitter in RTP timestamp units of the source's
   /// codec clock.
   final int jitter;
@@ -93,6 +97,7 @@ class RrReportBlock {
     required this.lsr,
     required this.dlsr,
   });
+
   /// Loss as a fraction in [0,1].
   double get fractionLostUnit => fractionLost / 256.0;
 }

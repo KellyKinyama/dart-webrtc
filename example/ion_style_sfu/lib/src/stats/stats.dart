@@ -23,13 +23,16 @@ class DownTrackStats {
   final int packetsTwccStamped;
   final int nackRetransmits;
   final int nackUpstreamRequested;
+
   /// RFC 3550 §A.8 interarrival jitter as observed on the publisher
   /// side, in milliseconds. Inherited from the [Receiver] (the same
   /// inbound stream shared by every DownTrack mirroring it).
   final double publisherJitterMs;
+
   /// Number of upstream PLI requests this DownTrack suppressed via
   /// the 500 ms throttle. Healthy streams sit at 0.
   final int pliRateLimited;
+
   /// Number of [setCurrentLayer] calls rejected because a previous
   /// layer switch was still in flight.
   final int layerSwitchRejected;
