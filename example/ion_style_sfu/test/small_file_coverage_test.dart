@@ -116,8 +116,7 @@ void main() {
       expect(rtp[18] & 0x7f, 0);
     });
 
-    test('two-byte profile: id=0 padding is skipped, then mismatched id',
-        () {
+    test('two-byte profile: id=0 padding is skipped, then mismatched id', () {
       final rtp = Uint8List(12 + 4 + 4);
       rtp[0] = 0x90;
       rtp[1] = 111;
