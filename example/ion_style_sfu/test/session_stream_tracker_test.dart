@@ -128,9 +128,8 @@ void main() {
       expect(published1.single.track, isNotNull);
       expect(published1.single.track!.primarySsrc, 0xB1A001);
 
-      final joined = events
-          .where((e) => e.kind == StreamEventKind.peerJoined)
-          .toList();
+      final joined =
+          events.where((e) => e.kind == StreamEventKind.peerJoined).toList();
       expect(joined.map((e) => e.peerId), contains('sub'));
 
       // toJson round-trip on event itself.
@@ -162,8 +161,8 @@ void main() {
       );
       await Future<void>.delayed(Duration.zero);
       expect(priorJoinedCalls, 1);
-      expect(events.where((e) => e.kind == StreamEventKind.peerJoined).length,
-          1);
+      expect(
+          events.where((e) => e.kind == StreamEventKind.peerJoined).length, 1);
 
       await subscriber!.close();
       subscriber = null;

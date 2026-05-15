@@ -366,6 +366,24 @@ Future<IonSfuServerHandle> runIonStyleSfuServer({
       req.response.close();
       return;
     }
+    // Phase B14 — Room Service REST API (LiveKit-style room management).
+    // All routes are token-protected when authToken is set; otherwise
+    // open. JSON in/out, no Twirp/protobuf wrapping for simplicity.
+    if (req.uri.path.startsWith('/api/rooms')) {
+      if (authToken != null) {
+        final got = req.uri.queryParameters['token'] ??
+            _bearerHeader(req.headers.value(HttpHeaders.authorizationHeader));
+        if (got == null || !_constantTimeEquals(got, authToken)) {
+          req.response.statusCode = HttpStatus.unauthorized;
+          req.response.headers.contentType = ContentType.json;
+          req.response.write(jsonEncode({'error': 'unauthorized'}));
+          req.response.close();
+          return;
+        }
+      }
+      _handleRoomService(req, sharded, routers).whenComplete(() {});
+      return;
+    }
     if (req.uri.path == '/cluster') {
       if (cluster == null) {
         req.response.statusCode = HttpStatus.notFound;
@@ -531,6 +549,176 @@ String? _bearerHeader(String? raw) {
   if (raw == null) return null;
   if (!raw.toLowerCase().startsWith('bearer ')) return null;
   return raw.substring(7).trim();
+}
+
+/// Phase B14 — Room Service REST handler. Routes:
+///
+/// * `GET    /api/rooms`                              — list active rooms.
+/// * `POST   /api/rooms`                              — create room.
+///   Body: `{"sid": "<room-id>"}`.
+/// * `DELETE /api/rooms/<sid>`                        — close room.
+/// * `GET    /api/rooms/<sid>/participants`           — list participants.
+/// * `DELETE /api/rooms/<sid>/participants/<uid>`     — kick participant.
+///
+/// Replies are JSON; non-2xx codes carry `{"error": "..."}`. Token
+/// gating is handled by the caller.
+Future<void> _handleRoomService(
+  HttpRequest req,
+  ShardedSfu sharded,
+  Map<String, _SessionRouter> routers,
+) async {
+  void writeJson(int code, Object body) {
+    req.response
+      ..statusCode = code
+      ..headers.contentType = ContentType.json
+      ..write(jsonEncode(body));
+  }
+
+  try {
+    final segs = req
+        .uri.pathSegments; // e.g. ['api','rooms','r1','participants','alice']
+    // segs[0]=='api', segs[1]=='rooms'
+    final method = req.method.toUpperCase();
+
+    // /api/rooms
+    if (segs.length == 2) {
+      if (method == 'GET') {
+        final rooms = <Map<String, Object?>>[];
+        for (final shard in sharded.shards) {
+          final js = await shard.snapshotJson();
+          rooms.add({
+            'sid': shard.sessionId,
+            'numParticipants': js['peers'] ?? 0,
+            'numTracks': js['routers'] ?? 0,
+          });
+        }
+        writeJson(HttpStatus.ok, {'rooms': rooms});
+        return;
+      }
+      if (method == 'POST') {
+        final raw = await utf8.decoder.bind(req).join();
+        Map<String, Object?> body;
+        try {
+          body = (raw.isEmpty ? <String, Object?>{} : jsonDecode(raw))
+              as Map<String, Object?>;
+        } on FormatException {
+          writeJson(HttpStatus.badRequest, {'error': 'invalid json'});
+          return;
+        }
+        final sid = (body['sid'] ?? body['name']) as String?;
+        if (sid == null || sid.isEmpty || !_isValidId(sid)) {
+          writeJson(HttpStatus.badRequest,
+              {'error': 'sid required (alphanumeric, ".-:_")'});
+          return;
+        }
+        final existed = sharded.get(sid) != null;
+        try {
+          await sharded.getOrCreate(sid);
+        } on SfuOverloadedException catch (e) {
+          writeJson(HttpStatus.serviceUnavailable, {'error': e.message});
+          return;
+        }
+        writeJson(existed ? HttpStatus.ok : HttpStatus.created, {
+          'sid': sid,
+          'created': !existed,
+        });
+        return;
+      }
+      writeJson(HttpStatus.methodNotAllowed, {'error': 'method not allowed'});
+      return;
+    }
+
+    // /api/rooms/<sid>
+    if (segs.length == 3) {
+      final sid = segs[2];
+      if (method == 'GET') {
+        final shard = sharded.get(sid);
+        if (shard == null) {
+          writeJson(HttpStatus.notFound, {'error': 'room not found'});
+          return;
+        }
+        final js = await shard.snapshotJson();
+        writeJson(HttpStatus.ok, {
+          'sid': sid,
+          'numParticipants': js['peers'] ?? 0,
+          'numTracks': js['routers'] ?? 0,
+        });
+        return;
+      }
+      if (method == 'DELETE') {
+        final shard = sharded.get(sid);
+        if (shard == null) {
+          writeJson(HttpStatus.notFound, {'error': 'room not found'});
+          return;
+        }
+        await sharded.closeShard(sid);
+        writeJson(HttpStatus.ok, {'sid': sid, 'closed': true});
+        return;
+      }
+      writeJson(HttpStatus.methodNotAllowed, {'error': 'method not allowed'});
+      return;
+    }
+
+    // /api/rooms/<sid>/participants
+    if (segs.length == 4 && segs[3] == 'participants') {
+      final sid = segs[2];
+      final router = routers[sid];
+      if (sharded.get(sid) == null) {
+        writeJson(HttpStatus.notFound, {'error': 'room not found'});
+        return;
+      }
+      if (method == 'GET') {
+        final ids = router?.sockets.keys.toList(growable: false) ?? const [];
+        writeJson(HttpStatus.ok, {
+          'sid': sid,
+          'participants': [
+            for (final uid in ids) {'uid': uid},
+          ],
+        });
+        return;
+      }
+      writeJson(HttpStatus.methodNotAllowed, {'error': 'method not allowed'});
+      return;
+    }
+
+    // /api/rooms/<sid>/participants/<uid>
+    if (segs.length == 5 && segs[3] == 'participants') {
+      final sid = segs[2];
+      final uid = segs[4];
+      final shard = sharded.get(sid);
+      if (shard == null) {
+        writeJson(HttpStatus.notFound, {'error': 'room not found'});
+        return;
+      }
+      if (method == 'DELETE') {
+        final router = routers[sid];
+        final ws = router?.sockets[uid];
+        if (router == null || ws == null) {
+          writeJson(HttpStatus.notFound, {'error': 'participant not found'});
+          return;
+        }
+        // Tell the worker to drop the peer first so its publisher /
+        // subscriber tracks tear down cleanly, then close the WS.
+        try {
+          await shard.leave(uid);
+        } catch (_) {/* ignore — worker may already be tearing it down */}
+        router.deregister(uid);
+        if (ws.readyState == WebSocket.open) {
+          await ws.close(1000, 'kicked');
+        }
+        writeJson(HttpStatus.ok, {'sid': sid, 'uid': uid, 'kicked': true});
+        return;
+      }
+      writeJson(HttpStatus.methodNotAllowed, {'error': 'method not allowed'});
+      return;
+    }
+
+    writeJson(HttpStatus.notFound, {'error': 'no such route'});
+  } catch (e) {
+    writeJson(HttpStatus.internalServerError, {'error': '$e'});
+  } finally {
+    await req.response.close();
+  }
 }
 
 /// Per-session main-isolate state: the set of WebSockets currently
