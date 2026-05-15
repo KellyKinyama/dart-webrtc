@@ -19,6 +19,7 @@ import 'package:pure_dart_webrtc/webrtc/webrtc.dart';
 import 'buffer/buffer.dart';
 import 'buffer/nack.dart';
 import 'byte_pool.dart';
+import 'pacer/leaky_bucket.dart';
 import 'producer_layer.dart';
 import 'receiver.dart';
 import 'rtcp_rewrite.dart';
@@ -71,6 +72,15 @@ class DownTrack {
   /// the per-isolate [BytePool.instance].
   final BytePool pool;
 
+  /// Phase B8 — optional per-subscriber leaky-bucket pacer. When set,
+  /// every outbound primary + RTX packet that would otherwise have
+  /// gone directly through the SRTP transport is enqueued here
+  /// instead. Drains on the pacer's own [Timer.periodic]. The
+  /// load-test [rtpSink] fast path bypasses the pacer entirely — it
+  /// already replaces the transport, and load tests want a tight
+  /// loop with no smoothing.
+  final LeakyBucketPacer? pacer;
+
   /// Phase G — synthetic packet-loss simulator. When set to a value
   /// in (0, 1] the DownTrack drops each *primary* outbound packet
   /// with this probability before handing it to the transport / sink,
@@ -116,6 +126,7 @@ class DownTrack {
     BytePool? pool,
     this.rtpSink,
     this.rtcpSink,
+    this.pacer,
   })  : pool = pool ?? BytePool.instance,
         _jitter = JitterBuffer(
           capacity: jitterCapacity,
@@ -306,10 +317,17 @@ class DownTrack {
       final seq = twccStamper!.stamp(out, twccId);
       if (seq != null) packetsTwccStamped++;
     }
-    transport.sendRtp(peer, out);
+    if (pacer != null) {
+      // Pacer takes ownership of the buffer; bytesForwarded is
+      // accounted at enqueue time so subscriber-level BWE bookkeeping
+      // (which deltas off bytesForwarded) stays correct.
+      pacer!.enqueue(out, isRtx: isRtx);
+    } else {
+      transport.sendRtp(peer, out);
+    }
     packetsForwarded++;
     bytesForwarded += out.length;
-    if (isRtx) pool.release(out);
+    if (isRtx && pacer == null) pool.release(out);
   }
 
   /// Forward inbound publisher RTCP. Phase 8 — rewrites SR/RR so the
@@ -352,7 +370,11 @@ class DownTrack {
     final transport = subscriberPc.transport;
     if (peer == null || transport == null || !peer.isSecure) return;
     for (final p in packets) {
-      transport.sendRtp(peer, p);
+      if (pacer != null) {
+        pacer!.enqueue(p, isRtx: false);
+      } else {
+        transport.sendRtp(peer, p);
+      }
     }
   }
 

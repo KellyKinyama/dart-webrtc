@@ -12,6 +12,7 @@ import 'package:pure_dart_webrtc/webrtc/webrtc.dart';
 
 import 'down_track.dart';
 import 'bwe.dart';
+import 'pacer/leaky_bucket.dart';
 import 'producer_stream.dart';
 import 'receiver.dart';
 import 'rtcp.dart';
@@ -39,6 +40,34 @@ class Subscriber {
   /// receiver negotiated `twccExtId` is stamped with a monotonic
   /// 16-bit seq before being shipped to the browser.
   final TwccStamper twccStamper = TwccStamper();
+
+  /// Phase B8 — per-subscriber leaky-bucket pacer. When wired into a
+  /// [DownTrack] (via the constructor's `pacer:` parameter, which
+  /// [addReceiverForced] does by default) every outbound primary +
+  /// RTX packet is enqueued here instead of going directly through
+  /// the SRTP transport. The pacer drains on its own [Timer.periodic]
+  /// at [kDefaultPacerInterval] and emits via [_paceSink] which
+  /// resolves the current secured peer + transport at drain time.
+  ///
+  /// Default target bitrate is intentionally high (8 Mbps) so the
+  /// pacer behaves as a near-no-op smoother in steady state — the
+  /// real value should be driven by [bwe.currentBps] once the stream
+  /// allocator (B9+) lands. Tests can override via [setPacerBitrate].
+  late final LeakyBucketPacer pacer = LeakyBucketPacer(
+    sink: _paceSink,
+    targetBitrateBps: 8000000,
+  );
+
+  void _paceSink(Uint8List rtp, {required bool isRtx}) {
+    if (_closed) return;
+    final peer = pc.activePeer;
+    if (peer == null || !peer.isSecure) return;
+    transport.sendRtp(peer, rtp);
+  }
+
+  /// Update the pacer's target bitrate. Hook for the future stream
+  /// allocator / BWE-driven loop.
+  void setPacerBitrate(int bps) => pacer.setBitrate(bps);
 
   /// Phase 5 — chooses the simulcast layer for each receiver. Fires
   /// [Subscriber.setPreferredLayer] on every layer change.
@@ -178,6 +207,7 @@ class Subscriber {
       rewrittenPrimarySsrc: rwPrimary,
       rewrittenRtxSsrc: rwRtx,
       twccStamper: twccStamper,
+      pacer: pacer,
     );
     _downTracks[receiver.id] = dt;
     _byRewrittenSsrc[rwPrimary] = dt;
@@ -364,6 +394,7 @@ class Subscriber {
   void close() {
     if (_closed) return;
     _closed = true;
+    pacer.close();
     for (final dt in _downTracks.values) {
       dt.close();
     }
