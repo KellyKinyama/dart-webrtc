@@ -38,6 +38,17 @@ class SRTPContext {
   /// session; replays MUST be rejected (RFC 3711 §3.3.2).
   final Map<int, _SrtcpReplay> _srtcpInboundReplay = {};
 
+  /// Per-SSRC inbound SRTP replay protection. Per RFC 3711 §3.3.2 the
+  /// receiver MUST drop any packet whose 48-bit index (`ROC*2^16 +
+  /// SEQ`) falls outside the sliding window of the highest-seen
+  /// authenticated index. Same shape as [_srtcpInboundReplay] but
+  /// keyed off the 48-bit SRTP index.
+  final Map<int, _SrtpReplay> _srtpInboundReplay = {};
+
+  /// Number of inbound SRTP packets rejected by [_srtpInboundReplay].
+  /// Surfaced for stats / detection of replay attacks.
+  int srtpReplayDrops = 0;
+
   /// 2^48 packet limit (per the AES-GCM SRTP profile, RFC 7714 §17). At
   /// this point the master key MUST be re-derived. We don't currently
   /// support rekeying — instead encrypt fails fast so the application
@@ -83,6 +94,7 @@ class SRTPContext {
     srtpSsrcStatesEncryption.clear();
     _srtcpOutIndex.clear();
     _srtcpInboundReplay.clear();
+    _srtpInboundReplay.clear();
   }
 
   // For decryption
@@ -118,9 +130,27 @@ class SRTPContext {
     final RolloverCountResult rocResult =
         s.nextRolloverCount(packet.header.sequenceNumber);
 
+    // RFC 3711 §3.3.2 — anti-replay. The 48-bit SRTP packet index is
+    // `ROC*2^16 + SEQ`; reject any packet whose index has already been
+    // authenticated, or which is more than [_SrtpReplay._windowSize]
+    // packets older than the highest-seen index. The check happens
+    // *before* AEAD verify so a replay flood doesn't burn CPU on
+    // crypto, and the commit happens *after* a successful verify so a
+    // forged packet can't poison the window.
+    final replay = _srtpInboundReplay.putIfAbsent(
+        packet.header.ssrc, _SrtpReplay.new);
+    final index = (rocResult.roc << 16) | packet.header.sequenceNumber;
+    if (!replay.check(index)) {
+      srtpReplayDrops++;
+      throw StateError(
+          'SRTP replay: ssrc=0x${packet.header.ssrc.toRadixString(16)} '
+          'index=$index');
+    }
+
     // The decrypt method in GCM returns the full decrypted packet (header + payload)
     final Uint8List result = await cipher.decrypt(packet, rocResult.roc);
     rocResult.updateRoc(); // Update decryption ROC after successful decryption
+    replay.commit(index);
     // Return only the payload portion
     // return Uint8List.fromList(result.sublist(packet.headerSize));
     return result;
@@ -243,6 +273,47 @@ class _SrtcpReplay {
       _initialized = true;
       _top = index;
       _bitmap = 1; // bit 0 set => _top itself seen
+      return;
+    }
+    if (index > _top) {
+      final shift = index - _top;
+      if (shift >= _windowSize) {
+        _bitmap = 1;
+      } else {
+        _bitmap = ((_bitmap << shift) | 1) & ((1 << _windowSize) - 1);
+      }
+      _top = index;
+    } else {
+      final diff = _top - index;
+      if (diff < _windowSize) {
+        _bitmap |= 1 << diff;
+      }
+    }
+  }
+}
+
+/// Sliding-window replay protection for SRTP packet indices on a
+/// single SSRC. Identical algorithm to [_SrtcpReplay] but operates on
+/// 48-bit indices (`ROC*2^16 + SEQ`, RFC 3711 §3.3.1).
+class _SrtpReplay {
+  static const int _windowSize = 64;
+  int _top = 0;
+  int _bitmap = 0;
+  bool _initialized = false;
+
+  bool check(int index) {
+    if (!_initialized) return true;
+    if (index > _top) return true;
+    final diff = _top - index;
+    if (diff >= _windowSize) return false;
+    return (_bitmap & (1 << diff)) == 0;
+  }
+
+  void commit(int index) {
+    if (!_initialized) {
+      _initialized = true;
+      _top = index;
+      _bitmap = 1;
       return;
     }
     if (index > _top) {
