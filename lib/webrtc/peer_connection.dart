@@ -194,6 +194,21 @@ class RTCPeerConnection {
 
   bool _closed = false;
 
+  /// Serial gate for SDP-mutating operations
+  /// (`setLocalDescription` / `setRemoteDescription`). Two simultaneous
+  /// calls would otherwise both pass `_expectSignalingIn` from the
+  /// `stable` state and both try to advance the signaling-state
+  /// machine, corrupting `_pendingLocalDescription`.
+  Future<void> _sdpQueue = Future<void>.value();
+
+  Future<T> _serializeSdp<T>(Future<T> Function() body) {
+    final next = _sdpQueue.then((_) => body());
+    // Swallow errors on the queue chain so one failure doesn't poison
+    // every future SDP op; callers still receive the error via [next].
+    _sdpQueue = next.then<void>((_) {}, onError: (_) {});
+    return next;
+  }
+
   // ---- Browser-style event callbacks. ---------------------------------
 
   /// Fired with each newly gathered local ICE candidate. The final call
@@ -428,7 +443,12 @@ class RTCPeerConnection {
 
   /// Apply a *local* description, advancing the signaling state machine
   /// per https://www.w3.org/TR/webrtc/#set-the-rtcsessiondescription.
-  Future<void> setLocalDescription(RTCSessionDescription description) async {
+  Future<void> setLocalDescription(RTCSessionDescription description) {
+    return _serializeSdp(() => _setLocalDescriptionLocked(description));
+  }
+
+  Future<void> _setLocalDescriptionLocked(
+      RTCSessionDescription description) async {
     _checkNotClosed();
     switch (description.type) {
       case RTCSdpType.offer:
@@ -467,7 +487,12 @@ class RTCPeerConnection {
   }
 
   /// Apply a *remote* description.
-  Future<void> setRemoteDescription(RTCSessionDescription description) async {
+  Future<void> setRemoteDescription(RTCSessionDescription description) {
+    return _serializeSdp(() => _setRemoteDescriptionLocked(description));
+  }
+
+  Future<void> _setRemoteDescriptionLocked(
+      RTCSessionDescription description) async {
     _checkNotClosed();
     switch (description.type) {
       case RTCSdpType.offer:

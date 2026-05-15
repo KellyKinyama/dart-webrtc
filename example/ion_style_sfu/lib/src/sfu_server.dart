@@ -634,6 +634,15 @@ class _IonPeerSession {
       return;
     }
     _shard = shard;
+    // Reject duplicates instead of silently clobbering. Two clients
+    // joining the same room with the same uid would otherwise leave
+    // an orphan PC pair on the server and route signaling only to
+    // whichever socket registered last.
+    if (router.sockets.containsKey(uid)) {
+      _send({'type': 'error', 'reason': 'uidInUse', 'uid': uid});
+      await ws.close();
+      return;
+    }
     router.register(uid, ws);
     try {
       await shard.join(uid);

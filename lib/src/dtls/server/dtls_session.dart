@@ -165,9 +165,20 @@ class DtlsSession {
     } else if (message is ApplicationData) {
       _onApplicationData(message);
     } else if (message is Alert) {
-      // ignore: avoid_print
-      print('[dtls] <- Alert level=${message.alertLevel} '
-          'description=${message.alertDescription}');
+      // Encrypted Alerts (epoch >= 1, e.g. close_notify after handshake)
+      // are routinely fed through the plaintext parser before the
+      // record-layer decrypts them. The resulting Alert object has
+      // junk alertLevel/alertDescription enums and just creates log
+      // noise. Only print Alerts that look plausible.
+      final lvl = message.alertLevel.toString();
+      final desc = message.alertDescription.toString();
+      if (!lvl.contains('Invalid') && !desc.contains('Invalid')) {
+        // ignore: avoid_print
+        print('[dtls] <- Alert level=$lvl description=$desc');
+      } else if (_verbose) {
+        // ignore: avoid_print
+        print('[dtls] <- (encrypted/invalid Alert suppressed)');
+      }
     }
     // Other types (Certificate, CertificateVerify, Alert) are ignored in
     // this server profile — we don't request client auth and we don't

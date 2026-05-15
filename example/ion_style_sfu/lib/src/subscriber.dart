@@ -217,16 +217,25 @@ class Subscriber {
   /// offer from `pc.createOffer` does not declare the per-subscriber
   /// rewritten SSRCs; we inject them via [augmentSubscriberOffer] so
   /// the browser can pair primary + RTX before any RTP arrives.
+  ///
+  /// IMPORTANT: the augmented SDP is what we both ship to the browser
+  /// AND apply via `pc.setLocalDescription`. Earlier versions stored
+  /// the raw offer locally and shipped the augmented one — on a
+  /// renegotiation Chrome cross-validates the answer against the
+  /// PC-cached local description and aborts with `LevelFatal /
+  /// InternalError` because the SSRC sets diverge. Keeping the two in
+  /// sync makes subscriber renegotiation safe.
   Future<RTCSessionDescription> createOffer() async {
     final raw = await pc.createOffer();
-    await pc.setLocalDescription(raw);
-    final augmented = augmentSubscriberOffer(
+    final augmentedSdp = augmentSubscriberOffer(
       subscriberId: peerId,
       allocator: allocator,
       streams: _producerStreamsForOffer(),
       offerSdp: raw.sdp,
     );
-    return RTCSessionDescription(RTCSdpType.offer, augmented);
+    final augmented = RTCSessionDescription(RTCSdpType.offer, augmentedSdp);
+    await pc.setLocalDescription(augmented);
+    return augmented;
   }
 
   /// Apply the client's answer.

@@ -74,7 +74,13 @@ class RtcPeerTransport {
     required this.remoteAddress,
     required this.remotePort,
     required this.dtlsSession,
-  });
+  }) : lastPacketAt = DateTime.now();
+
+  /// Wall-clock of the last datagram observed from this peer. Used by
+  /// [RtcUdpTransport]'s periodic eviction sweep to garbage-collect
+  /// orphan peers (e.g. clients that DTLS-failed and never came back,
+  /// or browsers that disconnected without sending close_notify).
+  DateTime lastPacketAt;
 
   bool get isSecure => srtp != null;
 }
@@ -88,6 +94,20 @@ class RtcUdpTransport {
   final Map<_PeerKey, RtcPeerTransport> _peers = {};
   StreamSubscription<RawSocketEvent>? _sub;
   bool _closed = false;
+
+  /// Periodic sweep that evicts orphan/idle peers from [_peers] so the
+  /// map can't grow unbounded across reconnects. Started lazily on the
+  /// first bound socket, cancelled in [close].
+  Timer? _evictionTimer;
+
+  /// Idle TTL for unsecured peers (DTLS never completed). Anything
+  /// over this is almost certainly orphan handshake noise.
+  static const Duration _unsecuredPeerTtl = Duration(seconds: 30);
+
+  /// Idle TTL for secured peers. Long enough to tolerate audio-only
+  /// pauses and brief network blips, short enough to release memory
+  /// from gone-for-good clients.
+  static const Duration _securedPeerTtl = Duration(minutes: 5);
 
   /// Outstanding outbound STUN binding requests keyed by hex(transactionId).
   /// Completed by [_onSocketEvent] when a matching success/error response
@@ -129,6 +149,8 @@ class RtcUdpTransport {
     final t =
         RtcUdpTransport._(socket, certificate, stunPassword, protectionProfile);
     t._sub = socket.listen(t._onSocketEvent);
+    t._evictionTimer =
+        Timer.periodic(const Duration(seconds: 30), (_) => t._evictStalePeers());
     return t;
   }
 
@@ -218,8 +240,30 @@ class RtcUdpTransport {
   Future<void> close() async {
     if (_closed) return;
     _closed = true;
+    _evictionTimer?.cancel();
+    _evictionTimer = null;
     await _sub?.cancel();
     _socket.close();
+  }
+
+  void _evictStalePeers() {
+    if (_closed || _peers.isEmpty) return;
+    final now = DateTime.now();
+    final stale = <_PeerKey>[];
+    _peers.forEach((key, peer) {
+      final idle = now.difference(peer.lastPacketAt);
+      final ttl = peer.isSecure ? _securedPeerTtl : _unsecuredPeerTtl;
+      if (idle > ttl) stale.add(key);
+    });
+    for (final k in stale) {
+      final peer = _peers.remove(k);
+      if (peer != null && _verbose) {
+        // ignore: avoid_print
+        print('[udp ${_socket.address.address}:${_socket.port}] '
+            'evicting idle peer ${k.host}:${k.port} '
+            '(secure=${peer.isSecure})');
+      }
+    }
   }
 
   void _onSocketEvent(RawSocketEvent event) {
@@ -229,6 +273,7 @@ class RtcUdpTransport {
     final data = Uint8List.fromList(dg.data);
     final key = _PeerKey(dg.address.address, dg.port);
     final peer = _peers.putIfAbsent(key, () => _newPeer(dg.address, dg.port));
+    peer.lastPacketAt = DateTime.now();
 
     if (stun.StunMessage.isStunMessage(data)) {
       if (_verbose) {
