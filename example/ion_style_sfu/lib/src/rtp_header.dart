@@ -183,3 +183,74 @@ void stripAudioLevel(Uint8List rtp, int extId) {
     }
   }
 }
+
+
+/// Phase B13 — Chrome / WebRTC `playout-delay` RTP header extension
+/// (`http://www.webrtc.org/experiments/rtp-hdrext/playout-delay`).
+///
+/// The payload is exactly 3 bytes carrying two 12-bit unsigned values
+/// expressed in units of 10 ms:
+///
+/// ```
+///  0                   1                   2
+///  0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1 2 3
+/// +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+/// |        MIN delay      |        MAX delay      |
+/// +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+/// ```
+///
+/// Both values are clamped to [0, 40_950] ms (12 bits × 10 ms each).
+/// Any negative input is clamped to 0; any input above the cap is
+/// clamped to the cap. Caller is responsible for ensuring `min <= max`
+/// — this helper does NOT swap them.
+class PlayoutDelay {
+  /// Minimum tolerable playout delay in milliseconds.
+  final int minMs;
+
+  /// Maximum tolerable playout delay in milliseconds.
+  final int maxMs;
+
+  const PlayoutDelay(this.minMs, this.maxMs);
+
+  /// Maximum representable value (12 bits × 10 ms).
+  static const int maxRepresentableMs = 4095 * 10;
+
+  @override
+  bool operator ==(Object other) =>
+      other is PlayoutDelay && other.minMs == minMs && other.maxMs == maxMs;
+
+  @override
+  int get hashCode => Object.hash(minMs, maxMs);
+
+  @override
+  String toString() => 'PlayoutDelay(min=${minMs}ms, max=${maxMs}ms)';
+}
+
+int _clampPlayoutMs(int ms) {
+  if (ms < 0) return 0;
+  if (ms > PlayoutDelay.maxRepresentableMs) {
+    return PlayoutDelay.maxRepresentableMs;
+  }
+  return ms;
+}
+
+/// Encode [pd] into a freshly-allocated 3-byte extension payload
+/// suitable for inclusion in the RFC 5285 extension area.
+Uint8List encodePlayoutDelay(PlayoutDelay pd) {
+  final minUnits = _clampPlayoutMs(pd.minMs) ~/ 10;
+  final maxUnits = _clampPlayoutMs(pd.maxMs) ~/ 10;
+  final out = Uint8List(3);
+  out[0] = (minUnits >> 4) & 0xff;
+  out[1] = ((minUnits & 0x0f) << 4) | ((maxUnits >> 8) & 0x0f);
+  out[2] = maxUnits & 0xff;
+  return out;
+}
+
+/// Decode a 3-byte playout-delay extension payload. Returns null when
+/// [bytes] is null or shorter than 3 bytes.
+PlayoutDelay? decodePlayoutDelay(Uint8List? bytes) {
+  if (bytes == null || bytes.length < 3) return null;
+  final minUnits = (bytes[0] << 4) | ((bytes[1] >> 4) & 0x0f);
+  final maxUnits = ((bytes[1] & 0x0f) << 8) | bytes[2];
+  return PlayoutDelay(minUnits * 10, maxUnits * 10);
+}
