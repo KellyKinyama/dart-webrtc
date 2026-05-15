@@ -108,8 +108,7 @@ void main() {
   });
 
   group('ShardedSfu close-event suppression', () {
-    test('closeShard suppresses the worker close event for that sid',
-        () async {
+    test('closeShard suppresses the worker close event for that sid', () async {
       final sfu = ShardedSfu(ShardConfigTemplate(
         bindAddress: '127.0.0.1',
         rtpBasePort: 56800,
