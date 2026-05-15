@@ -257,4 +257,42 @@ void main() {
       expect(out.endsWith('\n'), isTrue);
     });
   });
+
+  group('formatPrometheusCluster - overload caps (Phase 25)', () {
+    test('emits sessionCap + peerCap gauges when configured', () {
+      final out = formatPrometheusCluster(
+        hubStats: const {
+          'port': 9100,
+          'authenticated': false,
+          'endpoints': 0,
+          'framingErrors': 0,
+          'authFailures': 0,
+          'unknownPeerFrames': 0,
+        },
+        bridges: const [],
+        sessionCap: 64,
+        peerCap: 8,
+      );
+      expect(out, contains('ionsfu_sfu_session_cap'));
+      expect(out, contains(' 64'));
+      expect(out, contains('ionsfu_sfu_peer_cap'));
+      expect(out, contains(' 8'));
+    });
+
+    test('omits cap gauges when sessionCap/peerCap are null', () {
+      final out = formatPrometheusCluster(
+        hubStats: const {
+          'port': 9100,
+          'authenticated': false,
+          'endpoints': 0,
+          'framingErrors': 0,
+          'authFailures': 0,
+          'unknownPeerFrames': 0,
+        },
+        bridges: const [],
+      );
+      expect(out, isNot(contains('ionsfu_sfu_session_cap')));
+      expect(out, isNot(contains('ionsfu_sfu_peer_cap')));
+    });
+  });
 }
