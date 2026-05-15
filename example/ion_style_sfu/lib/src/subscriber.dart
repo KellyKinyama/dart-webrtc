@@ -134,6 +134,11 @@ class Subscriber {
   /// peer. Not part of the public API.
   void deliverRtcpForTest(Uint8List rtcp) => _onSubscriberRtcp(rtcp);
 
+  /// Test seam: drive the byte-budget delta computation that normally
+  /// runs as part of TWCC handling. Returns the delta over the
+  /// snapshot taken at the previous call. Not part of the public API.
+  int consumeBytesBudgetForTest() => _consumeBytesBudget();
+
   static Future<Subscriber> create({
     required String peerId,
     required Session session,

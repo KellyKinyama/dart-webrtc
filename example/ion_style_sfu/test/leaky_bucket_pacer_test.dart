@@ -17,8 +17,7 @@ LeakyBucketPacer _pacer({
   required List<(int, bool)> sentLog,
 }) =>
     LeakyBucketPacer(
-      sink: (rtp, {required bool isRtx}) =>
-          sentLog.add((rtp.length, isRtx)),
+      sink: (rtp, {required bool isRtx}) => sentLog.add((rtp.length, isRtx)),
       targetBitrateBps: targetBitrateBps,
       interval: interval,
       maxQueueDepth: maxQueueDepth,
@@ -36,8 +35,7 @@ void main() {
       expect(p.isClosed, isTrue);
     });
 
-    test('autoStart=false leaves the timer off until start() is called',
-        () {
+    test('autoStart=false leaves the timer off until start() is called', () {
       final p = LeakyBucketPacer(
         sink: (_, {required isRtx}) {},
         autoStart: false,
@@ -115,8 +113,7 @@ void main() {
       expect(p.overageBytes, -500);
     });
 
-    test('drains one packet exactly when it consumes the full budget',
-        () {
+    test('drains one packet exactly when it consumes the full budget', () {
       final sent = <(int, bool)>[];
       final p = _pacer(sentLog: sent, targetBitrateBps: 800000);
       addTearDown(p.close);

@@ -186,8 +186,7 @@ class LeakyBucketPacer {
   void _drain() {
     if (_closed) return;
     final intervalSeconds = _interval.inMicroseconds / 1e6;
-    final intervalBytes =
-        (intervalSeconds * _targetBitrateBps / 8.0).round();
+    final intervalBytes = (intervalSeconds * _targetBitrateBps / 8.0).round();
     final maxOvershootBytes = (intervalBytes * maxOvershootFactor).round();
 
     var toSendBytes = intervalBytes - _overage;

@@ -64,8 +64,7 @@ void main() {
   });
 
   group('LayerSelectorTimer', () {
-    test('start schedules ticks; stop cancels and is idempotent',
-        () async {
+    test('start schedules ticks; stop cancels and is idempotent', () async {
       final bwe = BandwidthEstimator()..setBps(2000000);
       final selector = LayerSelector(estimator: bwe);
       final timer = LayerSelectorTimer(

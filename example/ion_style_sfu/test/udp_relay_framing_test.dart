@@ -63,8 +63,7 @@ void main() {
         bindAddress: InternetAddress.loopbackIPv4,
         port: 0,
       );
-      sender =
-          await RawDatagramSocket.bind(InternetAddress.loopbackIPv4, 0);
+      sender = await RawDatagramSocket.bind(InternetAddress.loopbackIPv4, 0);
     });
 
     tearDown(() async {

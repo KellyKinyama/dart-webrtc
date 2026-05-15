@@ -57,11 +57,11 @@ void main() {
       // and the helper short-circuits before hitting transport.sendRtcp.
       final pub = peer.publisher!;
       // Must not throw; exercises lines 50-53 of publisher.dart.
-      pub.router.onUpstreamFeedback?.call(Uint8List.fromList([0x80, 0xcd, 0, 1]));
+      pub.router.onUpstreamFeedback
+          ?.call(Uint8List.fromList([0x80, 0xcd, 0, 1]));
     });
 
-    test('deliverRtpForTest increments _rtpCount and routes to the router',
-        () {
+    test('deliverRtpForTest increments _rtpCount and routes to the router', () {
       final pub = peer.publisher!;
       pub.deliverRtpForTest(_rtp(ssrc: 0xAA0001, seq: 1));
       // No public counter; we just assert no throw + a second packet works.

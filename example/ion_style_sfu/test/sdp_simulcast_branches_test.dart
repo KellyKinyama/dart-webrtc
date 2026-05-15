@@ -93,11 +93,11 @@ void main() {
           parsePublisherOffer(peerId: 'user1', offerSdp: _fourMemberSim);
       expect(streams, hasLength(1));
       final s = streams.single;
-      expect(s.layers.map((l) => l.rid).toList(),
-          ['l0', 'l1', 'l2', 'l3']);
+      expect(s.layers.map((l) => l.rid).toList(), ['l0', 'l1', 'l2', 'l3']);
     });
 
-    test('legacy draft-03 simulcast form (a=simulcast: send rid=q;h;f) '
+    test(
+        'legacy draft-03 simulcast form (a=simulcast: send rid=q;h;f) '
         'is recognised as modern simulcast', () {
       final streams =
           parsePublisherOffer(peerId: 'user1', offerSdp: _modernSim03Form);
